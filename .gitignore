@@ -39,3 +39,7 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# local secrets (DO NOT COMMIT)
+SECRETS.local.md
+SECRETS*.md
