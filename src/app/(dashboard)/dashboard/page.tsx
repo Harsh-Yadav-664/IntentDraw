@@ -3,14 +3,15 @@
 import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import Toolbar from '@/components/canvas/toolbar'
+import ControlsPanel from '@/components/controls/controls-panel'
+import PreviewPanel from '@/components/preview/preview-panel'
 import { useCanvasStore } from '@/store/canvas-store'
+import { useWorkflowStore } from '@/store/workflow-store'
 import useKeyboardShortcuts from '@/hooks/use-keyboard-shortcuts'
 
-// Konva needs `window` and HTML canvas — can't render during SSR.
-// dynamic() with ssr:false loads it client-only. Skeleton shows while loading.
+// Dynamic import — Konva needs browser APIs
 const DrawingCanvas = dynamic(
   () => import('@/components/canvas/drawing-canvas'),
   {
@@ -26,20 +27,48 @@ const DrawingCanvas = dynamic(
 export default function DashboardPage() {
   useKeyboardShortcuts()
 
-  const regions = useCanvasStore((s) => s.regions)
-  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
-  const selectedRegion = regions.find((r) => r.id === selectedRegionId)
+  const regionsCount = useCanvasStore((s) => s.regions.length)
+  const status = useWorkflowStore((s) => s.status)
+
+  // Status indicator text
+  const statusText = {
+    idle: 'Ready',
+    drawing: 'Drawing...',
+    analyzing: 'Analyzing...',
+    regions_ready: 'Regions detected',
+    generating: 'Generating...',
+    preview_ready: 'Preview ready',
+    error: 'Error',
+  }[status]
+
+  const statusColor = {
+    idle: 'bg-slate-400',
+    drawing: 'bg-blue-500',
+    analyzing: 'bg-yellow-500 animate-pulse',
+    regions_ready: 'bg-green-500',
+    generating: 'bg-yellow-500 animate-pulse',
+    preview_ready: 'bg-green-500',
+    error: 'bg-red-500',
+  }[status]
 
   return (
-    <main className="min-h-screen bg-slate-100">
-      <header className="bg-white border-b sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <main className="h-screen flex flex-col bg-slate-100">
+      {/* Header */}
+      <header className="bg-white border-b flex-shrink-0">
+        <div className="max-w-[1800px] mx-auto px-4 sm:px-6">
           <div className="flex justify-between items-center h-14">
             <Link href="/" className="text-xl font-bold">
               Intent<span className="text-blue-600">Draw</span>
             </Link>
             <div className="flex items-center gap-4">
-              <span className="text-sm text-slate-500">10/10 generations</span>
+              <div className="flex items-center gap-2 text-sm">
+                <span className={`w-2 h-2 rounded-full ${statusColor}`} />
+                <span className="text-slate-600">{statusText}</span>
+              </div>
+              <span className="text-slate-300">|</span>
+              <span className="text-sm text-slate-500">
+                {regionsCount} region{regionsCount !== 1 ? 's' : ''}
+              </span>
               <Button variant="outline" size="sm" asChild>
                 <Link href="/">Home</Link>
               </Button>
@@ -48,115 +77,30 @@ export default function DashboardPage() {
         </div>
       </header>
 
-      <div className="max-w-7xl mx-auto p-6">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Canvas panel */}
-          <div className="lg:col-span-2 space-y-3">
-            <Toolbar />
-            <DrawingCanvas />
+      {/* Main Content — fills remaining height */}
+      <div className="flex-1 overflow-hidden">
+        <div className="h-full max-w-[1800px] mx-auto p-4 sm:p-6">
+          <div className="h-full grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
+            
+            {/* Canvas Panel — 5 columns */}
+            <div className="lg:col-span-5 flex flex-col space-y-3 min-h-0">
+              <Toolbar />
+              <div className="flex-1 min-h-0">
+                <DrawingCanvas />
+              </div>
+            </div>
+
+            {/* Controls Panel — 3 columns */}
+            <div className="lg:col-span-3 min-h-0">
+              <ControlsPanel />
+            </div>
+
+            {/* Preview Panel — 4 columns */}
+            <div className="lg:col-span-4 min-h-0">
+              <PreviewPanel />
+            </div>
+            
           </div>
-
-          {/* Controls panel */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Controls</CardTitle>
-              <CardDescription>Regions & prompt</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div>
-                <h4 className="text-sm font-medium mb-2">Regions ({regions.length})</h4>
-                {regions.length === 0 ? (
-                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center text-slate-400 text-sm">
-                    Draw shapes to create regions
-                  </div>
-                ) : (
-                  <div className="space-y-2 max-h-48 overflow-y-auto">
-                    {regions.map((r) => (
-                      <div
-                        key={r.id}
-                        className={`p-2.5 rounded-lg border text-sm cursor-pointer transition-colors ${
-                          r.id === selectedRegionId
-                            ? 'border-blue-500 bg-blue-50 text-blue-900'
-                            : 'border-slate-200 hover:border-slate-300 bg-white'
-                        }`}
-                        onClick={() =>
-                          useCanvasStore.getState().selectRegion(
-                            r.id === selectedRegionId ? null : r.id
-                          )
-                        }
-                      >
-                        <span className="font-medium">Region {r.regionNumber}</span>
-                        <span className="text-slate-400 ml-2 text-xs">{r.geometry.type}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              {selectedRegion && (
-                <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg text-sm">
-                  <p className="font-medium text-blue-900">Region {selectedRegion.regionNumber}</p>
-                  <p className="text-blue-700 text-xs mt-1">
-                    {selectedRegion.geometry.type} · {Math.round(selectedRegion.geometry.width)}×
-                    {Math.round(selectedRegion.geometry.height)}px
-                  </p>
-                </div>
-              )}
-
-              <div>
-                <h4 className="text-sm font-medium mb-2">Prompt</h4>
-                <textarea
-                  className="w-full h-24 p-3 border rounded-lg text-sm resize-none bg-white focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none"
-                  placeholder={
-                    regions.length > 0
-                      ? 'Describe your design...\ne.g., "Region 1 is a hero section with gradient"'
-                      : 'Draw shapes first, then describe your design...'
-                  }
-                  disabled={regions.length === 0}
-                />
-              </div>
-
-              <Button className="w-full" disabled={regions.length === 0}>
-                Generate Design
-              </Button>
-
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <p className="text-blue-800 text-xs">
-                  📍 Phase 1 complete. AI generation comes in Phase 2-3.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Preview panel */}
-          <Card>
-            <CardHeader className="pb-2">
-              <CardTitle className="text-lg">Preview</CardTitle>
-              <CardDescription>Generated design</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="aspect-[3/4] bg-slate-50 border-2 border-dashed border-slate-200 rounded-lg flex items-center justify-center">
-                <div className="text-center text-slate-400 p-4">
-                  <div className="text-4xl mb-3">🎨</div>
-                  <p className="text-sm">Preview appears after generation</p>
-                </div>
-              </div>
-              <div className="flex gap-2 mt-4">
-                <Button variant="outline" size="sm" className="flex-1" disabled>Copy</Button>
-                <Button variant="outline" size="sm" className="flex-1" disabled>Export</Button>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="mt-6 p-4 bg-white rounded-lg border flex items-center justify-between">
-          <span className="flex items-center gap-2 text-sm text-slate-600">
-            <span className="w-2 h-2 bg-green-500 rounded-full" />
-            Ready
-          </span>
-          <span className="text-sm text-slate-500">
-            {regions.length} region{regions.length !== 1 ? 's' : ''} · Phase 1 ✅
-          </span>
         </div>
       </div>
     </main>
