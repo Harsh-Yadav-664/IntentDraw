@@ -2,14 +2,10 @@ import { create } from 'zustand'
 import type { Region, RegionGeometry, CanvasTool } from '@/types'
 import { generateUUID } from '@/lib/utils'
 
-// Structural type for the Konva stage — avoids importing konva in a non-client file.
-// Only declares the method we actually call.
 interface StageExporter {
   toDataURL(config?: { pixelRatio?: number }): string
 }
 
-// History lives outside the store so snapshots don't trigger re-renders.
-// Only the boolean flags (canUndo/canRedo) are reactive.
 let _history: Region[][] = [[]]
 let _historyIndex = 0
 
@@ -20,6 +16,9 @@ interface CanvasStore {
   canUndo: boolean
   canRedo: boolean
   _stageInstance: StageExporter | null
+  
+  // Visibility tracking
+  visibility: Record<string, boolean>
 
   setActiveTool: (tool: CanvasTool) => void
   selectRegion: (id: string | null) => void
@@ -31,6 +30,10 @@ interface CanvasStore {
   deleteRegion: (id: string) => void
   clearRegions: () => void
   setRegions: (regions: Region[]) => void
+  
+  // Visibility actions
+  toggleVisibility: (id: string) => void
+  setVisibility: (id: string, visible: boolean) => void
 
   undo: () => void
   redo: () => void
@@ -40,6 +43,22 @@ interface CanvasStore {
   importFromJson: (json: string) => void
 }
 
+// Region colors - Photoshop-like palette
+export const REGION_COLORS = [
+  '#3A7BFF', // Blue
+  '#FF6B35', // Orange
+  '#2EC4B6', // Teal
+  '#E040FB', // Purple
+  '#FFD600', // Yellow
+  '#00E676', // Green
+  '#FF4081', // Pink
+  '#00B0FF', // Light Blue
+  '#76FF03', // Lime
+  '#FF6D00', // Deep Orange
+  '#651FFF', // Deep Purple
+  '#F50057', // Red
+]
+
 export const useCanvasStore = create<CanvasStore>((set, get) => {
   const syncHistoryFlags = () => {
     set({
@@ -48,7 +67,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     })
   }
 
-  // Deep-clone regions and push to history stack (max 50 entries)
   const pushHistory = () => {
     const { regions } = get()
     _history = _history.slice(0, _historyIndex + 1)
@@ -58,7 +76,6 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     syncHistoryFlags()
   }
 
-  // After a region is deleted, close gaps: [1,3] → [1,2]
   const renumber = (regions: Region[]): Region[] =>
     regions.map((r, i) => ({ ...r, regionNumber: i + 1 }))
 
@@ -69,16 +86,18 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     canUndo: false,
     canRedo: false,
     _stageInstance: null,
+    visibility: {},
 
     setActiveTool: (tool) => set({ activeTool: tool, selectedRegionId: null }),
     selectRegion: (id) => set({ selectedRegionId: id }),
     setStageInstance: (stage) => set({ _stageInstance: stage }),
 
     addRegion: (geometry) => {
-      const { regions } = get()
+      const { regions, visibility } = get()
       const now = new Date().toISOString()
+      const newId = generateUUID()
       const newRegion: Region = {
-        id: generateUUID(),
+        id: newId,
         regionNumber: regions.length + 1,
         geometry,
         intent: '',
@@ -87,7 +106,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
         createdAt: now,
         updatedAt: now,
       }
-      set({ regions: [...regions, newRegion] })
+      set({ 
+        regions: [...regions, newRegion],
+        visibility: { ...visibility, [newId]: true }
+      })
       pushHistory()
     },
 
@@ -111,38 +133,61 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     },
 
     deleteRegion: (id) => {
-      const { selectedRegionId } = get()
+      const { selectedRegionId, visibility } = get()
+      const newVisibility = { ...visibility }
+      delete newVisibility[id]
+      
       set((state) => ({
         regions: renumber(state.regions.filter((r) => r.id !== id)),
         selectedRegionId: selectedRegionId === id ? null : selectedRegionId,
+        visibility: newVisibility,
       }))
       pushHistory()
     },
 
     clearRegions: () => {
-      set({ regions: [], selectedRegionId: null })
+      set({ regions: [], selectedRegionId: null, visibility: {} })
       pushHistory()
     },
 
-    setRegions: (regions) => set({ regions }),
+    setRegions: (regions) => {
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, visibility })
+    },
+    
+    toggleVisibility: (id) => {
+      set((state) => ({
+        visibility: { 
+          ...state.visibility, 
+          [id]: state.visibility[id] === false ? true : false 
+        }
+      }))
+    },
+    
+    setVisibility: (id, visible) => {
+      set((state) => ({
+        visibility: { ...state.visibility, [id]: visible }
+      }))
+    },
 
     undo: () => {
       if (_historyIndex <= 0) return
       _historyIndex--
-      set({
-        regions: JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[],
-        selectedRegionId: null,
-      })
+      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, selectedRegionId: null, visibility })
       syncHistoryFlags()
     },
 
     redo: () => {
       if (_historyIndex >= _history.length - 1) return
       _historyIndex++
-      set({
-        regions: JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[],
-        selectedRegionId: null,
-      })
+      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, selectedRegionId: null, visibility })
       syncHistoryFlags()
     },
 
@@ -157,7 +202,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     importFromJson: (json) => {
       try {
         const regions = JSON.parse(json) as Region[]
-        set({ regions, selectedRegionId: null })
+        const visibility: Record<string, boolean> = {}
+        regions.forEach(r => { visibility[r.id] = true })
+        set({ regions, selectedRegionId: null, visibility })
         pushHistory()
       } catch (e) {
         console.error('Failed to import canvas JSON:', e)

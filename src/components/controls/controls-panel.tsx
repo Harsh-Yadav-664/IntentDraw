@@ -1,18 +1,22 @@
 'use client'
 
-import { useCanvasStore } from '@/store/canvas-store'
+import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { useAI } from '@/hooks/use-ai'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
-import { Loader2, Sparkles, Wand2, AlertCircle } from 'lucide-react'
+import { Separator } from '@/components/ui/separator'
+import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2 } from 'lucide-react'
 
 export default function ControlsPanel() {
   const regions = useCanvasStore((s) => s.regions)
   const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
   const selectRegion = useCanvasStore((s) => s.selectRegion)
+  const visibility = useCanvasStore((s) => s.visibility)
+  const toggleVisibility = useCanvasStore((s) => s.toggleVisibility)
+  const deleteRegion = useCanvasStore((s) => s.deleteRegion)
 
   const prompt = useWorkflowStore((s) => s.prompt)
   const setPrompt = useWorkflowStore((s) => s.setPrompt)
@@ -39,61 +43,117 @@ export default function ControlsPanel() {
           <Wand2 className="h-5 w-5" />
           Controls
         </CardTitle>
-        <CardDescription>Describe your design</CardDescription>
+        <CardDescription>Layers & prompt</CardDescription>
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col space-y-4 overflow-hidden">
-        {/* Region List */}
+        {/* Layer Panel */}
         <div className="flex-shrink-0">
-          <h4 className="text-sm font-medium mb-2 flex items-center justify-between">
-            <span>Regions</span>
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium flex items-center gap-1.5">
+              <Layers className="h-4 w-4" />
+              Layers
+            </h4>
             <Badge variant="secondary" className="text-xs">
               {regions.length}
             </Badge>
-          </h4>
+          </div>
 
           {regions.length === 0 ? (
             <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center text-slate-400 text-sm">
-              Draw shapes on the canvas to define regions.
+              Draw shapes on the canvas to create layers.
               <br />
-              <span className="text-xs mt-1 block">Or just write a prompt — regions are optional!</span>
+              <span className="text-xs mt-1 block">Or just write a prompt!</span>
             </div>
           ) : (
-            <div className="space-y-1.5 max-h-32 overflow-y-auto pr-1">
-              {regions.map((r) => (
-                <div
-                  key={r.id}
-                  onClick={() => selectRegion(r.id === selectedRegionId ? null : r.id)}
-                  className={`p-2 rounded-lg border text-sm cursor-pointer transition-all ${
-                    r.id === selectedRegionId
-                      ? 'border-blue-500 bg-blue-50 text-blue-900 shadow-sm'
-                      : 'border-slate-200 hover:border-slate-300 bg-white hover:bg-slate-50'
-                  }`}
-                >
-                  <div className="flex items-center justify-between">
-                    <span className="font-medium">Region {r.regionNumber}</span>
-                    <Badge variant="outline" className="text-xs capitalize">
-                      {r.geometry.type}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+            <div className="border rounded-lg overflow-hidden bg-slate-50">
+              <div className="max-h-40 overflow-y-auto">
+                {/* Reverse to show top layer first (like Photoshop) */}
+                {[...regions].reverse().map((region, reverseIndex) => {
+                  const actualIndex = regions.length - 1 - reverseIndex
+                  const isSelected = region.id === selectedRegionId
+                  const isVisible = visibility[region.id] !== false
+                  const color = REGION_COLORS[actualIndex % REGION_COLORS.length]
+
+                  return (
+                    <div
+                      key={region.id}
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors border-b border-slate-200 last:border-b-0 ${
+                        isSelected
+                          ? 'bg-blue-50'
+                          : 'hover:bg-white'
+                      } ${!isVisible ? 'opacity-50' : ''}`}
+                      onClick={() => selectRegion(isSelected ? null : region.id)}
+                    >
+                      {/* Color dot */}
+                      <span
+                        className="w-3 h-3 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: color }}
+                      />
+
+                      {/* Layer name */}
+                      <span className={`flex-1 text-sm truncate ${isSelected ? 'font-medium text-blue-900' : 'text-slate-700'}`}>
+                        Region {region.regionNumber}
+                      </span>
+
+                      {/* Shape type badge */}
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 capitalize">
+                        {region.geometry.type}
+                      </Badge>
+
+                      {/* Visibility toggle */}
+                      <button
+                        className="p-1 hover:bg-slate-200 rounded transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleVisibility(region.id)
+                        }}
+                      >
+                        {isVisible ? (
+                          <Eye className="h-3.5 w-3.5 text-slate-500" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                        )}
+                      </button>
+
+                      {/* Delete button (only show on hover/selected) */}
+                      {isSelected && (
+                        <button
+                          className="p-1 hover:bg-red-100 rounded transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteRegion(region.id)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
             </div>
           )}
         </div>
 
         {/* Selected Region Info */}
         {selectedRegion && (
-          <div className="flex-shrink-0 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="font-medium text-blue-900 text-sm">
+          <div 
+            className="flex-shrink-0 p-3 rounded-lg border"
+            style={{ 
+              backgroundColor: `${REGION_COLORS[regions.findIndex(r => r.id === selectedRegion.id) % REGION_COLORS.length]}10`,
+              borderColor: `${REGION_COLORS[regions.findIndex(r => r.id === selectedRegion.id) % REGION_COLORS.length]}40`
+            }}
+          >
+            <p className="font-medium text-sm">
               Region {selectedRegion.regionNumber} selected
             </p>
-            <p className="text-blue-700 text-xs mt-1">
+            <p className="text-xs mt-1 text-slate-600">
               {selectedRegion.geometry.type} · {Math.round(selectedRegion.geometry.width)}×
               {Math.round(selectedRegion.geometry.height)}px
             </p>
-            <p className="text-blue-600 text-xs mt-2">
-              Tip: Reference this region in your prompt, e.g., &quot;Region {selectedRegion.regionNumber} is a hero section&quot;
+            <p className="text-xs mt-2 text-slate-500">
+              Tip: Reference as &quot;Region {selectedRegion.regionNumber}&quot; in your prompt
             </p>
           </div>
         )}
@@ -114,6 +174,8 @@ export default function ControlsPanel() {
           </div>
         )}
 
+        <Separator />
+
         {/* Prompt Input */}
         <div className="flex-1 flex flex-col min-h-0">
           <h4 className="text-sm font-medium mb-2">Prompt</h4>
@@ -122,16 +184,16 @@ export default function ControlsPanel() {
             onChange={(e) => setPrompt(e.target.value)}
             placeholder={
               regions.length > 0
-                ? `Describe your design...\n\nExamples:\n• "Region 1 is a hero with a gradient flowing in the arrow direction"\n• "Create a landing page with the layout I drew"\n• "Region 2 should have feature cards with icons"`
-                : `Describe your design...\n\nExamples:\n• "Create a SaaS landing page with hero, features, and pricing"\n• "Build a portfolio site with a minimal dark theme"\n• "Design a signup form with social login buttons"`
+                ? `Describe your design...\n\nExamples:\n• "Region 1 is a hero with gradient"\n• "Create a landing page with my layout"\n• "Region 2 has feature cards"`
+                : `Describe your design...\n\nExamples:\n• "Create a SaaS landing page"\n• "Build a portfolio site"\n• "Design a signup form"`
             }
-            className="flex-1 min-h-[120px] resize-none text-sm"
+            className="flex-1 min-h-[100px] resize-none text-sm"
             disabled={isLoading}
           />
         </div>
 
         {/* Generate Button */}
-        <div className="flex-shrink-0 space-y-3">
+        <div className="flex-shrink-0 space-y-2">
           <Button
             onClick={handleGenerate}
             disabled={!canGenerate}
@@ -156,7 +218,6 @@ export default function ControlsPanel() {
             )}
           </Button>
 
-          {/* Status indicator */}
           {lastProvider && status === 'preview_ready' && (
             <p className="text-xs text-center text-slate-500">
               Generated with {lastProvider === 'gemini' ? 'Gemini' : 'Groq'}

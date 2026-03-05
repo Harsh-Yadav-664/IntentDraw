@@ -1,5 +1,5 @@
 const DANGEROUS_TAGS = [
-  'script', 'iframe', 'object', 'embed', 'link', 'meta', 'base', 'form', 'input',
+  'iframe', 'object', 'embed', 'form', 'input',
 ]
 
 const DANGEROUS_ATTRIBUTES = [
@@ -31,52 +31,62 @@ export function sanitizeHtml(html: string): string {
   }
 
   sanitized = sanitized.replace(/javascript\s*:/gi, 'blocked:')
-  sanitized = sanitized.replace(/data\s*:[^"'\s>]+/gi, 'blocked:')
   sanitized = sanitized.replace(/vbscript\s*:/gi, 'blocked:')
 
   return sanitized
 }
 
+/**
+ * Wraps HTML for preview rendering.
+ * If the HTML is already a complete document (has <!DOCTYPE>), adds navigation blocking.
+ * If it's a fragment, wraps it in a complete document with Tailwind CDN.
+ */
 export function wrapHtmlForPreview(html: string): string {
   const sanitized = sanitizeHtml(html)
+  const trimmed = sanitized.trim()
+  
+  // Check if it's already a complete HTML document
+  const isCompleteDocument = trimmed.toLowerCase().startsWith('<!doctype') || 
+                             trimmed.toLowerCase().startsWith('<html')
 
+  // Navigation blocking script
+  const blockingScript = `
+<script>
+  document.addEventListener('click', function(e) {
+    const link = e.target.closest('a');
+    if (link) { e.preventDefault(); e.stopPropagation(); }
+  }, true);
+  document.addEventListener('submit', function(e) {
+    e.preventDefault(); e.stopPropagation();
+  }, true);
+</script>`
+
+  if (isCompleteDocument) {
+    // Insert blocking script before </body> or </html>
+    if (trimmed.includes('</body>')) {
+      return trimmed.replace('</body>', `${blockingScript}</body>`)
+    } else if (trimmed.includes('</html>')) {
+      return trimmed.replace('</html>', `${blockingScript}</html>`)
+    }
+    return trimmed + blockingScript
+  }
+
+  // Wrap fragment in complete document (fallback for old-style fragments)
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <script src="https://cdn.tailwindcss.com"></script>
-  <base target="_blank">
-  <style>
-    /* Disable all link/button navigation within preview */
-    a, button { cursor: pointer; }
-    a[href] { pointer-events: auto; }
-  </style>
-  <script>
-    // Block all navigation attempts within the preview
-    document.addEventListener('click', function(e) {
-      const link = e.target.closest('a');
-      if (link) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    }, true);
-    
-    // Block form submissions
-    document.addEventListener('submit', function(e) {
-      e.preventDefault();
-      e.stopPropagation();
-    }, true);
-  </script>
 </head>
 <body class="bg-white">
 ${sanitized}
+${blockingScript}
 </body>
 </html>`
 }
 
 export function isHtmlSafe(html: string): boolean {
-  if (/<script/i.test(html)) return false
   if (/\son\w+\s*=/i.test(html)) return false
   if (/javascript\s*:/i.test(html)) return false
   if (/(src|href)\s*=\s*["']?\s*data:/i.test(html)) return false

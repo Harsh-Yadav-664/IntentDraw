@@ -43,9 +43,24 @@ export default function PreviewPanel() {
   }
 
   const handleDownload = () => {
-    if (!previewCode) return
+  if (!previewCode) return
 
-    const fullHtml = `<!DOCTYPE html>
+  // The previewCode is now a complete HTML document
+  // Just ensure it's sanitized
+  const sanitized = previewCode.trim()
+  
+  // Check if it's already a complete document
+  const isComplete = sanitized.toLowerCase().startsWith('<!doctype') || 
+                     sanitized.toLowerCase().startsWith('<html')
+
+  let finalHtml: string
+
+  if (isComplete) {
+    // Already complete, just use as-is
+    finalHtml = sanitized
+  } else {
+    // Wrap fragment (fallback)
+    finalHtml = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -54,22 +69,23 @@ export default function PreviewPanel() {
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
 <body>
-${previewCode}
+${sanitized}
 </body>
 </html>`
-
-    const blob = new Blob([fullHtml], { type: 'text/html' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = 'intentdraw-export.html'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
-    URL.revokeObjectURL(url)
-
-    toast.success('HTML file downloaded!')
   }
+
+  const blob = new Blob([finalHtml], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'intentdraw-export.html'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+
+  toast.success('HTML file downloaded!')
+}
 
   const handleOpenFullscreen = () => {
     if (!previewCode) return

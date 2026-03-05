@@ -13,21 +13,10 @@ import {
   Text as KonvaText,
 } from 'react-konva'
 import type Konva from 'konva'
-import { useCanvasStore } from '@/store/canvas-store'
+import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
 import type { Region, RegionGeometry, CanvasTool } from '@/types'
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
 const MIN_SHAPE_SIZE = 10
-
-const COLORS = {
-  default: { stroke: '#3B82F6', fill: 'rgba(59,130,246,0.08)' },
-  selected: { stroke: '#2563EB', fill: 'rgba(37,99,235,0.15)' },
-  drawing: { stroke: '#93C5FD', fill: 'rgba(147,197,253,0.15)' },
-  label: { bg: '#FFFFFF', text: '#1E40AF', border: '#93C5FD' },
-}
 
 const CURSOR_MAP: Record<CanvasTool, string> = {
   select: 'default',
@@ -37,10 +26,6 @@ const CURSOR_MAP: Record<CanvasTool, string> = {
   arrow: 'crosshair',
 }
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface DrawingState {
   startX: number
   startY: number
@@ -48,10 +33,6 @@ interface DrawingState {
   currentY: number
   points: number[]
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export default function DrawingCanvas() {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -62,18 +43,35 @@ export default function DrawingCanvas() {
   const [stageSize, setStageSize] = useState({ width: 800, height: 500 })
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
 
-  // Store selectors — each subscribes only to what it reads
   const regions = useCanvasStore((s) => s.regions)
   const activeTool = useCanvasStore((s) => s.activeTool)
   const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
+  const visibility = useCanvasStore((s) => s.visibility)
   const addRegion = useCanvasStore((s) => s.addRegion)
   const updateRegionGeometry = useCanvasStore((s) => s.updateRegionGeometry)
   const selectRegion = useCanvasStore((s) => s.selectRegion)
   const setStageInstance = useCanvasStore((s) => s.setStageInstance)
 
-  // -------------------------------------------------------------------------
-  // Canvas sizing — watches container width and maintains 16:10 aspect ratio
-  // -------------------------------------------------------------------------
+  // Opacity logic - Photoshop-like focus
+  const getShapeOpacity = useCallback((regionId: string): number => {
+    // Hidden shapes
+    if (visibility[regionId] === false) return 0
+    
+    // No selection - all slightly visible
+    if (!selectedRegionId) return 0.85
+    
+    // Selected shape - full opacity
+    if (regionId === selectedRegionId) return 1.0
+    
+    // Other shapes when something is selected - dimmed
+    return 0.25
+  }, [selectedRegionId, visibility])
+
+  // Get color for region based on index
+  const getRegionColor = useCallback((regionIndex: number): string => {
+    return REGION_COLORS[regionIndex % REGION_COLORS.length]
+  }, [])
+
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -87,15 +85,11 @@ export default function DrawingCanvas() {
     return () => observer.disconnect()
   }, [])
 
-  // Store the Stage reference so store.exportToPng() works from anywhere
   useEffect(() => {
     if (stageRef.current) setStageInstance(stageRef.current)
     return () => setStageInstance(null)
   }, [setStageInstance])
 
-  // -------------------------------------------------------------------------
-  // Sync Transformer handles to the currently selected rectangle
-  // -------------------------------------------------------------------------
   useEffect(() => {
     const tr = transformerRef.current
     if (!tr) return
@@ -111,18 +105,10 @@ export default function DrawingCanvas() {
     tr.getLayer()?.batchDraw()
   }, [selectedRegionId, regions])
 
-  // -------------------------------------------------------------------------
-  // Pointer position from Konva stage
-  // -------------------------------------------------------------------------
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
     return stageRef.current?.getPointerPosition() ?? null
   }, [])
 
-  // -------------------------------------------------------------------------
-  // Drawing lifecycle — three functions with no event params
-  // -------------------------------------------------------------------------
-
-  // Begin a new shape at the current pointer position
   const startDrawing = useCallback(() => {
     const pos = getPointerPos()
     if (!pos) return
@@ -135,7 +121,6 @@ export default function DrawingCanvas() {
     })
   }, [activeTool, getPointerPos])
 
-  // Update the temporary shape as the pointer moves
   const continueDrawing = useCallback(() => {
     if (!drawing) return
     const pos = getPointerPos()
@@ -157,7 +142,6 @@ export default function DrawingCanvas() {
     }
   }, [drawing, activeTool, getPointerPos])
 
-  // Finalize the shape — convert to Region and add to store if big enough
   const finishDrawing = useCallback(() => {
     if (!drawing) return
 
@@ -238,10 +222,6 @@ export default function DrawingCanvas() {
     setDrawing(null)
   }, [drawing, activeTool, addRegion])
 
-  // -------------------------------------------------------------------------
-  // Shape interaction helpers — read position from shapeRefs, not events
-  // -------------------------------------------------------------------------
-
   const handleShapeClick = useCallback(
     (regionId: string) => {
       if (activeTool === 'select') selectRegion(regionId)
@@ -249,14 +229,12 @@ export default function DrawingCanvas() {
     [activeTool, selectRegion]
   )
 
-  // Called after Konva finishes a drag. Reads new position from the node ref.
   const handleDragEnd = useCallback(
     (regionId: string, geometryType: string, geoWidth: number, geoHeight: number) => {
       const node = shapeRefs.current[regionId]
       if (!node) return
 
       if (geometryType === 'circle') {
-        // Konva positions Ellipse at center; convert back to top-left
         updateRegionGeometry(regionId, {
           x: node.x() - geoWidth / 2,
           y: node.y() - geoHeight / 2,
@@ -271,7 +249,6 @@ export default function DrawingCanvas() {
     [updateRegionGeometry]
   )
 
-  // Called after Transformer finishes. Reads scale, computes real px size, resets scale to 1.
   const handleTransformEnd = useCallback(
     (regionId: string) => {
       const node = shapeRefs.current[regionId]
@@ -292,16 +269,17 @@ export default function DrawingCanvas() {
     [updateRegionGeometry]
   )
 
-  // -------------------------------------------------------------------------
-  // Render a stored region as the correct Konva shape
-  // -------------------------------------------------------------------------
-  const renderRegion = (region: Region) => {
+  const renderRegion = (region: Region, index: number) => {
     const { geometry, id } = region
     const isSelected = id === selectedRegionId
-    const colors = isSelected ? COLORS.selected : COLORS.default
-    const isDraggable = activeTool === 'select'
+    const isVisible = visibility[id] !== false
+    const regionColor = getRegionColor(index)
+    const opacity = getShapeOpacity(id)
+    const isDraggable = activeTool === 'select' && isVisible
 
-    // Shared props for every shape type
+    // Don't render invisible shapes
+    if (!isVisible) return null
+
     const commonProps = {
       onClick: () => handleShapeClick(id),
       onTap: () => handleShapeClick(id),
@@ -310,86 +288,137 @@ export default function DrawingCanvas() {
       draggable: isDraggable,
     }
 
-    switch (geometry.type) {
-      case 'rectangle':
-        return (
-          <Rect
-            key={id}
-            ref={(node) => { if (node) shapeRefs.current[id] = node }}
-            x={geometry.x}
-            y={geometry.y}
-            width={geometry.width}
-            height={geometry.height}
-            stroke={colors.stroke}
-            strokeWidth={isSelected ? 2.5 : 2}
-            fill={colors.fill}
-            cornerRadius={2}
-            {...commonProps}
-          />
-        )
+    const strokeWidth = isSelected ? 3 : 2
+    const fillOpacity = isSelected ? 0.15 : 0.08
 
-      case 'circle':
-        return (
-          <Ellipse
-            key={id}
-            ref={(node) => { if (node) shapeRefs.current[id] = node }}
-            x={geometry.x + geometry.width / 2}
-            y={geometry.y + geometry.height / 2}
-            radiusX={geometry.width / 2}
-            radiusY={geometry.height / 2}
-            stroke={colors.stroke}
-            strokeWidth={isSelected ? 2.5 : 2}
-            fill={colors.fill}
-            {...commonProps}
-          />
-        )
+    const renderShape = () => {
+      switch (geometry.type) {
+        case 'rectangle':
+          return (
+            <Rect
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x}
+              y={geometry.y}
+              width={geometry.width}
+              height={geometry.height}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              fill={regionColor}
+              fillEnabled={true}
+              opacity={fillOpacity}
+              cornerRadius={3}
+              {...commonProps}
+            />
+          )
 
-      case 'freeform':
-        return (
-          <Line
-            key={id}
-            ref={(node) => { if (node) shapeRefs.current[id] = node }}
-            x={geometry.x}
-            y={geometry.y}
-            points={geometry.path?.flatMap((p) => [p.x, p.y]) ?? []}
-            stroke={colors.stroke}
-            strokeWidth={isSelected ? 3 : 2}
-            lineCap="round"
-            lineJoin="round"
-            tension={0.4}
-            {...commonProps}
-          />
-        )
+        case 'circle':
+          return (
+            <Ellipse
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x + geometry.width / 2}
+              y={geometry.y + geometry.height / 2}
+              radiusX={geometry.width / 2}
+              radiusY={geometry.height / 2}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              fill={regionColor}
+              fillEnabled={true}
+              opacity={fillOpacity}
+              {...commonProps}
+            />
+          )
 
-      case 'arrow':
-        return (
-          <KonvaArrow
-            key={id}
-            ref={(node) => { if (node) shapeRefs.current[id] = node }}
-            x={geometry.x}
-            y={geometry.y}
-            points={geometry.path?.flatMap((p) => [p.x, p.y]) ?? []}
-            stroke={colors.stroke}
-            strokeWidth={isSelected ? 3 : 2}
-            fill={colors.stroke}
-            pointerLength={12}
-            pointerWidth={10}
-            {...commonProps}
-          />
-        )
+        case 'freeform':
+          return (
+            <Line
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x}
+              y={geometry.y}
+              points={geometry.path?.flatMap((p) => [p.x, p.y]) ?? []}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              lineCap="round"
+              lineJoin="round"
+              tension={0.4}
+              {...commonProps}
+            />
+          )
 
-      default:
-        return null
+        case 'arrow':
+          return (
+            <KonvaArrow
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x}
+              y={geometry.y}
+              points={geometry.path?.flatMap((p) => [p.x, p.y]) ?? []}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              fill={regionColor}
+              pointerLength={12}
+              pointerWidth={10}
+              {...commonProps}
+            />
+          )
+
+        default:
+          return null
+      }
     }
+
+    return (
+      <Group key={id} opacity={opacity}>
+        {renderShape()}
+      </Group>
+    )
   }
 
-  // -------------------------------------------------------------------------
-  // Render the dashed preview shape while the user is drawing
-  // -------------------------------------------------------------------------
+  const renderLabel = (region: Region, index: number) => {
+    const { geometry, regionNumber, id } = region
+    const isVisible = visibility[id] !== false
+    
+    if (!isVisible) return null
+    
+    const opacity = getShapeOpacity(id)
+    const regionColor = getRegionColor(index)
+    const text = `R${regionNumber}`
+    const w = 28
+    const h = 18
+
+    let lx = geometry.x
+    let ly = geometry.y - h - 4
+    if (ly < 0) ly = geometry.y + 4
+    if (lx < 0) lx = 0
+
+    return (
+      <Group key={`label-${id}`} x={lx} y={ly} opacity={opacity} listening={false}>
+        <Rect
+          width={w}
+          height={h}
+          fill={regionColor}
+          cornerRadius={4}
+          shadowColor="rgba(0,0,0,0.15)"
+          shadowBlur={4}
+          shadowOffsetY={1}
+        />
+        <KonvaText
+          text={text}
+          fontSize={11}
+          fontFamily="Inter, system-ui, sans-serif"
+          fontStyle="bold"
+          fill="#FFFFFF"
+          width={w}
+          height={h}
+          align="center"
+          verticalAlign="middle"
+        />
+      </Group>
+    )
+  }
+
   const renderDrawingPreview = () => {
     if (!drawing) return null
     const { startX, startY, currentX, currentY, points } = drawing
-    const c = COLORS.drawing
+    const previewColor = REGION_COLORS[regions.length % REGION_COLORS.length]
 
     switch (activeTool) {
       case 'rectangle':
@@ -399,11 +428,12 @@ export default function DrawingCanvas() {
             y={Math.min(startY, currentY)}
             width={Math.abs(currentX - startX)}
             height={Math.abs(currentY - startY)}
-            stroke={c.stroke}
+            stroke={previewColor}
             strokeWidth={2}
-            fill={c.fill}
+            fill={previewColor}
+            opacity={0.15}
             dash={[6, 3]}
-            cornerRadius={2}
+            cornerRadius={3}
           />
         )
       case 'circle':
@@ -413,9 +443,10 @@ export default function DrawingCanvas() {
             y={(startY + currentY) / 2}
             radiusX={Math.abs(currentX - startX) / 2}
             radiusY={Math.abs(currentY - startY) / 2}
-            stroke={c.stroke}
+            stroke={previewColor}
             strokeWidth={2}
-            fill={c.fill}
+            fill={previewColor}
+            opacity={0.15}
             dash={[6, 3]}
           />
         )
@@ -425,7 +456,7 @@ export default function DrawingCanvas() {
             x={startX}
             y={startY}
             points={points}
-            stroke={c.stroke}
+            stroke={previewColor}
             strokeWidth={2}
             lineCap="round"
             lineJoin="round"
@@ -438,9 +469,9 @@ export default function DrawingCanvas() {
             x={startX}
             y={startY}
             points={[0, 0, currentX - startX, currentY - startY]}
-            stroke={c.stroke}
+            stroke={previewColor}
             strokeWidth={2}
-            fill={c.stroke}
+            fill={previewColor}
             pointerLength={12}
             pointerWidth={10}
             dash={[6, 3]}
@@ -451,51 +482,6 @@ export default function DrawingCanvas() {
     }
   }
 
-  // -------------------------------------------------------------------------
-  // Render region number label above each shape
-  // -------------------------------------------------------------------------
-  const renderLabel = (region: Region) => {
-    const { geometry, regionNumber } = region
-    const text = `R${regionNumber}`
-    const w = 30
-    const h = 20
-
-    let lx = geometry.x
-    let ly = geometry.y - h - 4
-    if (ly < 0) ly = geometry.y + 4
-    if (lx < 0) lx = 0
-
-    return (
-      <Group key={`label-${region.id}`} x={lx} y={ly} listening={false}>
-        <Rect
-          width={w}
-          height={h}
-          fill={COLORS.label.bg}
-          stroke={COLORS.label.border}
-          strokeWidth={1}
-          cornerRadius={4}
-          shadowColor="rgba(0,0,0,0.08)"
-          shadowBlur={4}
-          shadowOffsetY={1}
-        />
-        <KonvaText
-          text={text}
-          fontSize={11}
-          fontFamily="Inter, system-ui, sans-serif"
-          fontStyle="bold"
-          fill={COLORS.label.text}
-          width={w}
-          height={h}
-          align="center"
-          verticalAlign="middle"
-        />
-      </Group>
-    )
-  }
-
-  // -------------------------------------------------------------------------
-  // Render
-  // -------------------------------------------------------------------------
   return (
     <div
       ref={containerRef}
@@ -507,7 +493,6 @@ export default function DrawingCanvas() {
         width={stageSize.width}
         height={stageSize.height}
         onMouseDown={(e) => {
-          // Select tool: click empty area (stage background) to deselect
           if (activeTool === 'select') {
             if (e.target === stageRef.current) selectRegion(null)
             return
@@ -524,7 +509,6 @@ export default function DrawingCanvas() {
         onTouchEnd={finishDrawing}
       >
         <Layer>
-          {/* White background — listening={false} so clicks pass to Stage */}
           <Rect
             x={0}
             y={0}
@@ -534,16 +518,16 @@ export default function DrawingCanvas() {
             listening={false}
           />
 
-          {regions.map(renderRegion)}
+          {regions.map((region, index) => renderRegion(region, index))}
           {renderDrawingPreview()}
-          {regions.map(renderLabel)}
+          {regions.map((region, index) => renderLabel(region, index))}
 
           {activeTool === 'select' && (
             <Transformer
               ref={transformerRef}
-              borderStroke="#2563EB"
+              borderStroke="#3A7BFF"
               borderStrokeWidth={1.5}
-              anchorStroke="#2563EB"
+              anchorStroke="#3A7BFF"
               anchorFill="#FFFFFF"
               anchorSize={8}
               anchorCornerRadius={2}
