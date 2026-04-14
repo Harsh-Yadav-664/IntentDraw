@@ -1,11 +1,40 @@
 import { NextResponse } from 'next/server'
 import { regenerateRegion } from '@/lib/ai/provider'
 import { sanitizeHtml } from '@/lib/utils/sanitize'
-import { checkRateLimit, incrementUsage } from '@/lib/middleware/rate-limit'
+import { checkAndIncrementUsage } from '@/lib/middleware/rate-limit'
+import { createClient } from '@/lib/supabase/server'
 import type { Region } from '@/types'
 
 export async function POST(request: Request) {
   try {
+    // --- Auth: get real user ID ---
+    const supabase = await createClient()
+    const { data: { user }, error: authError } = await supabase.auth.getUser()
+
+    if (authError || !user) {
+      return NextResponse.json(
+        { success: false, error: 'Unauthorized. Please sign in.' },
+        { status: 401 }
+      )
+    }
+
+    const userId = user.id
+
+    // --- Rate limiting: atomic check + increment ---
+    const rateLimit = await checkAndIncrementUsage(userId)
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Daily limit reached (${rateLimit.limit} generations). Resets at ${new Date(rateLimit.resetAt).toLocaleTimeString()}.`,
+          remaining: 0,
+          resetAt: rateLimit.resetAt,
+        },
+        { status: 429 }
+      )
+    }
+
+    // --- Parse body ---
     const body = await request.json()
     const { regionNumber, prompt, existingCode, regions } = body as {
       regionNumber?: number
@@ -50,14 +79,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // --- Rate limiting ---
-    const rateLimit = await checkRateLimit('anonymous')
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, error: 'Rate limit reached. Try again tomorrow.' },
-        { status: 429 }
-      )
-    }
+    console.log(`[Regenerate] user=${userId} | region=${regionNumber} | prompt: "${prompt.substring(0, 100)}..."`)
 
     // --- Call AI ---
     const result = await regenerateRegion(
@@ -74,17 +96,19 @@ export async function POST(request: Request) {
       )
     }
 
-    // --- Sanitize ---
     const sanitizedCode = sanitizeHtml(result.code)
-
-    // --- Track usage ---
-    await incrementUsage('anonymous')
 
     return NextResponse.json({
       success: true,
       data: {
         code: sanitizedCode,
         provider: result.provider,
+        usage: {
+          remaining: rateLimit.remaining,
+          used: rateLimit.used,
+          limit: rateLimit.limit,
+          resetAt: rateLimit.resetAt,
+        },
       },
     })
   } catch (error) {

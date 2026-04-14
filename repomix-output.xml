@@ -1,0 +1,754 @@
+This file is a merged representation of a subset of the codebase, containing specifically included files, combined into a single document by Repomix.
+
+<file_summary>
+This section contains a summary of this file.
+
+<purpose>
+This file contains a packed representation of a subset of the repository's contents that is considered the most important context.
+It is designed to be easily consumable by AI systems for analysis, code review,
+or other automated processes.
+</purpose>
+
+<file_format>
+The content is organized as follows:
+1. This summary section
+2. Repository information
+3. Directory structure
+4. Repository files (if enabled)
+5. Multiple file entries, each consisting of:
+  - File path as an attribute
+  - Full contents of the file
+</file_format>
+
+<usage_guidelines>
+- This file should be treated as read-only. Any changes should be made to the
+  original repository files, not this packed version.
+- When processing this file, use the file path to distinguish
+  between different files in the repository.
+- Be aware that this file may contain sensitive information. Handle it with
+  the same level of security as you would the original repository.
+</usage_guidelines>
+
+<notes>
+- Some files may have been excluded based on .gitignore rules and Repomix's configuration
+- Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
+- Only files matching these patterns are included: src/lib/middleware/rate-limit.ts, src/app/api/generate/route.ts, src/app/api/analyze-drawing/route.ts, src/app/api/regenerate-region/route.ts, src/lib/supabase/server.ts, src/lib/supabase/client.ts
+- Files matching patterns in .gitignore are excluded
+- Files matching default ignore patterns are excluded
+- Files are sorted by Git change count (files with more changes are at the bottom)
+</notes>
+
+</file_summary>
+
+<directory_structure>
+src/app/api/analyze-drawing/route.ts
+src/app/api/generate/route.ts
+src/app/api/regenerate-region/route.ts
+src/lib/middleware/rate-limit.ts
+src/lib/supabase/client.ts
+src/lib/supabase/server.ts
+</directory_structure>
+
+<files>
+This section contains the contents of the repository's files.
+
+<file path="src/lib/supabase/client.ts">
+// =============================================================================
+// Browser Supabase Client
+// =============================================================================
+// Use this in Client Components ('use client')
+// Creates a new client instance per call - safe for browser usage
+// =============================================================================
+
+import { createBrowserClient } from '@supabase/ssr'
+import type { Database } from './types'
+
+export function createClient() {
+  return createBrowserClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  )
+}
+</file>
+
+<file path="src/lib/supabase/server.ts">
+// =============================================================================
+// Server Supabase Client
+// =============================================================================
+// Use this in:
+//   - Server Components
+//   - API Routes (route.ts files)
+//   - Server Actions
+//
+// This client reads/writes cookies for session management.
+// Must be called with `await` because cookies() is async in Next.js 15+
+// =============================================================================
+
+import { createServerClient } from '@supabase/ssr'
+import { cookies } from 'next/headers'
+import type { Database } from './types'
+
+export async function createClient() {
+  const cookieStore = await cookies()
+
+  return createServerClient<Database>(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll() {
+          return cookieStore.getAll()
+        },
+        setAll(cookiesToSet) {
+          try {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
+          } catch {
+            // The `setAll` method was called from a Server Component.
+            // This can be ignored if you have middleware refreshing
+            // user sessions.
+          }
+        },
+      },
+    }
+  )
+}
+
+// =============================================================================
+// Admin Client (Service Role)
+// =============================================================================
+// Use this ONLY for server-side operations that need to bypass RLS
+// NEVER expose this to the client
+// =============================================================================
+
+import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+
+let _adminClient: ReturnType<typeof createSupabaseClient<Database>> | null = null
+
+export function createAdminClient() {
+  if (_adminClient) return _adminClient
+
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+
+  if (!url || !serviceKey) {
+    throw new Error('Missing Supabase admin credentials')
+  }
+
+  _adminClient = createSupabaseClient<Database>(url, serviceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  })
+
+  return _adminClient
+}
+</file>
+
+<file path="src/app/api/analyze-drawing/route.ts">
+import { NextResponse } from 'next/server'
+import { analyzeDrawing } from '@/lib/ai/provider'
+import { checkRateLimit } from '@/lib/middleware/rate-limit'
+
+// Max payload size: ~5MB for canvas PNG
+const MAX_IMAGE_SIZE = 5 * 1024 * 1024
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { imageData } = body as { imageData?: string }
+
+    // --- Input validation ---
+    if (!imageData || typeof imageData !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'Missing or invalid imageData' },
+        { status: 400 }
+      )
+    }
+
+    // Check approximate size (base64 is ~33% larger than binary)
+    if (imageData.length > MAX_IMAGE_SIZE) {
+      return NextResponse.json(
+        { success: false, error: 'Image too large. Max 5MB.' },
+        { status: 400 }
+      )
+    }
+
+    // Must look like a base64 data URL or raw base64
+    if (!imageData.startsWith('data:image/') && !/^[A-Za-z0-9+/=]+$/.test(imageData.slice(0, 100))) {
+      return NextResponse.json(
+        { success: false, error: 'Invalid image format' },
+        { status: 400 }
+      )
+    }
+
+    // --- Rate limiting (stub for now, enforced in Phase 4) ---
+    const rateLimit = await checkRateLimit('anonymous')
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: `Rate limit reached. Resets at ${rateLimit.resetAt}` },
+        { status: 429 }
+      )
+    }
+
+    // --- Call AI ---
+    const result = await analyzeDrawing(imageData)
+
+    if (!result.success) {
+      return NextResponse.json(
+        { success: false, error: result.error },
+        { status: 502 }
+      )
+    }
+
+    return NextResponse.json({
+      success: true,
+      data: { regions: result.regions },
+    })
+  } catch (error) {
+    // Don't leak internal errors to client
+    console.error('[API analyze-drawing]', error)
+    return NextResponse.json(
+      { success: false, error: 'Failed to analyze drawing. Please try again.' },
+      { status: 500 }
+    )
+  }
+}
+</file>
+
+<file path="src/app/api/generate/route.ts">
+import { NextResponse } from 'next/server'
+import { generateCode } from '@/lib/ai/provider'
+import { sanitizeHtml } from '@/lib/utils/sanitize'
+import { checkRateLimit, incrementUsage } from '@/lib/middleware/rate-limit'
+import type { Region } from '@/types'
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { regions, prompt, globalTheme } = body as {
+      regions?: Region[]
+      prompt?: string
+      globalTheme?: string
+    }
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Prompt is required' },
+        { status: 400 }
+      )
+    }
+
+    if (prompt.length > 10000) {
+      return NextResponse.json(
+        { success: false, error: 'Prompt too long. Max 10000 characters.' },
+        { status: 400 }
+      )
+    }
+
+    const validRegions = Array.isArray(regions) ? regions : []
+
+    const rateLimit = await checkRateLimit('anonymous')
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: `Rate limit reached. Resets tomorrow.`, remaining: rateLimit.remaining },
+        { status: 429 }
+      )
+    }
+
+    // Log the layout being sent (helpful for debugging)
+    console.log(`[Generate] ${validRegions.length} regions, prompt: "${prompt.substring(0, 100)}..."`)
+
+    const result = await generateCode(validRegions, prompt.trim(), globalTheme)
+
+    if (!result.success || !result.code) {
+      return NextResponse.json(
+        { success: false, error: result.error || 'Generation failed' },
+        { status: 502 }
+      )
+    }
+
+    const sanitizedCode = sanitizeHtml(result.code)
+
+    await incrementUsage('anonymous')
+
+    return NextResponse.json({
+      success: true,
+      data: { code: sanitizedCode, provider: result.provider },
+    })
+  } catch (error) {
+    console.error('[API generate]', error)
+    return NextResponse.json(
+      { success: false, error: 'Generation failed. Please try again.' },
+      { status: 500 }
+    )
+  }
+}
+</file>
+
+<file path="src/app/api/regenerate-region/route.ts">
+import { NextResponse } from 'next/server'
+import { regenerateRegion } from '@/lib/ai/provider'
+import { sanitizeHtml } from '@/lib/utils/sanitize'
+import { checkRateLimit, incrementUsage } from '@/lib/middleware/rate-limit'
+import type { Region } from '@/types'
+
+export async function POST(request: Request) {
+  try {
+    const body = await request.json()
+    const { regionNumber, prompt, existingCode, regions } = body as {
+      regionNumber?: number
+      prompt?: string
+      existingCode?: string
+      regions?: Region[]
+    }
+
+    // --- Input validation ---
+    if (!regionNumber || typeof regionNumber !== 'number') {
+      return NextResponse.json(
+        { success: false, error: 'regionNumber is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Prompt is required' },
+        { status: 400 }
+      )
+    }
+
+    if (!existingCode || typeof existingCode !== 'string') {
+      return NextResponse.json(
+        { success: false, error: 'Existing code is required for region regeneration' },
+        { status: 400 }
+      )
+    }
+
+    if (!Array.isArray(regions) || regions.length === 0) {
+      return NextResponse.json(
+        { success: false, error: 'Regions array is required' },
+        { status: 400 }
+      )
+    }
+
+    if (prompt.length > 5000) {
+      return NextResponse.json(
+        { success: false, error: 'Prompt too long. Max 5000 characters.' },
+        { status: 400 }
+      )
+    }
+
+    // --- Rate limiting ---
+    const rateLimit = await checkRateLimit('anonymous')
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { success: false, error: 'Rate limit reached. Try again tomorrow.' },
+        { status: 429 }
+      )
+    }
+
+    // --- Call AI ---
+    const result = await regenerateRegion(
+      regionNumber,
+      prompt.trim(),
+      existingCode,
+      regions
+    )
+
+    if (!result.success || !result.code) {
+      return NextResponse.json(
+        { success: false, error: result.error || 'Regeneration failed' },
+        { status: 502 }
+      )
+    }
+
+    // --- Sanitize ---
+    const sanitizedCode = sanitizeHtml(result.code)
+
+    // --- Track usage ---
+    await incrementUsage('anonymous')
+
+    return NextResponse.json({
+      success: true,
+      data: {
+        code: sanitizedCode,
+        provider: result.provider,
+      },
+    })
+  } catch (error) {
+    console.error('[API regenerate-region]', error)
+    return NextResponse.json(
+      { success: false, error: 'Regeneration failed. Please try again.' },
+      { status: 500 }
+    )
+  }
+}
+</file>
+
+<file path="src/lib/middleware/rate-limit.ts">
+// =============================================================================
+// Rate Limiting with Supabase Usage Table
+// =============================================================================
+// Architecture:
+// - Layer 1 (IP-based): Vercel Edge Config / middleware - burst protection
+// - Layer 2 (User-based): This module - daily cap from usage table
+//
+// This implements Layer 2: per-user daily generation limits.
+// All AI routes MUST call checkRateLimit() and respect the result.
+// =============================================================================
+
+import { createAdminClient } from '@/lib/supabase'
+
+// =============================================================================
+// Configuration
+// =============================================================================
+
+const DEFAULT_MAX_GENERATIONS = 10
+const MAX_GENERATIONS = parseInt(
+  process.env.RATE_LIMIT_MAX_GENERATIONS || String(DEFAULT_MAX_GENERATIONS),
+  10
+)
+
+// =============================================================================
+// Types
+// =============================================================================
+
+export interface RateLimitResult {
+  allowed: boolean
+  remaining: number
+  used: number
+  limit: number
+  resetAt: string
+}
+
+export interface UsageStats {
+  used: number
+  limit: number
+  remaining: number
+  resetAt: string
+}
+
+// =============================================================================
+// Helper Functions
+// =============================================================================
+
+/**
+ * Get the start of tomorrow (midnight UTC) as ISO string.
+ * This is when the rate limit resets.
+ */
+function getResetTime(): string {
+  const now = new Date()
+  const tomorrow = new Date(Date.UTC(
+    now.getUTCFullYear(),
+    now.getUTCMonth(),
+    now.getUTCDate() + 1,
+    0, 0, 0, 0
+  ))
+  return tomorrow.toISOString()
+}
+
+/**
+ * Get today's date in YYYY-MM-DD format (UTC).
+ */
+function getTodayUTC(): string {
+  return new Date().toISOString().split('T')[0]
+}
+
+// =============================================================================
+// Rate Limit Check
+// =============================================================================
+
+/**
+ * Checks if a user is allowed to make an AI generation request.
+ *
+ * @param userId - The authenticated user's ID
+ * @returns RateLimitResult with allowed status and usage info
+ */
+export async function checkRateLimit(userId: string): Promise<RateLimitResult> {
+  if (!userId || userId === 'anonymous') {
+    console.warn('[RateLimit] Anonymous user - allowing request (auth required for tracking)')
+    return {
+      allowed: true,
+      remaining: MAX_GENERATIONS,
+      used: 0,
+      limit: MAX_GENERATIONS,
+      resetAt: getResetTime(),
+    }
+  }
+
+  try {
+    const supabase = createAdminClient()
+    const today = getTodayUTC()
+
+    const { data: usage, error } = await supabase
+      .from('usage')
+      .select('generation_count')
+      .eq('user_id', userId)
+      .eq('date', today)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('[RateLimit] Database error:', error)
+      return {
+        allowed: true,
+        remaining: MAX_GENERATIONS,
+        used: 0,
+        limit: MAX_GENERATIONS,
+        resetAt: getResetTime(),
+      }
+    }
+
+    const currentCount = usage?.generation_count ?? 0
+    const remaining = Math.max(0, MAX_GENERATIONS - currentCount)
+    const allowed = currentCount < MAX_GENERATIONS
+
+    return {
+      allowed,
+      remaining,
+      used: currentCount,
+      limit: MAX_GENERATIONS,
+      resetAt: getResetTime(),
+    }
+  } catch (error) {
+    console.error('[RateLimit] Unexpected error:', error)
+    return {
+      allowed: true,
+      remaining: MAX_GENERATIONS,
+      used: 0,
+      limit: MAX_GENERATIONS,
+      resetAt: getResetTime(),
+    }
+  }
+}
+
+// =============================================================================
+// Increment Usage
+// =============================================================================
+
+/**
+ * Increments the generation count for a user.
+ * Creates a new usage record if none exists for today.
+ *
+ * @param userId - The authenticated user's ID
+ * @returns The updated usage stats, or null if increment failed
+ */
+export async function incrementUsage(userId: string): Promise<UsageStats | null> {
+  if (!userId || userId === 'anonymous') {
+    console.warn('[RateLimit] Cannot track usage for anonymous user')
+    return null
+  }
+
+  try {
+    const supabase = createAdminClient()
+    const today = getTodayUTC()
+
+    const { data, error } = await supabase.rpc('increment_usage', {
+      p_user_id: userId,
+      p_max_generations: MAX_GENERATIONS,
+    })
+
+    if (error) {
+      console.error('[RateLimit] RPC error, falling back to manual upsert:', error)
+      return await manualIncrementUsage(userId, today)
+    }
+
+    const result = data?.[0]
+    if (!result) {
+      console.error('[RateLimit] RPC returned no data')
+      return await manualIncrementUsage(userId, today)
+    }
+
+    return {
+      used: result.current_count,
+      limit: MAX_GENERATIONS,
+      remaining: result.remaining,
+      resetAt: getResetTime(),
+    }
+  } catch (error) {
+    console.error('[RateLimit] Unexpected error in incrementUsage:', error)
+    return null
+  }
+}
+
+/**
+ * Manual fallback for incrementing usage when RPC is not available.
+ * Uses upsert with conflict handling.
+ */
+async function manualIncrementUsage(userId: string, today: string): Promise<UsageStats | null> {
+  try {
+    const supabase = createAdminClient()
+
+    const { data: existing } = await supabase
+      .from('usage')
+      .select('id, generation_count')
+      .eq('user_id', userId)
+      .eq('date', today)
+      .single()
+
+    if (existing) {
+      const newCount = existing.generation_count + 1
+      const { error: updateError } = await supabase
+        .from('usage')
+        .update({
+          generation_count: newCount,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', existing.id)
+
+      if (updateError) {
+        console.error('[RateLimit] Update error:', updateError)
+        return null
+      }
+
+      return {
+        used: newCount,
+        limit: MAX_GENERATIONS,
+        remaining: Math.max(0, MAX_GENERATIONS - newCount),
+        resetAt: getResetTime(),
+      }
+    } else {
+      const { error: insertError } = await supabase
+        .from('usage')
+        .insert({
+          user_id: userId,
+          date: today,
+          generation_count: 1,
+        })
+
+      if (insertError) {
+        if (insertError.code === '23505') {
+          return await manualIncrementUsage(userId, today)
+        }
+        console.error('[RateLimit] Insert error:', insertError)
+        return null
+      }
+
+      return {
+        used: 1,
+        limit: MAX_GENERATIONS,
+        remaining: MAX_GENERATIONS - 1,
+        resetAt: getResetTime(),
+      }
+    }
+  } catch (error) {
+    console.error('[RateLimit] Manual increment error:', error)
+    return null
+  }
+}
+
+// =============================================================================
+// Get Usage Stats (for UI display)
+// =============================================================================
+
+/**
+ * Gets the current usage stats for a user.
+ * Useful for displaying remaining generations in the UI.
+ *
+ * @param userId - The authenticated user's ID
+ * @returns Current usage stats
+ */
+export async function getUsageStats(userId: string): Promise<UsageStats> {
+  const defaultStats: UsageStats = {
+    used: 0,
+    limit: MAX_GENERATIONS,
+    remaining: MAX_GENERATIONS,
+    resetAt: getResetTime(),
+  }
+
+  if (!userId || userId === 'anonymous') {
+    return defaultStats
+  }
+
+  try {
+    const supabase = createAdminClient()
+    const today = getTodayUTC()
+
+    const { data: usage, error } = await supabase
+      .from('usage')
+      .select('generation_count')
+      .eq('user_id', userId)
+      .eq('date', today)
+      .single()
+
+    if (error && error.code !== 'PGRST116') {
+      console.error('[RateLimit] Error fetching usage stats:', error)
+      return defaultStats
+    }
+
+    const used = usage?.generation_count ?? 0
+    return {
+      used,
+      limit: MAX_GENERATIONS,
+      remaining: Math.max(0, MAX_GENERATIONS - used),
+      resetAt: getResetTime(),
+    }
+  } catch (error) {
+    console.error('[RateLimit] Unexpected error in getUsageStats:', error)
+    return defaultStats
+  }
+}
+
+// =============================================================================
+// Check and Increment (Atomic Operation)
+// =============================================================================
+
+/**
+ * Atomically checks rate limit AND increments usage in one operation.
+ * Use this when you want to reserve a generation slot.
+ *
+ * @param userId - The authenticated user's ID
+ * @returns Result with allowed status - if allowed, usage is already incremented
+ */
+export async function checkAndIncrementUsage(userId: string): Promise<RateLimitResult> {
+  if (!userId || userId === 'anonymous') {
+    return {
+      allowed: true,
+      remaining: MAX_GENERATIONS,
+      used: 0,
+      limit: MAX_GENERATIONS,
+      resetAt: getResetTime(),
+    }
+  }
+
+  try {
+    const supabase = createAdminClient()
+
+    const { data, error } = await supabase.rpc('increment_usage', {
+      p_user_id: userId,
+      p_max_generations: MAX_GENERATIONS,
+    })
+
+    if (error) {
+      console.error('[RateLimit] RPC error in checkAndIncrement:', error)
+      return await checkRateLimit(userId)
+    }
+
+    const result = data?.[0]
+    if (!result) {
+      return await checkRateLimit(userId)
+    }
+
+    return {
+      allowed: result.success,
+      remaining: result.remaining,
+      used: result.current_count,
+      limit: MAX_GENERATIONS,
+      resetAt: getResetTime(),
+    }
+  } catch (error) {
+    console.error('[RateLimit] Unexpected error in checkAndIncrement:', error)
+    return {
+      allowed: true,
+      remaining: MAX_GENERATIONS,
+      used: 0,
+      limit: MAX_GENERATIONS,
+      resetAt: getResetTime(),
+    }
+  }
+}
+</file>
+
+</files>
