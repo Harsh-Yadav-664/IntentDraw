@@ -76,8 +76,8 @@ export default function DrawingCanvas() {
     const container = containerRef.current
     if (!container) return
     const updateSize = () => {
-      const { width } = container.getBoundingClientRect()
-      setStageSize({ width, height: Math.round(width * 0.625) })
+      const { width, height } = container.getBoundingClientRect()
+      setStageSize({ width, height })
     }
     updateSize()
     const observer = new ResizeObserver(updateSize)
@@ -105,9 +105,17 @@ export default function DrawingCanvas() {
     tr.getLayer()?.batchDraw()
   }, [selectedRegionId, regions])
 
+  const BASE_WIDTH = 1000
+  const scale = stageSize.width > 0 ? stageSize.width / BASE_WIDTH : 1
+
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
-    return stageRef.current?.getPointerPosition() ?? null
-  }, [])
+    const pos = stageRef.current?.getPointerPosition()
+    if (!pos) return null
+    return {
+      x: pos.x / scale,
+      y: pos.y / scale
+    }
+  }, [scale])
 
   const startDrawing = useCallback(() => {
     const pos = getPointerPos()
@@ -485,7 +493,7 @@ export default function DrawingCanvas() {
   return (
     <div
       ref={containerRef}
-      className="w-full rounded-lg border border-slate-200 overflow-hidden bg-white"
+      className="w-full h-full"
       style={{ cursor: CURSOR_MAP[activeTool] }}
     >
       <Stage
@@ -508,15 +516,8 @@ export default function DrawingCanvas() {
         onTouchMove={continueDrawing}
         onTouchEnd={finishDrawing}
       >
-        <Layer>
-          <Rect
-            x={0}
-            y={0}
-            width={stageSize.width}
-            height={stageSize.height}
-            fill="#FFFFFF"
-            listening={false}
-          />
+        <Layer scaleX={scale} scaleY={scale}>
+          {/* We rely on the parent container's transparent/dark background now instead of a white rect */}
 
           {regions.map((region, index) => renderRegion(region, index))}
           {renderDrawingPreview()}

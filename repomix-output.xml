@@ -32,7 +32,7 @@ The content is organized as follows:
 <notes>
 - Some files may have been excluded based on .gitignore rules and Repomix's configuration
 - Binary files are not included in this packed representation. Please refer to the Repository Structure section for a complete list of file paths, including binary files
-- Only files matching these patterns are included: src/lib/middleware/rate-limit.ts, src/app/api/generate/route.ts, src/app/api/analyze-drawing/route.ts, src/app/api/regenerate-region/route.ts, src/lib/supabase/server.ts, src/lib/supabase/client.ts
+- Only files matching these patterns are included: src/app/(dashboard)/dashboard/page.tsx, src/store/canvas-store.ts, src/store/workflow-store.ts, src/components/controls/controls-panel.tsx, src/components/canvas/drawing-canvas.tsx, src/components/preview/preview-panel.tsx, src/components/shared/canvas-editor.tsx
 - Files matching patterns in .gitignore are excluded
 - Files matching default ignore patterns are excluded
 - Files are sorted by Git change count (files with more changes are at the bottom)
@@ -41,713 +41,1853 @@ The content is organized as follows:
 </file_summary>
 
 <directory_structure>
-src/app/api/analyze-drawing/route.ts
-src/app/api/generate/route.ts
-src/app/api/regenerate-region/route.ts
-src/lib/middleware/rate-limit.ts
-src/lib/supabase/client.ts
-src/lib/supabase/server.ts
+src/app/(dashboard)/dashboard/page.tsx
+src/components/canvas/drawing-canvas.tsx
+src/components/controls/controls-panel.tsx
+src/components/preview/preview-panel.tsx
+src/components/shared/canvas-editor.tsx
+src/store/canvas-store.ts
+src/store/workflow-store.ts
 </directory_structure>
 
 <files>
 This section contains the contents of the repository's files.
 
-<file path="src/lib/supabase/client.ts">
+<file path="src/components/shared/canvas-editor.tsx">
 // =============================================================================
-// Browser Supabase Client
+// Canvas Editor Wrapper
+// src/components/shared/canvas-editor.tsx
 // =============================================================================
-// Use this in Client Components ('use client')
-// Creates a new client instance per call - safe for browser usage
+// This is a wrapper around your existing 3-panel dashboard layout.
+// The existing dashboard/page.tsx has the full canvas UI.
+// We extract it into this shared component so both:
+//   - /dashboard (legacy, if you kept it) 
+//   - /project/[id] (new project-based flow)
+// can use the same canvas editor.
+//
+// HOW TO CREATE THIS:
+// 1. Take the JSX content (the 3-panel layout) from your current
+//    src/app/(dashboard)/dashboard/page.tsx
+// 2. Move it into this file as a component called CanvasEditor
+// 3. Add projectId prop so it knows which project it belongs to
+//
+// If your current dashboard/page.tsx is complex, the simplest approach
+// is to just re-export it or create a thin wrapper:
 // =============================================================================
 
-import { createBrowserClient } from '@supabase/ssr'
-import type { Database } from './types'
+'use client'
 
-export function createClient() {
-  return createBrowserClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+import { useWorkflowStore } from '@/store/workflow-store'
+
+// Option A: If your dashboard canvas is in a component already
+// import { DashboardCanvas } from '@/components/canvas/dashboard-canvas'
+// export function CanvasEditor({ projectId }: { projectId: string }) {
+//   return <DashboardCanvas />
+// }
+
+// Option B: Simple inline — paste your 3-panel JSX here
+// This is what you need to fill in based on your actual dashboard page
+
+interface CanvasEditorProps {
+  projectId: string
+}
+
+export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
+  // The workflow store is already loaded by the time this renders
+  // (project/[id]/page.tsx calls loadProject before rendering this)
+  const { setPrompt, setPreviewCode } = useWorkflowStore()
+
+  // -------------------------------------------------------------------------
+  // IMPORTANT: Replace the content below with your actual 3-panel canvas UI
+  // from src/app/(dashboard)/dashboard/page.tsx
+  //
+  // The key wiring points to connect auto-save:
+  //
+  // 1. When prompt changes:
+  //    onChange={(e) => { setPrompt(e.target.value) }}
+  //    (setPrompt in workflow-store now marks saveStatus = 'unsaved')
+  //
+  // 2. When code is generated:
+  //    setPreviewCode(generatedCode)
+  //    (setPreviewCode marks saveStatus = 'unsaved', triggers auto-save)
+  //
+  // The triggerAutoSave() is called by project/[id]/page.tsx
+  // whenever regions change in canvas-store — so canvas changes
+  // are captured automatically.
+  // -------------------------------------------------------------------------
+
+  void setPrompt
+  void setPreviewCode
+
+  return (
+    <div className="flex h-full">
+      {/* 
+        Paste your existing 3-panel canvas layout here.
+        
+        Panel 1: Canvas (drawing-canvas.tsx + toolbar.tsx)
+        Panel 2: Controls (controls-panel.tsx)  
+        Panel 3: Preview (preview-panel.tsx)
+        
+        Everything works exactly as before — the only difference is
+        this component now lives here instead of in dashboard/page.tsx
+      */}
+      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
+        Replace this with your existing canvas 3-panel layout
+      </div>
+    </div>
   )
 }
 </file>
 
-<file path="src/lib/supabase/server.ts">
-// =============================================================================
-// Server Supabase Client
-// =============================================================================
-// Use this in:
-//   - Server Components
-//   - API Routes (route.ts files)
-//   - Server Actions
-//
-// This client reads/writes cookies for session management.
-// Must be called with `await` because cookies() is async in Next.js 15+
-// =============================================================================
+<file path="src/components/canvas/drawing-canvas.tsx">
+'use client'
 
-import { createServerClient } from '@supabase/ssr'
-import { cookies } from 'next/headers'
-import type { Database } from './types'
+import { useRef, useState, useEffect, useCallback } from 'react'
+import {
+  Stage,
+  Layer,
+  Rect,
+  Ellipse,
+  Line,
+  Arrow as KonvaArrow,
+  Transformer,
+  Group,
+  Text as KonvaText,
+} from 'react-konva'
+import type Konva from 'konva'
+import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
+import type { Region, RegionGeometry, CanvasTool } from '@/types'
 
-export async function createClient() {
-  const cookieStore = await cookies()
+const MIN_SHAPE_SIZE = 10
 
-  return createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll()
-        },
-        setAll(cookiesToSet) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            )
-          } catch {
-            // The `setAll` method was called from a Server Component.
-            // This can be ignored if you have middleware refreshing
-            // user sessions.
+const CURSOR_MAP: Record<CanvasTool, string> = {
+  select: 'default',
+  rectangle: 'crosshair',
+  circle: 'crosshair',
+  freeform: 'crosshair',
+  arrow: 'crosshair',
+}
+
+interface DrawingState {
+  startX: number
+  startY: number
+  currentX: number
+  currentY: number
+  points: number[]
+}
+
+export default function DrawingCanvas() {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const stageRef = useRef<Konva.Stage>(null)
+  const transformerRef = useRef<Konva.Transformer>(null)
+  const shapeRefs = useRef<Record<string, Konva.Node>>({})
+
+  const [stageSize, setStageSize] = useState({ width: 800, height: 500 })
+  const [drawing, setDrawing] = useState<DrawingState | null>(null)
+
+  const regions = useCanvasStore((s) => s.regions)
+  const activeTool = useCanvasStore((s) => s.activeTool)
+  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
+  const visibility = useCanvasStore((s) => s.visibility)
+  const addRegion = useCanvasStore((s) => s.addRegion)
+  const updateRegionGeometry = useCanvasStore((s) => s.updateRegionGeometry)
+  const selectRegion = useCanvasStore((s) => s.selectRegion)
+  const setStageInstance = useCanvasStore((s) => s.setStageInstance)
+
+  // Opacity logic - Photoshop-like focus
+  const getShapeOpacity = useCallback((regionId: string): number => {
+    // Hidden shapes
+    if (visibility[regionId] === false) return 0
+    
+    // No selection - all slightly visible
+    if (!selectedRegionId) return 0.85
+    
+    // Selected shape - full opacity
+    if (regionId === selectedRegionId) return 1.0
+    
+    // Other shapes when something is selected - dimmed
+    return 0.25
+  }, [selectedRegionId, visibility])
+
+  // Get color for region based on index
+  const getRegionColor = useCallback((regionIndex: number): string => {
+    return REGION_COLORS[regionIndex % REGION_COLORS.length]
+  }, [])
+
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+    const updateSize = () => {
+      const { width } = container.getBoundingClientRect()
+      setStageSize({ width, height: Math.round(width * 0.625) })
+    }
+    updateSize()
+    const observer = new ResizeObserver(updateSize)
+    observer.observe(container)
+    return () => observer.disconnect()
+  }, [])
+
+  useEffect(() => {
+    if (stageRef.current) setStageInstance(stageRef.current)
+    return () => setStageInstance(null)
+  }, [setStageInstance])
+
+  useEffect(() => {
+    const tr = transformerRef.current
+    if (!tr) return
+
+    const selected = regions.find((r) => r.id === selectedRegionId)
+    const selectedNode = selected ? shapeRefs.current[selected.id] : undefined
+
+    if (selected && selected.geometry.type === 'rectangle' && selectedNode) {
+      tr.nodes([selectedNode])
+    } else {
+      tr.nodes([])
+    }
+    tr.getLayer()?.batchDraw()
+  }, [selectedRegionId, regions])
+
+  const getPointerPos = useCallback((): { x: number; y: number } | null => {
+    return stageRef.current?.getPointerPosition() ?? null
+  }, [])
+
+  const startDrawing = useCallback(() => {
+    const pos = getPointerPos()
+    if (!pos) return
+    setDrawing({
+      startX: pos.x,
+      startY: pos.y,
+      currentX: pos.x,
+      currentY: pos.y,
+      points: activeTool === 'freeform' ? [0, 0] : [],
+    })
+  }, [activeTool, getPointerPos])
+
+  const continueDrawing = useCallback(() => {
+    if (!drawing) return
+    const pos = getPointerPos()
+    if (!pos) return
+
+    if (activeTool === 'freeform') {
+      setDrawing((prev) =>
+        prev
+          ? {
+              ...prev,
+              currentX: pos.x,
+              currentY: pos.y,
+              points: [...prev.points, pos.x - prev.startX, pos.y - prev.startY],
+            }
+          : null
+      )
+    } else {
+      setDrawing((prev) => (prev ? { ...prev, currentX: pos.x, currentY: pos.y } : null))
+    }
+  }, [drawing, activeTool, getPointerPos])
+
+  const finishDrawing = useCallback(() => {
+    if (!drawing) return
+
+    const { startX, startY, currentX, currentY, points } = drawing
+    let geometry: RegionGeometry | null = null
+
+    switch (activeTool) {
+      case 'rectangle': {
+        const w = Math.abs(currentX - startX)
+        const h = Math.abs(currentY - startY)
+        if (w >= MIN_SHAPE_SIZE && h >= MIN_SHAPE_SIZE) {
+          geometry = {
+            type: 'rectangle',
+            x: Math.min(startX, currentX),
+            y: Math.min(startY, currentY),
+            width: w,
+            height: h,
           }
-        },
-      },
+        }
+        break
+      }
+      case 'circle': {
+        const w = Math.abs(currentX - startX)
+        const h = Math.abs(currentY - startY)
+        if (w >= MIN_SHAPE_SIZE && h >= MIN_SHAPE_SIZE) {
+          geometry = {
+            type: 'circle',
+            x: Math.min(startX, currentX),
+            y: Math.min(startY, currentY),
+            width: w,
+            height: h,
+          }
+        }
+        break
+      }
+      case 'freeform': {
+        if (points.length >= 4) {
+          const xs: number[] = []
+          const ys: number[] = []
+          for (let i = 0; i < points.length; i += 2) xs.push(points[i])
+          for (let i = 1; i < points.length; i += 2) ys.push(points[i])
+          const path = []
+          for (let i = 0; i < points.length; i += 2) {
+            path.push({ x: points[i], y: points[i + 1] })
+          }
+          geometry = {
+            type: 'freeform',
+            x: startX,
+            y: startY,
+            width: Math.max(1, Math.max(...xs) - Math.min(...xs)),
+            height: Math.max(1, Math.max(...ys) - Math.min(...ys)),
+            path,
+          }
+        }
+        break
+      }
+      case 'arrow': {
+        const dx = currentX - startX
+        const dy = currentY - startY
+        if (Math.sqrt(dx * dx + dy * dy) >= MIN_SHAPE_SIZE) {
+          geometry = {
+            type: 'arrow',
+            x: startX,
+            y: startY,
+            width: Math.max(1, Math.abs(dx)),
+            height: Math.max(1, Math.abs(dy)),
+            path: [
+              { x: 0, y: 0 },
+              { x: dx, y: dy },
+            ],
+          }
+        }
+        break
+      }
     }
+
+    if (geometry) addRegion(geometry)
+    setDrawing(null)
+  }, [drawing, activeTool, addRegion])
+
+  const handleShapeClick = useCallback(
+    (regionId: string) => {
+      if (activeTool === 'select') selectRegion(regionId)
+    },
+    [activeTool, selectRegion]
+  )
+
+  const handleDragEnd = useCallback(
+    (regionId: string, geometryType: string, geoWidth: number, geoHeight: number) => {
+      const node = shapeRefs.current[regionId]
+      if (!node) return
+
+      if (geometryType === 'circle') {
+        updateRegionGeometry(regionId, {
+          x: node.x() - geoWidth / 2,
+          y: node.y() - geoHeight / 2,
+        })
+      } else {
+        updateRegionGeometry(regionId, {
+          x: node.x(),
+          y: node.y(),
+        })
+      }
+    },
+    [updateRegionGeometry]
+  )
+
+  const handleTransformEnd = useCallback(
+    (regionId: string) => {
+      const node = shapeRefs.current[regionId]
+      if (!node) return
+
+      const sx = node.scaleX()
+      const sy = node.scaleY()
+      node.scaleX(1)
+      node.scaleY(1)
+
+      updateRegionGeometry(regionId, {
+        x: node.x(),
+        y: node.y(),
+        width: Math.max(MIN_SHAPE_SIZE, node.width() * sx),
+        height: Math.max(MIN_SHAPE_SIZE, node.height() * sy),
+      })
+    },
+    [updateRegionGeometry]
+  )
+
+  const renderRegion = (region: Region, index: number) => {
+    const { geometry, id } = region
+    const isSelected = id === selectedRegionId
+    const isVisible = visibility[id] !== false
+    const regionColor = getRegionColor(index)
+    const opacity = getShapeOpacity(id)
+    const isDraggable = activeTool === 'select' && isVisible
+
+    // Don't render invisible shapes
+    if (!isVisible) return null
+
+    const commonProps = {
+      onClick: () => handleShapeClick(id),
+      onTap: () => handleShapeClick(id),
+      onDragEnd: () => handleDragEnd(id, geometry.type, geometry.width, geometry.height),
+      onTransformEnd: () => handleTransformEnd(id),
+      draggable: isDraggable,
+    }
+
+    const strokeWidth = isSelected ? 3 : 2
+    const fillOpacity = isSelected ? 0.15 : 0.08
+
+    const renderShape = () => {
+      switch (geometry.type) {
+        case 'rectangle':
+          return (
+            <Rect
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x}
+              y={geometry.y}
+              width={geometry.width}
+              height={geometry.height}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              fill={regionColor}
+              fillEnabled={true}
+              opacity={fillOpacity}
+              cornerRadius={3}
+              {...commonProps}
+            />
+          )
+
+        case 'circle':
+          return (
+            <Ellipse
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x + geometry.width / 2}
+              y={geometry.y + geometry.height / 2}
+              radiusX={geometry.width / 2}
+              radiusY={geometry.height / 2}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              fill={regionColor}
+              fillEnabled={true}
+              opacity={fillOpacity}
+              {...commonProps}
+            />
+          )
+
+        case 'freeform':
+          return (
+            <Line
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x}
+              y={geometry.y}
+              points={geometry.path?.flatMap((p) => [p.x, p.y]) ?? []}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              lineCap="round"
+              lineJoin="round"
+              tension={0.4}
+              {...commonProps}
+            />
+          )
+
+        case 'arrow':
+          return (
+            <KonvaArrow
+              ref={(node) => { if (node) shapeRefs.current[id] = node }}
+              x={geometry.x}
+              y={geometry.y}
+              points={geometry.path?.flatMap((p) => [p.x, p.y]) ?? []}
+              stroke={regionColor}
+              strokeWidth={strokeWidth}
+              fill={regionColor}
+              pointerLength={12}
+              pointerWidth={10}
+              {...commonProps}
+            />
+          )
+
+        default:
+          return null
+      }
+    }
+
+    return (
+      <Group key={id} opacity={opacity}>
+        {renderShape()}
+      </Group>
+    )
+  }
+
+  const renderLabel = (region: Region, index: number) => {
+    const { geometry, regionNumber, id } = region
+    const isVisible = visibility[id] !== false
+    
+    if (!isVisible) return null
+    
+    const opacity = getShapeOpacity(id)
+    const regionColor = getRegionColor(index)
+    const text = `R${regionNumber}`
+    const w = 28
+    const h = 18
+
+    let lx = geometry.x
+    let ly = geometry.y - h - 4
+    if (ly < 0) ly = geometry.y + 4
+    if (lx < 0) lx = 0
+
+    return (
+      <Group key={`label-${id}`} x={lx} y={ly} opacity={opacity} listening={false}>
+        <Rect
+          width={w}
+          height={h}
+          fill={regionColor}
+          cornerRadius={4}
+          shadowColor="rgba(0,0,0,0.15)"
+          shadowBlur={4}
+          shadowOffsetY={1}
+        />
+        <KonvaText
+          text={text}
+          fontSize={11}
+          fontFamily="Inter, system-ui, sans-serif"
+          fontStyle="bold"
+          fill="#FFFFFF"
+          width={w}
+          height={h}
+          align="center"
+          verticalAlign="middle"
+        />
+      </Group>
+    )
+  }
+
+  const renderDrawingPreview = () => {
+    if (!drawing) return null
+    const { startX, startY, currentX, currentY, points } = drawing
+    const previewColor = REGION_COLORS[regions.length % REGION_COLORS.length]
+
+    switch (activeTool) {
+      case 'rectangle':
+        return (
+          <Rect
+            x={Math.min(startX, currentX)}
+            y={Math.min(startY, currentY)}
+            width={Math.abs(currentX - startX)}
+            height={Math.abs(currentY - startY)}
+            stroke={previewColor}
+            strokeWidth={2}
+            fill={previewColor}
+            opacity={0.15}
+            dash={[6, 3]}
+            cornerRadius={3}
+          />
+        )
+      case 'circle':
+        return (
+          <Ellipse
+            x={(startX + currentX) / 2}
+            y={(startY + currentY) / 2}
+            radiusX={Math.abs(currentX - startX) / 2}
+            radiusY={Math.abs(currentY - startY) / 2}
+            stroke={previewColor}
+            strokeWidth={2}
+            fill={previewColor}
+            opacity={0.15}
+            dash={[6, 3]}
+          />
+        )
+      case 'freeform':
+        return (
+          <Line
+            x={startX}
+            y={startY}
+            points={points}
+            stroke={previewColor}
+            strokeWidth={2}
+            lineCap="round"
+            lineJoin="round"
+            tension={0.4}
+          />
+        )
+      case 'arrow':
+        return (
+          <KonvaArrow
+            x={startX}
+            y={startY}
+            points={[0, 0, currentX - startX, currentY - startY]}
+            stroke={previewColor}
+            strokeWidth={2}
+            fill={previewColor}
+            pointerLength={12}
+            pointerWidth={10}
+            dash={[6, 3]}
+          />
+        )
+      default:
+        return null
+    }
+  }
+
+  return (
+    <div
+      ref={containerRef}
+      className="w-full rounded-lg border border-slate-200 overflow-hidden bg-white"
+      style={{ cursor: CURSOR_MAP[activeTool] }}
+    >
+      <Stage
+        ref={stageRef}
+        width={stageSize.width}
+        height={stageSize.height}
+        onMouseDown={(e) => {
+          if (activeTool === 'select') {
+            if (e.target === stageRef.current) selectRegion(null)
+            return
+          }
+          startDrawing()
+        }}
+        onMouseMove={continueDrawing}
+        onMouseUp={finishDrawing}
+        onMouseLeave={() => { if (drawing) finishDrawing() }}
+        onTouchStart={() => {
+          if (activeTool !== 'select') startDrawing()
+        }}
+        onTouchMove={continueDrawing}
+        onTouchEnd={finishDrawing}
+      >
+        <Layer>
+          <Rect
+            x={0}
+            y={0}
+            width={stageSize.width}
+            height={stageSize.height}
+            fill="#FFFFFF"
+            listening={false}
+          />
+
+          {regions.map((region, index) => renderRegion(region, index))}
+          {renderDrawingPreview()}
+          {regions.map((region, index) => renderLabel(region, index))}
+
+          {activeTool === 'select' && (
+            <Transformer
+              ref={transformerRef}
+              borderStroke="#3A7BFF"
+              borderStrokeWidth={1.5}
+              anchorStroke="#3A7BFF"
+              anchorFill="#FFFFFF"
+              anchorSize={8}
+              anchorCornerRadius={2}
+              rotateEnabled={false}
+              keepRatio={false}
+              boundBoxFunc={(_oldBox, newBox) => {
+                if (
+                  Math.abs(newBox.width) < MIN_SHAPE_SIZE ||
+                  Math.abs(newBox.height) < MIN_SHAPE_SIZE
+                ) {
+                  return _oldBox
+                }
+                return newBox
+              }}
+            />
+          )}
+        </Layer>
+      </Stage>
+    </div>
   )
 }
+</file>
 
-// =============================================================================
-// Admin Client (Service Role)
-// =============================================================================
-// Use this ONLY for server-side operations that need to bypass RLS
-// NEVER expose this to the client
-// =============================================================================
+<file path="src/components/controls/controls-panel.tsx">
+'use client'
 
-import { createClient as createSupabaseClient } from '@supabase/supabase-js'
+import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
+import { useWorkflowStore } from '@/store/workflow-store'
+import { useAI } from '@/hooks/use-ai'
+import { Button } from '@/components/ui/button'
+import { Textarea } from '@/components/ui/textarea'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Badge } from '@/components/ui/badge'
+import { Separator } from '@/components/ui/separator'
+import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2 } from 'lucide-react'
 
-let _adminClient: ReturnType<typeof createSupabaseClient<Database>> | null = null
+export default function ControlsPanel() {
+  const regions = useCanvasStore((s) => s.regions)
+  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
+  const selectRegion = useCanvasStore((s) => s.selectRegion)
+  const visibility = useCanvasStore((s) => s.visibility)
+  const toggleVisibility = useCanvasStore((s) => s.toggleVisibility)
+  const deleteRegion = useCanvasStore((s) => s.deleteRegion)
 
-export function createAdminClient() {
-  if (_adminClient) return _adminClient
+  const prompt = useWorkflowStore((s) => s.prompt)
+  const setPrompt = useWorkflowStore((s) => s.setPrompt)
+  const status = useWorkflowStore((s) => s.status)
+  const errorMessage = useWorkflowStore((s) => s.errorMessage)
+  const clearError = useWorkflowStore((s) => s.clearError)
+  const lastProvider = useWorkflowStore((s) => s.lastProvider)
 
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL
-  const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY
+  const { isAnalyzing, isGenerating, generateCode } = useAI()
 
-  if (!url || !serviceKey) {
-    throw new Error('Missing Supabase admin credentials')
+  const selectedRegion = regions.find((r) => r.id === selectedRegionId)
+  const isLoading = isAnalyzing || isGenerating
+  const canGenerate = prompt.trim().length > 0 && !isLoading
+
+  const handleGenerate = async () => {
+    clearError()
+    await generateCode()
   }
 
-  _adminClient = createSupabaseClient<Database>(url, serviceKey, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
+  return (
+    <Card className="h-full flex flex-col">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Wand2 className="h-5 w-5" />
+          Controls
+        </CardTitle>
+        <CardDescription>Layers & prompt</CardDescription>
+      </CardHeader>
+
+      <CardContent className="flex-1 flex flex-col space-y-4 overflow-hidden">
+        {/* Layer Panel */}
+        <div className="flex-shrink-0">
+          <div className="flex items-center justify-between mb-2">
+            <h4 className="text-sm font-medium flex items-center gap-1.5">
+              <Layers className="h-4 w-4" />
+              Layers
+            </h4>
+            <Badge variant="secondary" className="text-xs">
+              {regions.length}
+            </Badge>
+          </div>
+
+          {regions.length === 0 ? (
+            <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center text-slate-400 text-sm">
+              Draw shapes on the canvas to create layers.
+              <br />
+              <span className="text-xs mt-1 block">Or just write a prompt!</span>
+            </div>
+          ) : (
+            <div className="border rounded-lg overflow-hidden bg-slate-50">
+              <div className="max-h-40 overflow-y-auto">
+                {/* Reverse to show top layer first (like Photoshop) */}
+                {[...regions].reverse().map((region, reverseIndex) => {
+                  const actualIndex = regions.length - 1 - reverseIndex
+                  const isSelected = region.id === selectedRegionId
+                  const isVisible = visibility[region.id] !== false
+                  const color = REGION_COLORS[actualIndex % REGION_COLORS.length]
+
+                  return (
+                    <div
+                      key={region.id}
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors border-b border-slate-200 last:border-b-0 ${
+                        isSelected
+                          ? 'bg-blue-50'
+                          : 'hover:bg-white'
+                      } ${!isVisible ? 'opacity-50' : ''}`}
+                      onClick={() => selectRegion(isSelected ? null : region.id)}
+                    >
+                      {/* Color dot */}
+                      <span
+                        className="w-3 h-3 rounded-full flex-shrink-0"
+                        style={{ backgroundColor: color }}
+                      />
+
+                      {/* Layer name */}
+                      <span className={`flex-1 text-sm truncate ${isSelected ? 'font-medium text-blue-900' : 'text-slate-700'}`}>
+                        Region {region.regionNumber}
+                      </span>
+
+                      {/* Shape type badge */}
+                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 capitalize">
+                        {region.geometry.type}
+                      </Badge>
+
+                      {/* Visibility toggle */}
+                      <button
+                        className="p-1 hover:bg-slate-200 rounded transition-colors"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          toggleVisibility(region.id)
+                        }}
+                      >
+                        {isVisible ? (
+                          <Eye className="h-3.5 w-3.5 text-slate-500" />
+                        ) : (
+                          <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                        )}
+                      </button>
+
+                      {/* Delete button (only show on hover/selected) */}
+                      {isSelected && (
+                        <button
+                          className="p-1 hover:bg-red-100 rounded transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            deleteRegion(region.id)
+                          }}
+                        >
+                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                        </button>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Selected Region Info */}
+        {selectedRegion && (
+          <div 
+            className="flex-shrink-0 p-3 rounded-lg border"
+            style={{ 
+              backgroundColor: `${REGION_COLORS[regions.findIndex(r => r.id === selectedRegion.id) % REGION_COLORS.length]}10`,
+              borderColor: `${REGION_COLORS[regions.findIndex(r => r.id === selectedRegion.id) % REGION_COLORS.length]}40`
+            }}
+          >
+            <p className="font-medium text-sm">
+              Region {selectedRegion.regionNumber} selected
+            </p>
+            <p className="text-xs mt-1 text-slate-600">
+              {selectedRegion.geometry.type} · {Math.round(selectedRegion.geometry.width)}×
+              {Math.round(selectedRegion.geometry.height)}px
+            </p>
+            <p className="text-xs mt-2 text-slate-500">
+              Tip: Reference as &quot;Region {selectedRegion.regionNumber}&quot; in your prompt
+            </p>
+          </div>
+        )}
+
+        {/* Error Message */}
+        {errorMessage && (
+          <div className="flex-shrink-0 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-red-800 text-sm">{errorMessage}</p>
+              <button
+                onClick={clearError}
+                className="text-red-600 text-xs underline mt-1"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        )}
+
+        <Separator />
+
+        {/* Prompt Input */}
+        <div className="flex-1 flex flex-col min-h-0">
+          <h4 className="text-sm font-medium mb-2">Prompt</h4>
+          <Textarea
+            value={prompt}
+            onChange={(e) => setPrompt(e.target.value)}
+            placeholder={
+              regions.length > 0
+                ? `Describe your design...\n\nExamples:\n• "Region 1 is a hero with gradient"\n• "Create a landing page with my layout"\n• "Region 2 has feature cards"`
+                : `Describe your design...\n\nExamples:\n• "Create a SaaS landing page"\n• "Build a portfolio site"\n• "Design a signup form"`
+            }
+            className="flex-1 min-h-[100px] resize-none text-sm"
+            disabled={isLoading}
+          />
+        </div>
+
+        {/* Generate Button */}
+        <div className="flex-shrink-0 space-y-2">
+          <Button
+            onClick={handleGenerate}
+            disabled={!canGenerate}
+            className="w-full h-11"
+            size="lg"
+          >
+            {isGenerating ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Generating...
+              </>
+            ) : isAnalyzing ? (
+              <>
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                Analyzing...
+              </>
+            ) : (
+              <>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Generate Design
+              </>
+            )}
+          </Button>
+
+          {lastProvider && status === 'preview_ready' && (
+            <p className="text-xs text-center text-slate-500">
+              Generated with {lastProvider === 'gemini' ? 'Gemini' : 'Groq'}
+            </p>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+</file>
+
+<file path="src/components/preview/preview-panel.tsx">
+'use client'
+
+import { useState } from 'react'
+import { useWorkflowStore } from '@/store/workflow-store'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { toast } from 'sonner'
+import PreviewFrame from './preview-frame'
+import { 
+  Monitor, 
+  Tablet, 
+  Smartphone, 
+  Copy, 
+  Download,
+  Code,
+  Eye,
+  Check,
+  Maximize2
+} from 'lucide-react'
+
+type ViewMode = 'preview' | 'code'
+type DeviceSize = 'desktop' | 'tablet' | 'mobile'
+
+export default function PreviewPanel() {
+  const previewCode = useWorkflowStore((s) => s.previewCode)
+  const [viewMode, setViewMode] = useState<ViewMode>('preview')
+  const [deviceSize, setDeviceSize] = useState<DeviceSize>('desktop')
+  const [copied, setCopied] = useState(false)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+
+  const handleCopyCode = async () => {
+    if (!previewCode) return
+
+    try {
+      await navigator.clipboard.writeText(previewCode)
+      setCopied(true)
+      toast.success('Code copied to clipboard!')
+      setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast.error('Failed to copy code')
+    }
+  }
+
+  const handleDownload = () => {
+  if (!previewCode) return
+
+  // The previewCode is now a complete HTML document
+  // Just ensure it's sanitized
+  const sanitized = previewCode.trim()
+  
+  // Check if it's already a complete document
+  const isComplete = sanitized.toLowerCase().startsWith('<!doctype') || 
+                     sanitized.toLowerCase().startsWith('<html')
+
+  let finalHtml: string
+
+  if (isComplete) {
+    // Already complete, just use as-is
+    finalHtml = sanitized
+  } else {
+    // Wrap fragment (fallback)
+    finalHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>IntentDraw Export</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+${sanitized}
+</body>
+</html>`
+  }
+
+  const blob = new Blob([finalHtml], { type: 'text/html' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'intentdraw-export.html'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+
+  toast.success('HTML file downloaded!')
+}
+
+  const handleOpenFullscreen = () => {
+    if (!previewCode) return
+    
+    const fullHtml = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview - IntentDraw</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+${previewCode}
+</body>
+</html>`
+
+    const blob = new Blob([fullHtml], { type: 'text/html' })
+    const url = URL.createObjectURL(blob)
+    window.open(url, '_blank')
+  }
+
+  return (
+    <Card className="h-full flex flex-col">
+      <CardHeader className="pb-3 flex-shrink-0">
+        <div className="flex items-center justify-between">
+          <div>
+            <CardTitle className="text-lg flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Preview
+            </CardTitle>
+            <CardDescription>Your generated design</CardDescription>
+          </div>
+
+          {previewCode && (
+            <div className="flex items-center gap-2">
+              <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
+                <TabsList className="h-8">
+                  <TabsTrigger value="preview" className="text-xs px-2 h-6">
+                    <Eye className="h-3 w-3 mr-1" />
+                    Preview
+                  </TabsTrigger>
+                  <TabsTrigger value="code" className="text-xs px-2 h-6">
+                    <Code className="h-3 w-3 mr-1" />
+                    Code
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+              
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 w-8 p-0"
+                onClick={handleOpenFullscreen}
+                title="Open in new tab"
+              >
+                <Maximize2 className="h-3.5 w-3.5" />
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {previewCode && viewMode === 'preview' && (
+          <div className="flex items-center gap-1 mt-2">
+            <Button
+              variant={deviceSize === 'desktop' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setDeviceSize('desktop')}
+            >
+              <Monitor className="h-3.5 w-3.5 mr-1" />
+              1280px
+            </Button>
+            <Button
+              variant={deviceSize === 'tablet' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setDeviceSize('tablet')}
+            >
+              <Tablet className="h-3.5 w-3.5 mr-1" />
+              768px
+            </Button>
+            <Button
+              variant={deviceSize === 'mobile' ? 'default' : 'ghost'}
+              size="sm"
+              className="h-7 px-2 text-xs"
+              onClick={() => setDeviceSize('mobile')}
+            >
+              <Smartphone className="h-3.5 w-3.5 mr-1" />
+              375px
+            </Button>
+          </div>
+        )}
+      </CardHeader>
+
+      <CardContent className="flex-1 flex flex-col min-h-0 pb-3">
+        <div className="flex-1 border rounded-lg overflow-hidden bg-slate-100">
+          {viewMode === 'preview' ? (
+            <PreviewFrame 
+              code={previewCode} 
+              deviceSize={deviceSize}
+              className="h-full w-full" 
+            />
+          ) : (
+            <div className="w-full h-full overflow-auto">
+              <pre className="p-4 text-xs text-slate-800 whitespace-pre-wrap font-mono bg-slate-50 min-h-full">
+                {previewCode || 'No code generated yet.'}
+              </pre>
+            </div>
+          )}
+        </div>
+
+        {previewCode && (
+          <div className="flex gap-2 mt-3 flex-shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={handleCopyCode}
+            >
+              {copied ? (
+                <>
+                  <Check className="mr-1.5 h-3.5 w-3.5" />
+                  Copied!
+                </>
+              ) : (
+                <>
+                  <Copy className="mr-1.5 h-3.5 w-3.5" />
+                  Copy
+                </>
+              )}
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="flex-1"
+              onClick={handleDownload}
+            >
+              <Download className="mr-1.5 h-3.5 w-3.5" />
+              Download
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+</file>
+
+<file path="src/store/canvas-store.ts">
+import { create } from 'zustand'
+import type { Region, RegionGeometry, CanvasTool } from '@/types'
+import { generateUUID } from '@/lib/utils'
+
+interface StageExporter {
+  toDataURL(config?: { pixelRatio?: number }): string
+}
+
+let _history: Region[][] = [[]]
+let _historyIndex = 0
+
+interface CanvasStore {
+  regions: Region[]
+  activeTool: CanvasTool
+  selectedRegionId: string | null
+  canUndo: boolean
+  canRedo: boolean
+  _stageInstance: StageExporter | null
+  
+  // Visibility tracking
+  visibility: Record<string, boolean>
+
+  setActiveTool: (tool: CanvasTool) => void
+  selectRegion: (id: string | null) => void
+  setStageInstance: (stage: StageExporter | null) => void
+
+  addRegion: (geometry: RegionGeometry) => void
+  updateRegionGeometry: (id: string, updates: Partial<RegionGeometry>) => void
+  updateRegionIntent: (id: string, intent: string) => void
+  deleteRegion: (id: string) => void
+  clearRegions: () => void
+  setRegions: (regions: Region[]) => void
+  
+  // Visibility actions
+  toggleVisibility: (id: string) => void
+  setVisibility: (id: string, visible: boolean) => void
+
+  undo: () => void
+  redo: () => void
+
+  exportToPng: () => string | null
+  exportAsJson: () => string
+  importFromJson: (json: string) => void
+}
+
+// Region colors - Photoshop-like palette
+export const REGION_COLORS = [
+  '#3A7BFF', // Blue
+  '#FF6B35', // Orange
+  '#2EC4B6', // Teal
+  '#E040FB', // Purple
+  '#FFD600', // Yellow
+  '#00E676', // Green
+  '#FF4081', // Pink
+  '#00B0FF', // Light Blue
+  '#76FF03', // Lime
+  '#FF6D00', // Deep Orange
+  '#651FFF', // Deep Purple
+  '#F50057', // Red
+]
+
+export const useCanvasStore = create<CanvasStore>((set, get) => {
+  const syncHistoryFlags = () => {
+    set({
+      canUndo: _historyIndex > 0,
+      canRedo: _historyIndex < _history.length - 1,
+    })
+  }
+
+  const pushHistory = () => {
+    const { regions } = get()
+    _history = _history.slice(0, _historyIndex + 1)
+    _history.push(JSON.parse(JSON.stringify(regions)) as Region[])
+    if (_history.length > 50) _history = _history.slice(-50)
+    _historyIndex = _history.length - 1
+    syncHistoryFlags()
+  }
+
+  const renumber = (regions: Region[]): Region[] =>
+    regions.map((r, i) => ({ ...r, regionNumber: i + 1 }))
+
+  return {
+    regions: [],
+    activeTool: 'select',
+    selectedRegionId: null,
+    canUndo: false,
+    canRedo: false,
+    _stageInstance: null,
+    visibility: {},
+
+    setActiveTool: (tool) => set({ activeTool: tool, selectedRegionId: null }),
+    selectRegion: (id) => set({ selectedRegionId: id }),
+    setStageInstance: (stage) => set({ _stageInstance: stage }),
+
+    addRegion: (geometry) => {
+      const { regions, visibility } = get()
+      const now = new Date().toISOString()
+      const newId = generateUUID()
+      const newRegion: Region = {
+        id: newId,
+        regionNumber: regions.length + 1,
+        geometry,
+        intent: '',
+        lockState: { layout: false, style: false, animation: false },
+        generatedCode: null,
+        createdAt: now,
+        updatedAt: now,
+      }
+      set({ 
+        regions: [...regions, newRegion],
+        visibility: { ...visibility, [newId]: true }
+      })
+      pushHistory()
     },
-  })
 
-  return _adminClient
-}
-</file>
+    updateRegionGeometry: (id, updates) => {
+      set((state) => ({
+        regions: state.regions.map((r) =>
+          r.id === id
+            ? { ...r, geometry: { ...r.geometry, ...updates }, updatedAt: new Date().toISOString() }
+            : r
+        ),
+      }))
+      pushHistory()
+    },
 
-<file path="src/app/api/analyze-drawing/route.ts">
-import { NextResponse } from 'next/server'
-import { analyzeDrawing } from '@/lib/ai/provider'
-import { checkRateLimit } from '@/lib/middleware/rate-limit'
+    updateRegionIntent: (id, intent) => {
+      set((state) => ({
+        regions: state.regions.map((r) =>
+          r.id === id ? { ...r, intent, updatedAt: new Date().toISOString() } : r
+        ),
+      }))
+    },
 
-// Max payload size: ~5MB for canvas PNG
-const MAX_IMAGE_SIZE = 5 * 1024 * 1024
+    deleteRegion: (id) => {
+      const { selectedRegionId, visibility } = get()
+      const newVisibility = { ...visibility }
+      delete newVisibility[id]
+      
+      set((state) => ({
+        regions: renumber(state.regions.filter((r) => r.id !== id)),
+        selectedRegionId: selectedRegionId === id ? null : selectedRegionId,
+        visibility: newVisibility,
+      }))
+      pushHistory()
+    },
 
-export async function POST(request: Request) {
-  try {
-    const body = await request.json()
-    const { imageData } = body as { imageData?: string }
+    clearRegions: () => {
+      set({ regions: [], selectedRegionId: null, visibility: {} })
+      pushHistory()
+    },
 
-    // --- Input validation ---
-    if (!imageData || typeof imageData !== 'string') {
-      return NextResponse.json(
-        { success: false, error: 'Missing or invalid imageData' },
-        { status: 400 }
-      )
-    }
+    setRegions: (regions) => {
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, visibility })
+    },
+    
+    toggleVisibility: (id) => {
+      set((state) => ({
+        visibility: { 
+          ...state.visibility, 
+          [id]: state.visibility[id] === false ? true : false 
+        }
+      }))
+    },
+    
+    setVisibility: (id, visible) => {
+      set((state) => ({
+        visibility: { ...state.visibility, [id]: visible }
+      }))
+    },
 
-    // Check approximate size (base64 is ~33% larger than binary)
-    if (imageData.length > MAX_IMAGE_SIZE) {
-      return NextResponse.json(
-        { success: false, error: 'Image too large. Max 5MB.' },
-        { status: 400 }
-      )
-    }
+    undo: () => {
+      if (_historyIndex <= 0) return
+      _historyIndex--
+      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, selectedRegionId: null, visibility })
+      syncHistoryFlags()
+    },
 
-    // Must look like a base64 data URL or raw base64
-    if (!imageData.startsWith('data:image/') && !/^[A-Za-z0-9+/=]+$/.test(imageData.slice(0, 100))) {
-      return NextResponse.json(
-        { success: false, error: 'Invalid image format' },
-        { status: 400 }
-      )
-    }
+    redo: () => {
+      if (_historyIndex >= _history.length - 1) return
+      _historyIndex++
+      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, selectedRegionId: null, visibility })
+      syncHistoryFlags()
+    },
 
-    // --- Rate limiting (stub for now, enforced in Phase 4) ---
-    const rateLimit = await checkRateLimit('anonymous')
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, error: `Rate limit reached. Resets at ${rateLimit.resetAt}` },
-        { status: 429 }
-      )
-    }
+    exportToPng: () => {
+      const stage = get()._stageInstance
+      if (!stage) return null
+      return stage.toDataURL({ pixelRatio: 2 })
+    },
 
-    // --- Call AI ---
-    const result = await analyzeDrawing(imageData)
+    exportAsJson: () => JSON.stringify(get().regions),
 
-    if (!result.success) {
-      return NextResponse.json(
-        { success: false, error: result.error },
-        { status: 502 }
-      )
-    }
-
-    return NextResponse.json({
-      success: true,
-      data: { regions: result.regions },
-    })
-  } catch (error) {
-    // Don't leak internal errors to client
-    console.error('[API analyze-drawing]', error)
-    return NextResponse.json(
-      { success: false, error: 'Failed to analyze drawing. Please try again.' },
-      { status: 500 }
-    )
+    importFromJson: (json) => {
+      try {
+        const regions = JSON.parse(json) as Region[]
+        const visibility: Record<string, boolean> = {}
+        regions.forEach(r => { visibility[r.id] = true })
+        set({ regions, selectedRegionId: null, visibility })
+        pushHistory()
+      } catch (e) {
+        console.error('Failed to import canvas JSON:', e)
+      }
+    },
   }
-}
+})
 </file>
 
-<file path="src/app/api/generate/route.ts">
-import { NextResponse } from 'next/server'
-import { generateCode } from '@/lib/ai/provider'
-import { sanitizeHtml } from '@/lib/utils/sanitize'
-import { checkRateLimit, incrementUsage } from '@/lib/middleware/rate-limit'
-import type { Region } from '@/types'
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json()
-    const { regions, prompt, globalTheme } = body as {
-      regions?: Region[]
-      prompt?: string
-      globalTheme?: string
-    }
-
-    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Prompt is required' },
-        { status: 400 }
-      )
-    }
-
-    if (prompt.length > 10000) {
-      return NextResponse.json(
-        { success: false, error: 'Prompt too long. Max 10000 characters.' },
-        { status: 400 }
-      )
-    }
-
-    const validRegions = Array.isArray(regions) ? regions : []
-
-    const rateLimit = await checkRateLimit('anonymous')
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, error: `Rate limit reached. Resets tomorrow.`, remaining: rateLimit.remaining },
-        { status: 429 }
-      )
-    }
-
-    // Log the layout being sent (helpful for debugging)
-    console.log(`[Generate] ${validRegions.length} regions, prompt: "${prompt.substring(0, 100)}..."`)
-
-    const result = await generateCode(validRegions, prompt.trim(), globalTheme)
-
-    if (!result.success || !result.code) {
-      return NextResponse.json(
-        { success: false, error: result.error || 'Generation failed' },
-        { status: 502 }
-      )
-    }
-
-    const sanitizedCode = sanitizeHtml(result.code)
-
-    await incrementUsage('anonymous')
-
-    return NextResponse.json({
-      success: true,
-      data: { code: sanitizedCode, provider: result.provider },
-    })
-  } catch (error) {
-    console.error('[API generate]', error)
-    return NextResponse.json(
-      { success: false, error: 'Generation failed. Please try again.' },
-      { status: 500 }
-    )
-  }
-}
-</file>
-
-<file path="src/app/api/regenerate-region/route.ts">
-import { NextResponse } from 'next/server'
-import { regenerateRegion } from '@/lib/ai/provider'
-import { sanitizeHtml } from '@/lib/utils/sanitize'
-import { checkRateLimit, incrementUsage } from '@/lib/middleware/rate-limit'
-import type { Region } from '@/types'
-
-export async function POST(request: Request) {
-  try {
-    const body = await request.json()
-    const { regionNumber, prompt, existingCode, regions } = body as {
-      regionNumber?: number
-      prompt?: string
-      existingCode?: string
-      regions?: Region[]
-    }
-
-    // --- Input validation ---
-    if (!regionNumber || typeof regionNumber !== 'number') {
-      return NextResponse.json(
-        { success: false, error: 'regionNumber is required' },
-        { status: 400 }
-      )
-    }
-
-    if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Prompt is required' },
-        { status: 400 }
-      )
-    }
-
-    if (!existingCode || typeof existingCode !== 'string') {
-      return NextResponse.json(
-        { success: false, error: 'Existing code is required for region regeneration' },
-        { status: 400 }
-      )
-    }
-
-    if (!Array.isArray(regions) || regions.length === 0) {
-      return NextResponse.json(
-        { success: false, error: 'Regions array is required' },
-        { status: 400 }
-      )
-    }
-
-    if (prompt.length > 5000) {
-      return NextResponse.json(
-        { success: false, error: 'Prompt too long. Max 5000 characters.' },
-        { status: 400 }
-      )
-    }
-
-    // --- Rate limiting ---
-    const rateLimit = await checkRateLimit('anonymous')
-    if (!rateLimit.allowed) {
-      return NextResponse.json(
-        { success: false, error: 'Rate limit reached. Try again tomorrow.' },
-        { status: 429 }
-      )
-    }
-
-    // --- Call AI ---
-    const result = await regenerateRegion(
-      regionNumber,
-      prompt.trim(),
-      existingCode,
-      regions
-    )
-
-    if (!result.success || !result.code) {
-      return NextResponse.json(
-        { success: false, error: result.error || 'Regeneration failed' },
-        { status: 502 }
-      )
-    }
-
-    // --- Sanitize ---
-    const sanitizedCode = sanitizeHtml(result.code)
-
-    // --- Track usage ---
-    await incrementUsage('anonymous')
-
-    return NextResponse.json({
-      success: true,
-      data: {
-        code: sanitizedCode,
-        provider: result.provider,
-      },
-    })
-  } catch (error) {
-    console.error('[API regenerate-region]', error)
-    return NextResponse.json(
-      { success: false, error: 'Regeneration failed. Please try again.' },
-      { status: 500 }
-    )
-  }
-}
-</file>
-
-<file path="src/lib/middleware/rate-limit.ts">
+<file path="src/store/workflow-store.ts">
 // =============================================================================
-// Rate Limiting with Supabase Usage Table
-// =============================================================================
-// Architecture:
-// - Layer 1 (IP-based): Vercel Edge Config / middleware - burst protection
-// - Layer 2 (User-based): This module - daily cap from usage table
-//
-// This implements Layer 2: per-user daily generation limits.
-// All AI routes MUST call checkRateLimit() and respect the result.
+// Workflow Store — with Project Persistence & Auto-Save
+// src/store/workflow-store.ts
 // =============================================================================
 
-import { createAdminClient } from '@/lib/supabase'
-
-// =============================================================================
-// Configuration
-// =============================================================================
-
-const DEFAULT_MAX_GENERATIONS = 10
-const MAX_GENERATIONS = parseInt(
-  process.env.RATE_LIMIT_MAX_GENERATIONS || String(DEFAULT_MAX_GENERATIONS),
-  10
-)
+import { create } from 'zustand'
 
 // =============================================================================
 // Types
 // =============================================================================
 
-export interface RateLimitResult {
-  allowed: boolean
-  remaining: number
-  used: number
-  limit: number
-  resetAt: string
+export type WorkflowStatus =
+  | 'idle'
+  | 'analyzing'
+  | 'generating'
+  | 'success'
+  | 'error'
+
+export type SaveStatus = 'saved' | 'saving' | 'unsaved' | 'error'
+
+export interface WorkflowState {
+  // Project identity
+  projectId: string | null
+  projectName: string
+
+  // Workflow state
+  status: WorkflowStatus
+  error: string | null
+
+  // Content
+  prompt: string
+  globalTheme: string
+  previewCode: string
+
+  // Save state
+  saveStatus: SaveStatus
+  lastSavedAt: Date | null
+
+  // Auto-save timer reference (not serialized)
+  _saveTimer: ReturnType<typeof setTimeout> | null
 }
 
-export interface UsageStats {
-  used: number
-  limit: number
-  remaining: number
-  resetAt: string
+export interface WorkflowActions {
+  // Project management
+  setProjectId: (id: string | null) => void
+  setProjectName: (name: string) => void
+  loadProject: (project: {
+    id: string
+    name: string
+    prompt?: string | null
+    generated_code?: string | null
+    global_theme?: string | null
+  }) => void
+
+  // Workflow
+  setStatus: (status: WorkflowStatus) => void
+  setError: (error: string | null) => void
+
+  // Content
+  setPrompt: (prompt: string) => void
+  setGlobalTheme: (theme: string) => void
+  setPreviewCode: (code: string) => void
+
+  // Save
+  setSaveStatus: (status: SaveStatus) => void
+  triggerAutoSave: (getCanvasData: () => unknown) => void
+  saveNow: (getCanvasData: () => unknown) => Promise<void>
+
+  // Reset
+  reset: () => void
 }
 
 // =============================================================================
-// Helper Functions
+// Initial State
 // =============================================================================
 
-/**
- * Get the start of tomorrow (midnight UTC) as ISO string.
- * This is when the rate limit resets.
- */
-function getResetTime(): string {
-  const now = new Date()
-  const tomorrow = new Date(Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate() + 1,
-    0, 0, 0, 0
-  ))
-  return tomorrow.toISOString()
-}
-
-/**
- * Get today's date in YYYY-MM-DD format (UTC).
- */
-function getTodayUTC(): string {
-  return new Date().toISOString().split('T')[0]
+const initialState: WorkflowState = {
+  projectId: null,
+  projectName: 'Untitled Project',
+  status: 'idle',
+  error: null,
+  prompt: '',
+  globalTheme: '',
+  previewCode: '',
+  saveStatus: 'saved',
+  lastSavedAt: null,
+  _saveTimer: null,
 }
 
 // =============================================================================
-// Rate Limit Check
+// Auto-save helper
 // =============================================================================
 
-/**
- * Checks if a user is allowed to make an AI generation request.
- *
- * @param userId - The authenticated user's ID
- * @returns RateLimitResult with allowed status and usage info
- */
-export async function checkRateLimit(userId: string): Promise<RateLimitResult> {
-  if (!userId || userId === 'anonymous') {
-    console.warn('[RateLimit] Anonymous user - allowing request (auth required for tracking)')
-    return {
-      allowed: true,
-      remaining: MAX_GENERATIONS,
-      used: 0,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
+async function performSave(
+  projectId: string,
+  payload: {
+    name: string
+    prompt: string
+    generated_code: string
+    global_theme: string
+    canvas_data: unknown
   }
-
+): Promise<boolean> {
   try {
-    const supabase = createAdminClient()
-    const today = getTodayUTC()
-
-    const { data: usage, error } = await supabase
-      .from('usage')
-      .select('generation_count')
-      .eq('user_id', userId)
-      .eq('date', today)
-      .single()
-
-    if (error && error.code !== 'PGRST116') {
-      console.error('[RateLimit] Database error:', error)
-      return {
-        allowed: true,
-        remaining: MAX_GENERATIONS,
-        used: 0,
-        limit: MAX_GENERATIONS,
-        resetAt: getResetTime(),
-      }
-    }
-
-    const currentCount = usage?.generation_count ?? 0
-    const remaining = Math.max(0, MAX_GENERATIONS - currentCount)
-    const allowed = currentCount < MAX_GENERATIONS
-
-    return {
-      allowed,
-      remaining,
-      used: currentCount,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
+    const response = await fetch(`/api/projects/${projectId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    return response.ok
   } catch (error) {
-    console.error('[RateLimit] Unexpected error:', error)
-    return {
-      allowed: true,
-      remaining: MAX_GENERATIONS,
-      used: 0,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
+    console.error('[AutoSave] Network error:', error)
+    return false
   }
 }
 
 // =============================================================================
-// Increment Usage
+// Store
 // =============================================================================
 
-/**
- * Increments the generation count for a user.
- * Creates a new usage record if none exists for today.
- *
- * @param userId - The authenticated user's ID
- * @returns The updated usage stats, or null if increment failed
- */
-export async function incrementUsage(userId: string): Promise<UsageStats | null> {
-  if (!userId || userId === 'anonymous') {
-    console.warn('[RateLimit] Cannot track usage for anonymous user')
-    return null
-  }
+export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, get) => ({
+  ...initialState,
 
-  try {
-    const supabase = createAdminClient()
-    const today = getTodayUTC()
+  // ─── Project management ───────────────────────────────────────────────────
 
-    const { data, error } = await supabase.rpc('increment_usage', {
-      p_user_id: userId,
-      p_max_generations: MAX_GENERATIONS,
+  setProjectId: (id) => set({ projectId: id }),
+
+  setProjectName: (name) => {
+    set({ projectName: name, saveStatus: 'unsaved' })
+  },
+
+  loadProject: (project) => {
+    set({
+      projectId: project.id,
+      projectName: project.name,
+      prompt: project.prompt ?? '',
+      previewCode: project.generated_code ?? '',
+      globalTheme: project.global_theme ?? '',
+      saveStatus: 'saved',
+      lastSavedAt: new Date(),
+      status: 'idle',
+      error: null,
+    })
+  },
+
+  // ─── Workflow ─────────────────────────────────────────────────────────────
+
+  setStatus: (status) => set({ status }),
+
+  setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
+
+  // ─── Content ──────────────────────────────────────────────────────────────
+
+  setPrompt: (prompt) => {
+    set({ prompt, saveStatus: 'unsaved' })
+  },
+
+  setGlobalTheme: (globalTheme) => {
+    set({ globalTheme, saveStatus: 'unsaved' })
+  },
+
+  setPreviewCode: (previewCode) => {
+    set({ previewCode, saveStatus: 'unsaved' })
+  },
+
+  // ─── Save ─────────────────────────────────────────────────────────────────
+
+  setSaveStatus: (saveStatus) => set({ saveStatus }),
+
+  triggerAutoSave: (getCanvasData) => {
+    const state = get()
+
+    // Clear existing timer
+    if (state._saveTimer) {
+      clearTimeout(state._saveTimer)
+    }
+
+    // Mark as unsaved immediately
+    set({ saveStatus: 'unsaved' })
+
+    // Set new debounced timer — 3 seconds
+    const timer = setTimeout(async () => {
+      await get().saveNow(getCanvasData)
+    }, 3000)
+
+    set({ _saveTimer: timer })
+  },
+
+  saveNow: async (getCanvasData) => {
+    const state = get()
+
+    if (!state.projectId) {
+      // No project yet — nothing to save
+      return
+    }
+
+    set({ saveStatus: 'saving' })
+
+    const success = await performSave(state.projectId, {
+      name: state.projectName,
+      prompt: state.prompt,
+      generated_code: state.previewCode,
+      global_theme: state.globalTheme,
+      canvas_data: getCanvasData(),
     })
 
-    if (error) {
-      console.error('[RateLimit] RPC error, falling back to manual upsert:', error)
-      return await manualIncrementUsage(userId, today)
-    }
-
-    const result = data?.[0]
-    if (!result) {
-      console.error('[RateLimit] RPC returned no data')
-      return await manualIncrementUsage(userId, today)
-    }
-
-    return {
-      used: result.current_count,
-      limit: MAX_GENERATIONS,
-      remaining: result.remaining,
-      resetAt: getResetTime(),
-    }
-  } catch (error) {
-    console.error('[RateLimit] Unexpected error in incrementUsage:', error)
-    return null
-  }
-}
-
-/**
- * Manual fallback for incrementing usage when RPC is not available.
- * Uses upsert with conflict handling.
- */
-async function manualIncrementUsage(userId: string, today: string): Promise<UsageStats | null> {
-  try {
-    const supabase = createAdminClient()
-
-    const { data: existing } = await supabase
-      .from('usage')
-      .select('id, generation_count')
-      .eq('user_id', userId)
-      .eq('date', today)
-      .single()
-
-    if (existing) {
-      const newCount = existing.generation_count + 1
-      const { error: updateError } = await supabase
-        .from('usage')
-        .update({
-          generation_count: newCount,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', existing.id)
-
-      if (updateError) {
-        console.error('[RateLimit] Update error:', updateError)
-        return null
-      }
-
-      return {
-        used: newCount,
-        limit: MAX_GENERATIONS,
-        remaining: Math.max(0, MAX_GENERATIONS - newCount),
-        resetAt: getResetTime(),
-      }
+    if (success) {
+      set({ saveStatus: 'saved', lastSavedAt: new Date() })
     } else {
-      const { error: insertError } = await supabase
-        .from('usage')
-        .insert({
-          user_id: userId,
-          date: today,
-          generation_count: 1,
-        })
-
-      if (insertError) {
-        if (insertError.code === '23505') {
-          return await manualIncrementUsage(userId, today)
-        }
-        console.error('[RateLimit] Insert error:', insertError)
-        return null
-      }
-
-      return {
-        used: 1,
-        limit: MAX_GENERATIONS,
-        remaining: MAX_GENERATIONS - 1,
-        resetAt: getResetTime(),
-      }
+      set({ saveStatus: 'error' })
     }
-  } catch (error) {
-    console.error('[RateLimit] Manual increment error:', error)
-    return null
-  }
+  },
+
+  // ─── Reset ────────────────────────────────────────────────────────────────
+
+  reset: () => {
+    const state = get()
+    if (state._saveTimer) {
+      clearTimeout(state._saveTimer)
+    }
+    set(initialState)
+  },
+}))
+</file>
+
+<file path="src/app/(dashboard)/dashboard/page.tsx">
+// =============================================================================
+// Dashboard Page — Project List
+// src/app/(dashboard)/dashboard/page.tsx
+// =============================================================================
+// Shows list of user's projects + "New Project" button
+// Clicking a project navigates to /project/[id]
+// =============================================================================
+
+'use client'
+
+import { useEffect, useState, useCallback } from 'react'
+import { useRouter } from 'next/navigation'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Skeleton } from '@/components/ui/skeleton'
+import { Badge } from '@/components/ui/badge'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
+import { Plus, MoreVertical, Pencil, Trash2, Clock } from 'lucide-react'
+import { toast } from 'sonner'
+
+// =============================================================================
+// Types
+// =============================================================================
+
+interface Project {
+  id: string
+  name: string
+  prompt: string | null
+  created_at: string
+  updated_at: string
+  is_public: boolean
 }
 
 // =============================================================================
-// Get Usage Stats (for UI display)
+// Helpers
 // =============================================================================
 
-/**
- * Gets the current usage stats for a user.
- * Useful for displaying remaining generations in the UI.
- *
- * @param userId - The authenticated user's ID
- * @returns Current usage stats
- */
-export async function getUsageStats(userId: string): Promise<UsageStats> {
-  const defaultStats: UsageStats = {
-    used: 0,
-    limit: MAX_GENERATIONS,
-    remaining: MAX_GENERATIONS,
-    resetAt: getResetTime(),
-  }
+function formatRelativeTime(dateStr: string): string {
+  const date = new Date(dateStr)
+  const now = new Date()
+  const diffMs = now.getTime() - date.getTime()
+  const diffMins = Math.floor(diffMs / 60000)
+  const diffHours = Math.floor(diffMins / 60)
+  const diffDays = Math.floor(diffHours / 24)
 
-  if (!userId || userId === 'anonymous') {
-    return defaultStats
-  }
-
-  try {
-    const supabase = createAdminClient()
-    const today = getTodayUTC()
-
-    const { data: usage, error } = await supabase
-      .from('usage')
-      .select('generation_count')
-      .eq('user_id', userId)
-      .eq('date', today)
-      .single()
-
-    if (error && error.code !== 'PGRST116') {
-      console.error('[RateLimit] Error fetching usage stats:', error)
-      return defaultStats
-    }
-
-    const used = usage?.generation_count ?? 0
-    return {
-      used,
-      limit: MAX_GENERATIONS,
-      remaining: Math.max(0, MAX_GENERATIONS - used),
-      resetAt: getResetTime(),
-    }
-  } catch (error) {
-    console.error('[RateLimit] Unexpected error in getUsageStats:', error)
-    return defaultStats
-  }
+  if (diffMins < 1) return 'just now'
+  if (diffMins < 60) return `${diffMins}m ago`
+  if (diffHours < 24) return `${diffHours}h ago`
+  if (diffDays < 7) return `${diffDays}d ago`
+  return date.toLocaleDateString()
 }
 
 // =============================================================================
-// Check and Increment (Atomic Operation)
+// Dashboard Page
 // =============================================================================
 
-/**
- * Atomically checks rate limit AND increments usage in one operation.
- * Use this when you want to reserve a generation slot.
- *
- * @param userId - The authenticated user's ID
- * @returns Result with allowed status - if allowed, usage is already incremented
- */
-export async function checkAndIncrementUsage(userId: string): Promise<RateLimitResult> {
-  if (!userId || userId === 'anonymous') {
-    return {
-      allowed: true,
-      remaining: MAX_GENERATIONS,
-      used: 0,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
+export default function DashboardPage() {
+  const router = useRouter()
+  const [projects, setProjects] = useState<Project[]>([])
+  const [loading, setLoading] = useState(true)
+  const [creating, setCreating] = useState(false)
+  const [deleteId, setDeleteId] = useState<string | null>(null)
+  const [deleting, setDeleting] = useState(false)
+
+  // ─── Load projects ────────────────────────────────────────────────────────
+
+  const loadProjects = useCallback(async () => {
+    try {
+      const res = await fetch('/api/projects')
+      const json = await res.json()
+      if (json.success) {
+        setProjects(json.data.projects)
+      }
+    } catch (error) {
+      console.error('Failed to load projects', error)
+      toast.error('Failed to load projects')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    loadProjects()
+  }, [loadProjects])
+
+  // ─── Create project ───────────────────────────────────────────────────────
+
+  const handleNewProject = async () => {
+    setCreating(true)
+    try {
+      const res = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Untitled Project' }),
+      })
+      const json = await res.json()
+
+      if (json.success) {
+        router.push(`/project/${json.data.project.id}`)
+      } else {
+        toast.error('Failed to create project')
+        setCreating(false)
+      }
+    } catch (error) {
+      console.error('Failed to create project', error)
+      toast.error('Failed to create project')
+      setCreating(false)
     }
   }
 
-  try {
-    const supabase = createAdminClient()
+  // ─── Delete project ───────────────────────────────────────────────────────
 
-    const { data, error } = await supabase.rpc('increment_usage', {
-      p_user_id: userId,
-      p_max_generations: MAX_GENERATIONS,
-    })
+  const handleDelete = async () => {
+    if (!deleteId) return
+    setDeleting(true)
 
-    if (error) {
-      console.error('[RateLimit] RPC error in checkAndIncrement:', error)
-      return await checkRateLimit(userId)
-    }
+    try {
+      const res = await fetch(`/api/projects/${deleteId}`, {
+        method: 'DELETE',
+      })
 
-    const result = data?.[0]
-    if (!result) {
-      return await checkRateLimit(userId)
-    }
-
-    return {
-      allowed: result.success,
-      remaining: result.remaining,
-      used: result.current_count,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
-  } catch (error) {
-    console.error('[RateLimit] Unexpected error in checkAndIncrement:', error)
-    return {
-      allowed: true,
-      remaining: MAX_GENERATIONS,
-      used: 0,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
+      if (res.ok) {
+        setProjects(prev => prev.filter(p => p.id !== deleteId))
+        toast.success('Project deleted')
+      } else {
+        toast.error('Failed to delete project')
+      }
+    } catch (error) {
+      console.error('Failed to delete project', error)
+      toast.error('Failed to delete project')
+    } finally {
+      setDeleting(false)
+      setDeleteId(null)
     }
   }
+
+  // ─── Render ───────────────────────────────────────────────────────────────
+
+  return (
+    <div className="min-h-screen bg-background">
+      {/* Header */}
+      <div className="border-b">
+        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-semibold">Projects</h1>
+            <p className="text-sm text-muted-foreground mt-0.5">
+              Draw your layout, let AI build it
+            </p>
+          </div>
+          <Button onClick={handleNewProject} disabled={creating}>
+            <Plus className="h-4 w-4 mr-2" />
+            {creating ? 'Creating...' : 'New Project'}
+          </Button>
+        </div>
+      </div>
+
+      {/* Project grid */}
+      <div className="max-w-6xl mx-auto px-6 py-8">
+        {loading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {[...Array(6)].map((_, i) => (
+              <Skeleton key={i} className="h-40 rounded-xl" />
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          // Empty state
+          <div className="flex flex-col items-center justify-center py-24 text-center">
+            <div className="h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
+              <Pencil className="h-8 w-8 text-muted-foreground" />
+            </div>
+            <h2 className="text-lg font-medium mb-1">No projects yet</h2>
+            <p className="text-sm text-muted-foreground mb-6 max-w-xs">
+              Create your first project to start drawing layouts and generating websites.
+            </p>
+            <Button onClick={handleNewProject} disabled={creating}>
+              <Plus className="h-4 w-4 mr-2" />
+              {creating ? 'Creating...' : 'Create first project'}
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {projects.map((project) => (
+              <Card
+                key={project.id}
+                className="group cursor-pointer hover:shadow-md transition-shadow relative"
+                onClick={() => router.push(`/project/${project.id}`)}
+              >
+                <CardHeader className="pb-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <CardTitle className="text-base font-medium line-clamp-2 leading-snug">
+                      {project.name}
+                    </CardTitle>
+                    {/* Prevent card click when using dropdown */}
+                    <div onClick={e => e.stopPropagation()}>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                          >
+                            <MoreVertical className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            className="text-destructive focus:text-destructive"
+                            onClick={() => setDeleteId(project.id)}
+                          >
+                            <Trash2 className="h-4 w-4 mr-2" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {project.prompt && (
+                    <p className="text-xs text-muted-foreground line-clamp-2 mb-3">
+                      {project.prompt}
+                    </p>
+                  )}
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="h-3 w-3" />
+                      {formatRelativeTime(project.updated_at)}
+                    </div>
+                    {project.is_public && (
+                      <Badge variant="secondary" className="text-xs">
+                        Public
+                      </Badge>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete project?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete the project and all its generated code.
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDelete}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'Deleting...' : 'Delete'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </div>
+  )
 }
 </file>
 

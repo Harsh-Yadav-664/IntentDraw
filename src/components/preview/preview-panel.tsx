@@ -109,127 +109,116 @@ ${previewCode}
   }
 
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader className="pb-3 flex-shrink-0">
-        <div className="flex items-center justify-between">
-          <div>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Eye className="h-5 w-5" />
-              Preview
-            </CardTitle>
-            <CardDescription>Your generated design</CardDescription>
-          </div>
+    <div className="w-full h-full flex flex-col rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-[#1e1e1e] ring-1 ring-black/50">
+      
+      {/* Browser Title Bar */}
+      <div className="h-12 bg-black/40 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-4 flex-shrink-0">
+        
+        {/* Left spacing to balance the layout */}
+        <div className="w-32"></div>
 
+        {/* Center: Device Toggles (if preview code exists) */}
+        <div className="flex items-center justify-center flex-1">
+          {previewCode && viewMode === 'preview' && (
+            <div className="flex items-center gap-1 bg-black/20 p-1 rounded-md border border-white/5">
+              <Button
+                variant={deviceSize === 'desktop' ? 'default' : 'ghost'}
+                size="sm"
+                className={`h-6 px-3 text-xs rounded ${deviceSize === 'desktop' ? 'bg-white/10 text-white' : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                onClick={() => setDeviceSize('desktop')}
+              >
+                <Monitor className="h-3 w-3 mr-1.5" />
+                Desktop
+              </Button>
+              <Button
+                variant={deviceSize === 'tablet' ? 'default' : 'ghost'}
+                size="sm"
+                className={`h-6 px-3 text-xs rounded ${deviceSize === 'tablet' ? 'bg-white/10 text-white' : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                onClick={() => setDeviceSize('tablet')}
+              >
+                <Tablet className="h-3 w-3 mr-1.5" />
+                Tablet
+              </Button>
+              <Button
+                variant={deviceSize === 'mobile' ? 'default' : 'ghost'}
+                size="sm"
+                className={`h-6 px-3 text-xs rounded ${deviceSize === 'mobile' ? 'bg-white/10 text-white' : 'text-muted-foreground hover:text-white hover:bg-white/5'}`}
+                onClick={() => setDeviceSize('mobile')}
+              >
+                <Smartphone className="h-3 w-3 mr-1.5" />
+                Mobile
+              </Button>
+            </div>
+          )}
+          {!previewCode && (
+             <span className="text-xs text-muted-foreground font-medium">Output Preview</span>
+          )}
+        </div>
+
+        {/* Right: View Toggles & Actions */}
+        <div className="flex items-center justify-end gap-2 w-32">
           {previewCode && (
-            <div className="flex items-center gap-2">
+            <>
               <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
-                <TabsList className="h-8">
-                  <TabsTrigger value="preview" className="text-xs px-2 h-6">
-                    <Eye className="h-3 w-3 mr-1" />
-                    Preview
+                <TabsList className="h-7 bg-black/20 border border-white/5">
+                  <TabsTrigger value="preview" className="text-[10px] px-2 h-5 data-[state=active]:bg-white/10 data-[state=active]:text-white">
+                    <Eye className="h-3 w-3" />
                   </TabsTrigger>
-                  <TabsTrigger value="code" className="text-xs px-2 h-6">
-                    <Code className="h-3 w-3 mr-1" />
-                    Code
+                  <TabsTrigger value="code" className="text-[10px] px-2 h-5 data-[state=active]:bg-white/10 data-[state=active]:text-white">
+                    <Code className="h-3 w-3" />
                   </TabsTrigger>
                 </TabsList>
               </Tabs>
               
               <Button
-                variant="outline"
-                size="sm"
-                className="h-8 w-8 p-0"
+                variant="ghost"
+                size="icon"
+                className="h-7 w-7 rounded-md hover:bg-white/10 text-muted-foreground hover:text-white"
                 onClick={handleOpenFullscreen}
                 title="Open in new tab"
               >
                 <Maximize2 className="h-3.5 w-3.5" />
               </Button>
-            </div>
+            </>
           )}
         </div>
+      </div>
 
-        {previewCode && viewMode === 'preview' && (
-          <div className="flex items-center gap-1 mt-2">
-            <Button
-              variant={deviceSize === 'desktop' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setDeviceSize('desktop')}
-            >
-              <Monitor className="h-3.5 w-3.5 mr-1" />
-              1280px
-            </Button>
-            <Button
-              variant={deviceSize === 'tablet' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setDeviceSize('tablet')}
-            >
-              <Tablet className="h-3.5 w-3.5 mr-1" />
-              768px
-            </Button>
-            <Button
-              variant={deviceSize === 'mobile' ? 'default' : 'ghost'}
-              size="sm"
-              className="h-7 px-2 text-xs"
-              onClick={() => setDeviceSize('mobile')}
-            >
-              <Smartphone className="h-3.5 w-3.5 mr-1" />
-              375px
-            </Button>
-          </div>
-        )}
-      </CardHeader>
-
-      <CardContent className="flex-1 flex flex-col min-h-0 pb-3">
-        <div className="flex-1 border rounded-lg overflow-hidden bg-slate-100">
-          {viewMode === 'preview' ? (
-            <PreviewFrame 
-              code={previewCode} 
-              deviceSize={deviceSize}
-              className="h-full w-full" 
-            />
-          ) : (
-            <div className="w-full h-full overflow-auto">
-              <pre className="p-4 text-xs text-slate-800 whitespace-pre-wrap font-mono bg-slate-50 min-h-full">
-                {previewCode || 'No code generated yet.'}
-              </pre>
+      {/* Browser Content Area */}
+      <div className="flex-1 min-h-0 bg-white relative">
+        {!previewCode ? (
+           <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#121214]">
+              <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 shadow-xl">
+                 <Eye className="h-8 w-8 text-primary/50" />
+              </div>
+              <p className="text-sm text-muted-foreground font-medium">No output generated yet.</p>
+           </div>
+        ) : viewMode === 'preview' ? (
+          <PreviewFrame 
+            code={previewCode} 
+            deviceSize={deviceSize}
+            className="h-full w-full" 
+          />
+        ) : (
+          <div className="w-full h-full overflow-auto bg-[#1e1e1e]">
+            <div className="sticky top-0 right-0 p-2 flex justify-end bg-gradient-to-b from-[#1e1e1e] to-transparent">
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-8 bg-black/40 border-white/10 text-xs hover:bg-white/10 hover:text-white"
+                onClick={handleCopyCode}
+              >
+                {copied ? <Check className="mr-1.5 h-3.5 w-3.5" /> : <Copy className="mr-1.5 h-3.5 w-3.5" />}
+                {copied ? 'Copied' : 'Copy Code'}
+              </Button>
             </div>
-          )}
-        </div>
-
-        {previewCode && (
-          <div className="flex gap-2 mt-3 flex-shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1"
-              onClick={handleCopyCode}
-            >
-              {copied ? (
-                <>
-                  <Check className="mr-1.5 h-3.5 w-3.5" />
-                  Copied!
-                </>
-              ) : (
-                <>
-                  <Copy className="mr-1.5 h-3.5 w-3.5" />
-                  Copy
-                </>
-              )}
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="flex-1"
-              onClick={handleDownload}
-            >
-              <Download className="mr-1.5 h-3.5 w-3.5" />
-              Download
-            </Button>
+            <pre className="p-4 pt-0 text-sm text-gray-300 whitespace-pre-wrap font-mono min-h-full">
+              {previewCode}
+            </pre>
           </div>
         )}
-      </CardContent>
-    </Card>
+      </div>
+
+    </div>
   )
 }

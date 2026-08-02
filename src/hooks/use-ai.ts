@@ -95,7 +95,7 @@ export function useAI() {
         return false
       }
 
-      setPreviewCode(result.data.code, result.data.provider)
+      setPreviewCode(result.data.code)
       return true
     } catch (error) {
       console.error('[useAI] Generation error:', error)
@@ -141,7 +141,7 @@ export function useAI() {
         return false
       }
 
-      setPreviewCode(result.data.code, result.data.provider)
+      setPreviewCode(result.data.code)
       return true
     } catch (error) {
       console.error('[useAI] Regeneration error:', error)

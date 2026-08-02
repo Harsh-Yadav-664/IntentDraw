@@ -30,6 +30,8 @@ export default function ProjectPage({ params }: PageProps) {
 
   const { loadProject, triggerAutoSave, projectName } = useWorkflowStore()
   const { regions, setRegions } = useCanvasStore()
+  const viewMode = useCanvasStore((s) => s.viewMode)
+  
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
 
@@ -108,26 +110,58 @@ export default function ProjectPage({ params }: PageProps) {
     )
   }
 
-  // ─── Editor ───────────────────────────────────────────────────────────────
-
   return (
-    <div className="flex flex-col h-screen overflow-hidden">
+    <div className="flex flex-col h-screen overflow-hidden bg-background">
       {/* Top bar */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-background flex-shrink-0">
-        <div className="flex items-center gap-3">
+      <div className="glass-panel flex items-center justify-between px-6 py-3 border-b border-white/5 flex-shrink-0 relative z-20">
+        <div className="flex items-center gap-4">
           <Button
             variant="ghost"
             size="icon"
-            className="h-8 w-8"
+            className="h-9 w-9 rounded-full hover:bg-white/10 transition-colors"
             onClick={() => router.push('/dashboard')}
           >
             <ArrowLeft className="h-4 w-4" />
           </Button>
-          <span className="text-sm font-medium truncate max-w-[200px]">
-            {projectName}
-          </span>
+          <div className="flex items-center gap-3">
+            <div className="h-6 w-px bg-white/10" />
+            <span className="text-sm font-display font-medium truncate max-w-[200px] text-foreground/90">
+              {projectName}
+            </span>
+          </div>
         </div>
-        <SaveStatus />
+
+        {/* View Mode Toggles */}
+        <div className="absolute left-1/2 -translate-x-1/2 hidden md:flex items-center">
+          <div className="glass-panel rounded-full p-1 flex items-center border-white/10 shadow-lg bg-black/40 backdrop-blur-md">
+            <button 
+              onClick={() => useCanvasStore.getState().setViewMode('canvas')} 
+              className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all duration-300 ${viewMode === 'canvas' ? 'bg-primary text-primary-foreground shadow-[0_0_15px_rgba(200,150,50,0.4)]' : 'hover:bg-white/10 text-muted-foreground'}`}
+            >
+              Design
+            </button>
+            <button 
+              onClick={() => useCanvasStore.getState().setViewMode('split')} 
+              className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all duration-300 ${viewMode === 'split' ? 'bg-primary text-primary-foreground shadow-[0_0_15px_rgba(200,150,50,0.4)]' : 'hover:bg-white/10 text-muted-foreground'}`}
+            >
+              Split View
+            </button>
+            <button 
+              onClick={() => useCanvasStore.getState().setViewMode('preview')} 
+              className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all duration-300 ${viewMode === 'preview' ? 'bg-primary text-primary-foreground shadow-[0_0_15px_rgba(200,150,50,0.4)]' : 'hover:bg-white/10 text-muted-foreground'}`}
+            >
+              Output
+            </button>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-4">
+          <SaveStatus />
+          {/* Add a subtle decorative element */}
+          <div className="h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
+             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
+          </div>
+        </div>
       </div>
 
       {/* Canvas editor — your existing 3-panel layout */}

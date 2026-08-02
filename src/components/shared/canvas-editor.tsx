@@ -21,62 +21,121 @@
 
 'use client'
 
+import { useState, useEffect } from 'react'
+import dynamic from 'next/dynamic'
+import { ChevronRight, Menu } from 'lucide-react'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useWorkflowStore } from '@/store/workflow-store'
+import Toolbar from '@/components/canvas/toolbar'
+import ControlsPanel from '@/components/controls/controls-panel'
+import PreviewPanel from '@/components/preview/preview-panel'
+import useKeyboardShortcuts from '@/hooks/use-keyboard-shortcuts'
+import { useCanvasStore } from '@/store/canvas-store'
+import type { ViewMode } from '@/types'
 
-// Option A: If your dashboard canvas is in a component already
-// import { DashboardCanvas } from '@/components/canvas/dashboard-canvas'
-// export function CanvasEditor({ projectId }: { projectId: string }) {
-//   return <DashboardCanvas />
-// }
-
-// Option B: Simple inline — paste your 3-panel JSX here
-// This is what you need to fill in based on your actual dashboard page
+// Dynamic import — Konva needs browser APIs
+const DrawingCanvas = dynamic(
+  () => import('@/components/canvas/drawing-canvas'),
+  {
+    ssr: false,
+    loading: () => (
+      <div className="w-full h-full rounded-2xl border border-white/10 bg-black/20 flex items-center justify-center backdrop-blur-sm">
+        <Skeleton className="w-16 h-16 rounded-full bg-white/5" />
+      </div>
+    ),
+  }
+)
 
 interface CanvasEditorProps {
   projectId: string
 }
 
 export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
-  // The workflow store is already loaded by the time this renders
-  // (project/[id]/page.tsx calls loadProject before rendering this)
-  const { setPrompt, setPreviewCode } = useWorkflowStore()
+  useKeyboardShortcuts()
+  const viewMode = useCanvasStore((s) => s.viewMode)
+  const [isControlsOpen, setControlsOpen] = useState(true)
 
-  // -------------------------------------------------------------------------
-  // IMPORTANT: Replace the content below with your actual 3-panel canvas UI
-  // from src/app/(dashboard)/dashboard/page.tsx
-  //
-  // The key wiring points to connect auto-save:
-  //
-  // 1. When prompt changes:
-  //    onChange={(e) => { setPrompt(e.target.value) }}
-  //    (setPrompt in workflow-store now marks saveStatus = 'unsaved')
-  //
-  // 2. When code is generated:
-  //    setPreviewCode(generatedCode)
-  //    (setPreviewCode marks saveStatus = 'unsaved', triggers auto-save)
-  //
-  // The triggerAutoSave() is called by project/[id]/page.tsx
-  // whenever regions change in canvas-store — so canvas changes
-  // are captured automatically.
-  // -------------------------------------------------------------------------
-
-  void setPrompt
-  void setPreviewCode
+  // Automatically collapse controls in split view to save space
+  useEffect(() => {
+    if (viewMode === 'split') {
+      setControlsOpen(false)
+    } else {
+      setControlsOpen(true)
+    }
+  }, [viewMode])
 
   return (
-    <div className="flex h-full">
-      {/* 
-        Paste your existing 3-panel canvas layout here.
+    <div className="h-full relative overflow-hidden bg-[#0A0A0B]">
+      {/* Dark dotted background pattern for the infinite canvas feel */}
+      <div 
+        className="absolute inset-0 opacity-[0.05] pointer-events-none" 
+        style={{ 
+          backgroundImage: 'radial-gradient(circle at 2px 2px, white 1px, transparent 0)', 
+          backgroundSize: '24px 24px' 
+        }} 
+      />
+      {/* Subtle ambient glow */}
+      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent pointer-events-none" />
+      
+      <div className="h-full flex relative z-10">
         
-        Panel 1: Canvas (drawing-canvas.tsx + toolbar.tsx)
-        Panel 2: Controls (controls-panel.tsx)  
-        Panel 3: Preview (preview-panel.tsx)
-        
-        Everything works exactly as before — the only difference is
-        this component now lives here instead of in dashboard/page.tsx
-      */}
-      <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-        Replace this with your existing canvas 3-panel layout
+        {/* Main Workspace Area */}
+        <div className="flex-1 h-full flex flex-col relative min-w-0">
+          
+          {/* Content Area */}
+          <div className="flex-1 flex w-full h-full p-6 md:p-8 gap-6 overflow-hidden items-center justify-center">
+             
+             {/* Canvas Artboard */}
+             {(viewMode === 'canvas' || viewMode === 'split') && (
+               <div className={`relative flex flex-col animate-in fade-in zoom-in-95 duration-300 ${viewMode === 'split' ? 'flex-1 h-full max-h-full' : 'w-full max-w-5xl aspect-video max-h-[85vh]'}`}>
+                 {/* Window Wrapper */}
+                 <div className="flex-1 flex flex-col w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-[#121214] ring-1 ring-white/5 relative">
+                    
+                    {/* Top Canvas Ribbon (Toolbar) */}
+                    <div className="h-12 bg-black/60 backdrop-blur-md border-b border-white/10 flex items-center px-4 flex-shrink-0 z-40 w-full justify-center">
+                       <Toolbar />
+                    </div>
+                    
+                    {/* Canvas Area */}
+                    <div className="flex-1 relative w-full overflow-hidden">
+                       <DrawingCanvas />
+                    </div>
+                 </div>
+               </div>
+             )}
+             
+             {/* Preview Artboard */}
+             {(viewMode === 'preview' || viewMode === 'split') && (
+               <div className={`relative flex items-center justify-center animate-in fade-in zoom-in-95 duration-300 ${viewMode === 'split' ? 'flex-1 h-full max-h-full' : 'w-full max-w-5xl aspect-video max-h-[85vh]'}`}>
+                 <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 ring-1 ring-white/5">
+                    <PreviewPanel />
+                 </div>
+               </div>
+             )}
+             
+          </div>
+
+        </div>
+
+        {/* Right Sidebar (Controls) */}
+        <div 
+          className={`h-full border-l border-white/5 flex-shrink-0 bg-[#0A0A0B]/95 backdrop-blur-xl z-50 flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)] transition-all duration-300 ease-in-out relative ${
+            isControlsOpen ? 'w-80 translate-x-0' : 'w-0 translate-x-full border-l-0 shadow-none'
+          }`}
+        >
+          {/* Collapse Toggle Button */}
+          <button
+            onClick={() => setControlsOpen(!isControlsOpen)}
+            className={`absolute top-4 -left-12 h-10 w-10 flex items-center justify-center rounded-l-xl bg-[#0A0A0B]/95 border border-r-0 border-white/10 text-white/70 hover:text-white transition-all backdrop-blur-xl z-50 shadow-[-5px_0_15px_rgba(0,0,0,0.5)] ${!isControlsOpen ? 'bg-primary/20 text-primary border-primary/30 hover:bg-primary/30 hover:text-primary-foreground' : ''}`}
+            title={isControlsOpen ? "Collapse controls" : "Expand controls"}
+          >
+            {isControlsOpen ? <ChevronRight className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+
+          <div className="w-80 h-full p-4 overflow-hidden flex flex-col">
+            <ControlsPanel />
+          </div>
+        </div>
       </div>
     </div>
   )

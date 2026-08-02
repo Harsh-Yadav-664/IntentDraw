@@ -185,7 +185,17 @@ export interface Database {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      increment_usage: {
+        Args: {
+          p_user_id: string
+          p_max_generations: number
+        }
+        Returns: {
+          success: boolean
+          current_count: number
+          remaining: number
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

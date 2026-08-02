@@ -11,8 +11,11 @@ import { create } from 'zustand'
 
 export type WorkflowStatus =
   | 'idle'
+  | 'drawing'
   | 'analyzing'
+  | 'regions_ready'
   | 'generating'
+  | 'preview_ready'
   | 'success'
   | 'error'
 

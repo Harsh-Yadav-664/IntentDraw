@@ -19,3 +19,12 @@ SECRETS*.md
 # OS
 .DS_Store
 Thumbs.db
+
+# Planning docs (keep local)
+*.docx
+*.doc
+
+# Misc local files
+repomix-output.xml
+test-supabase.js
+security.md

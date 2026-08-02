@@ -20,10 +20,10 @@
 // =============================================================================
 
 export { createClient as createBrowserClient } from './client'
-export { createClient as createServerClient, createAdminClient } from './server'
-export { updateSession } from './middleware'
+// ⚠️  Server-side clients are NOT re-exported from this barrel.
+// Import them directly: `@/lib/supabase/server` or `@/lib/supabase/middleware`
 
-// Type exports
+// Type exports (safe for both client and server)
 export type { Database, Json } from './types'
 export type {
   Tables,

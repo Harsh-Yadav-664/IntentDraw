@@ -9,7 +9,7 @@
 // All AI routes MUST call checkRateLimit() and respect the result.
 // =============================================================================
 
-import { createAdminClient } from '@/lib/supabase'
+import { createAdminClient } from '@/lib/supabase/server'
 
 // =============================================================================
 // Configuration

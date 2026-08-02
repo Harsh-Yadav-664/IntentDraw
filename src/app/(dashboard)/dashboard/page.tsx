@@ -152,17 +152,20 @@ export default function DashboardPage() {
   // ─── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background relative">
+      {/* Ambient background effect */}
+      <div className="absolute top-0 inset-x-0 h-[500px] bg-gradient-to-b from-primary/10 to-transparent pointer-events-none" />
+
       {/* Header */}
-      <div className="border-b">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
+      <div className="sticky top-0 z-30 pt-6 pb-4 px-6">
+        <div className="max-w-6xl mx-auto glass-panel rounded-2xl px-6 py-4 flex items-center justify-between">
           <div>
-            <h1 className="text-2xl font-semibold">Projects</h1>
+            <h1 className="text-2xl font-display font-bold">Projects</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
               Draw your layout, let AI build it
             </p>
           </div>
-          <Button onClick={handleNewProject} disabled={creating}>
+          <Button onClick={handleNewProject} disabled={creating} className="rounded-full shadow-[0_0_15px_rgba(200,150,50,0.3)] hover:shadow-[0_0_25px_rgba(200,150,50,0.5)] transition-shadow">
             <Plus className="h-4 w-4 mr-2" />
             {creating ? 'Creating...' : 'New Project'}
           </Button>
@@ -170,39 +173,42 @@ export default function DashboardPage() {
       </div>
 
       {/* Project grid */}
-      <div className="max-w-6xl mx-auto px-6 py-8">
+      <div className="max-w-6xl mx-auto px-6 py-8 relative z-10">
         {loading ? (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {[...Array(6)].map((_, i) => (
-              <Skeleton key={i} className="h-40 rounded-xl" />
+              <Skeleton key={i} className="h-40 rounded-2xl bg-muted/20" />
             ))}
           </div>
         ) : projects.length === 0 ? (
           // Empty state
-          <div className="flex flex-col items-center justify-center py-24 text-center">
-            <div className="h-16 w-16 rounded-2xl bg-muted flex items-center justify-center mb-4">
-              <Pencil className="h-8 w-8 text-muted-foreground" />
+          <div className="flex flex-col items-center justify-center py-32 text-center glass-panel rounded-3xl mt-8">
+            <div className="h-20 w-20 rounded-3xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-6">
+              <Pencil className="h-10 w-10 text-primary" />
             </div>
-            <h2 className="text-lg font-medium mb-1">No projects yet</h2>
-            <p className="text-sm text-muted-foreground mb-6 max-w-xs">
-              Create your first project to start drawing layouts and generating websites.
+            <h2 className="text-2xl font-display font-medium mb-2 text-foreground/90">No projects yet</h2>
+            <p className="text-base text-muted-foreground mb-8 max-w-md">
+              Create your first project to start drawing layouts and generating beautiful web interfaces.
             </p>
-            <Button onClick={handleNewProject} disabled={creating}>
-              <Plus className="h-4 w-4 mr-2" />
+            <Button size="lg" className="rounded-full shadow-[0_0_20px_rgba(200,150,50,0.4)]" onClick={handleNewProject} disabled={creating}>
+              <Plus className="h-5 w-5 mr-2" />
               {creating ? 'Creating...' : 'Create first project'}
             </Button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {projects.map((project) => (
               <Card
                 key={project.id}
-                className="group cursor-pointer hover:shadow-md transition-shadow relative"
+                className="group cursor-pointer hover-lift relative bg-card/40 backdrop-blur-md border-white/10 overflow-hidden"
                 onClick={() => router.push(`/project/${project.id}`)}
               >
-                <CardHeader className="pb-2">
+                {/* Hover gradient effect */}
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
+                
+                <CardHeader className="pb-3 relative z-10">
                   <div className="flex items-start justify-between gap-2">
-                    <CardTitle className="text-base font-medium line-clamp-2 leading-snug">
+                    <CardTitle className="text-lg font-display font-medium line-clamp-2 leading-snug">
                       {project.name}
                     </CardTitle>
                     {/* Prevent card click when using dropdown */}
@@ -212,14 +218,14 @@ export default function DashboardPage() {
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-7 w-7 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0"
+                            className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0 hover:bg-white/10"
                           >
                             <MoreVertical className="h-4 w-4" />
                           </Button>
                         </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
+                        <DropdownMenuContent align="end" className="bg-popover/90 backdrop-blur-lg border-white/10">
                           <DropdownMenuItem
-                            className="text-destructive focus:text-destructive"
+                            className="text-destructive focus:text-destructive focus:bg-destructive/10"
                             onClick={() => setDeleteId(project.id)}
                           >
                             <Trash2 className="h-4 w-4 mr-2" />
@@ -230,19 +236,19 @@ export default function DashboardPage() {
                     </div>
                   </div>
                 </CardHeader>
-                <CardContent>
+                <CardContent className="relative z-10">
                   {project.prompt && (
-                    <p className="text-xs text-muted-foreground line-clamp-2 mb-3">
+                    <p className="text-sm text-muted-foreground line-clamp-2 mb-4">
                       {project.prompt}
                     </p>
                   )}
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
+                  <div className="flex items-center justify-between mt-auto pt-2 border-t border-white/5">
+                    <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground/80">
+                      <Clock className="h-3.5 w-3.5" />
                       {formatRelativeTime(project.updated_at)}
                     </div>
                     {project.is_public && (
-                      <Badge variant="secondary" className="text-xs">
+                      <Badge variant="secondary" className="text-xs bg-primary/20 text-primary border-0">
                         Public
                       </Badge>
                     )}
@@ -256,20 +262,20 @@ export default function DashboardPage() {
 
       {/* Delete confirmation dialog */}
       <AlertDialog open={!!deleteId} onOpenChange={(open) => !open && setDeleteId(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent className="glass-panel border-white/10">
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete project?</AlertDialogTitle>
+            <AlertDialogTitle className="font-display">Delete project?</AlertDialogTitle>
             <AlertDialogDescription>
               This will permanently delete the project and all its generated code.
               This cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={deleting} className="border-white/10 hover:bg-white/5">Cancel</AlertDialogCancel>
             <AlertDialogAction
               onClick={handleDelete}
               disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-[0_0_15px_rgba(200,50,50,0.3)]"
             >
               {deleting ? 'Deleting...' : 'Delete'}
             </AlertDialogAction>

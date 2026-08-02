@@ -20,6 +20,10 @@ interface CanvasStore {
   // Visibility tracking
   visibility: Record<string, boolean>
 
+  // View Mode
+  viewMode: 'canvas' | 'split' | 'preview'
+  setViewMode: (mode: 'canvas' | 'split' | 'preview') => void
+
   setActiveTool: (tool: CanvasTool) => void
   selectRegion: (id: string | null) => void
   setStageInstance: (stage: StageExporter | null) => void
@@ -43,20 +47,14 @@ interface CanvasStore {
   importFromJson: (json: string) => void
 }
 
-// Region colors - Photoshop-like palette
+// Region colors - Professional wireframe palette
 export const REGION_COLORS = [
-  '#3A7BFF', // Blue
-  '#FF6B35', // Orange
-  '#2EC4B6', // Teal
-  '#E040FB', // Purple
-  '#FFD600', // Yellow
-  '#00E676', // Green
-  '#FF4081', // Pink
-  '#00B0FF', // Light Blue
-  '#76FF03', // Lime
-  '#FF6D00', // Deep Orange
-  '#651FFF', // Deep Purple
-  '#F50057', // Red
+  '#8b949e', // Muted Gray
+  '#58a6ff', // Muted Blue
+  '#3fb950', // Muted Green
+  '#bc8cff', // Muted Purple
+  '#d29922', // Muted Yellow
+  '#f85149', // Muted Red
 ]
 
 export const useCanvasStore = create<CanvasStore>((set, get) => {
@@ -86,8 +84,10 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     canUndo: false,
     canRedo: false,
     _stageInstance: null,
+    viewMode: 'canvas',
     visibility: {},
 
+    setViewMode: (mode) => set({ viewMode: mode }),
     setActiveTool: (tool) => set({ activeTool: tool, selectedRegionId: null }),
     selectRegion: (id) => set({ selectedRegionId: id }),
     setStageInstance: (stage) => set({ _stageInstance: stage }),

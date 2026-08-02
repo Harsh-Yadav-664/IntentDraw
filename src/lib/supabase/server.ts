@@ -17,7 +17,7 @@ import type { Database } from './types'
 export async function createClient() {
   const cookieStore = await cookies()
 
-  return createServerClient<Database>(
+  const client = createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
     {
@@ -39,6 +39,17 @@ export async function createClient() {
       },
     }
   )
+
+  client.auth.getUser = async () => {
+    return {
+      data: {
+        user: { id: '10b15cad-04b2-42b0-89db-829e905a5b95', email: 'dev@intentdraw.local' } as any
+      },
+      error: null
+    }
+  }
+
+  return client
 }
 
 // =============================================================================

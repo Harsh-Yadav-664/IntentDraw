@@ -8,7 +8,19 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2 } from 'lucide-react'
+import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2, Square, Circle, PenTool, Navigation } from 'lucide-react'
+
+// Helper to get shape icon
+const getShapeIcon = (type: string, color: string) => {
+  const props = { className: "h-4 w-4", style: { color } }
+  switch (type) {
+    case 'rectangle': return <Square {...props} />
+    case 'circle': return <Circle {...props} />
+    case 'freeform': return <PenTool {...props} />
+    case 'arrow': return <Navigation {...props} />
+    default: return <Square {...props} />
+  }
+}
 
 export default function ControlsPanel() {
   const regions = useCanvasStore((s) => s.regions)
@@ -21,9 +33,8 @@ export default function ControlsPanel() {
   const prompt = useWorkflowStore((s) => s.prompt)
   const setPrompt = useWorkflowStore((s) => s.setPrompt)
   const status = useWorkflowStore((s) => s.status)
-  const errorMessage = useWorkflowStore((s) => s.errorMessage)
-  const clearError = useWorkflowStore((s) => s.clearError)
-  const lastProvider = useWorkflowStore((s) => s.lastProvider)
+  const errorMessage = useWorkflowStore((s) => s.error)
+  const clearError = () => useWorkflowStore.getState().setError(null)
 
   const { isAnalyzing, isGenerating, generateCode } = useAI()
 
@@ -37,36 +48,36 @@ export default function ControlsPanel() {
   }
 
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader className="pb-3">
-        <CardTitle className="text-lg flex items-center gap-2">
-          <Wand2 className="h-5 w-5" />
+    <Card className="h-full flex flex-col glass-panel border-white/10 bg-card/40 backdrop-blur-md">
+      <CardHeader className="pb-3 border-b border-white/5">
+        <CardTitle className="text-lg flex items-center gap-2 font-display">
+          <Wand2 className="h-5 w-5 text-primary" />
           Controls
         </CardTitle>
         <CardDescription>Layers & prompt</CardDescription>
       </CardHeader>
 
-      <CardContent className="flex-1 flex flex-col space-y-4 overflow-hidden">
+      <CardContent className="flex-1 flex flex-col space-y-4 overflow-y-auto overflow-x-hidden pt-4 pb-6">
         {/* Layer Panel */}
         <div className="flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
-            <h4 className="text-sm font-medium flex items-center gap-1.5">
-              <Layers className="h-4 w-4" />
+            <h4 className="text-sm font-medium flex items-center gap-1.5 text-foreground/90">
+              <Layers className="h-4 w-4 text-primary/70" />
               Layers
             </h4>
-            <Badge variant="secondary" className="text-xs">
+            <Badge variant="secondary" className="text-xs bg-primary/20 text-primary border-0">
               {regions.length}
             </Badge>
           </div>
 
           {regions.length === 0 ? (
-            <div className="border-2 border-dashed border-slate-200 rounded-lg p-4 text-center text-slate-400 text-sm">
+            <div className="border-2 border-dashed border-white/10 rounded-xl p-4 text-center text-muted-foreground text-sm bg-black/20">
               Draw shapes on the canvas to create layers.
               <br />
-              <span className="text-xs mt-1 block">Or just write a prompt!</span>
+              <span className="text-xs mt-1 block opacity-70">Or just write a prompt!</span>
             </div>
           ) : (
-            <div className="border rounded-lg overflow-hidden bg-slate-50">
+            <div className="border border-white/10 rounded-xl overflow-hidden bg-black/20">
               <div className="max-h-40 overflow-y-auto">
                 {/* Reverse to show top layer first (like Photoshop) */}
                 {[...regions].reverse().map((region, reverseIndex) => {
@@ -78,54 +89,48 @@ export default function ControlsPanel() {
                   return (
                     <div
                       key={region.id}
-                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors border-b border-slate-200 last:border-b-0 ${
+                      className={`flex items-center gap-2 px-3 py-2 cursor-pointer transition-colors border-b border-white/5 last:border-b-0 ${
                         isSelected
-                          ? 'bg-blue-50'
-                          : 'hover:bg-white'
+                          ? 'bg-primary/15'
+                          : 'hover:bg-white/5'
                       } ${!isVisible ? 'opacity-50' : ''}`}
                       onClick={() => selectRegion(isSelected ? null : region.id)}
                     >
-                      {/* Color dot */}
-                      <span
-                        className="w-3 h-3 rounded-full flex-shrink-0"
-                        style={{ backgroundColor: color }}
-                      />
+                      {/* Shape icon */}
+                      <div className="flex-shrink-0 flex items-center justify-center opacity-80 shadow-[0_0_8px_currentColor] rounded-full p-1 bg-black/20" style={{ color: color }}>
+                        {getShapeIcon(region.geometry.type, color)}
+                      </div>
 
                       {/* Layer name */}
-                      <span className={`flex-1 text-sm truncate ${isSelected ? 'font-medium text-blue-900' : 'text-slate-700'}`}>
+                      <span className={`flex-1 text-sm truncate ${isSelected ? 'font-medium text-primary' : 'text-foreground/80'}`}>
                         Region {region.regionNumber}
                       </span>
 
-                      {/* Shape type badge */}
-                      <Badge variant="outline" className="text-[10px] px-1.5 py-0 h-5 capitalize">
-                        {region.geometry.type}
-                      </Badge>
-
                       {/* Visibility toggle */}
                       <button
-                        className="p-1 hover:bg-slate-200 rounded transition-colors"
+                        className="p-1 hover:bg-white/10 rounded transition-colors"
                         onClick={(e) => {
                           e.stopPropagation()
                           toggleVisibility(region.id)
                         }}
                       >
                         {isVisible ? (
-                          <Eye className="h-3.5 w-3.5 text-slate-500" />
+                          <Eye className="h-3.5 w-3.5 text-muted-foreground" />
                         ) : (
-                          <EyeOff className="h-3.5 w-3.5 text-slate-400" />
+                          <EyeOff className="h-3.5 w-3.5 text-muted-foreground/50" />
                         )}
                       </button>
 
                       {/* Delete button (only show on hover/selected) */}
                       {isSelected && (
                         <button
-                          className="p-1 hover:bg-red-100 rounded transition-colors"
+                          className="p-1 hover:bg-destructive/20 rounded transition-colors"
                           onClick={(e) => {
                             e.stopPropagation()
                             deleteRegion(region.id)
                           }}
                         >
-                          <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                          <Trash2 className="h-3.5 w-3.5 text-destructive" />
                         </button>
                       )}
                     </div>
@@ -139,20 +144,16 @@ export default function ControlsPanel() {
         {/* Selected Region Info */}
         {selectedRegion && (
           <div 
-            className="flex-shrink-0 p-3 rounded-lg border"
-            style={{ 
-              backgroundColor: `${REGION_COLORS[regions.findIndex(r => r.id === selectedRegion.id) % REGION_COLORS.length]}10`,
-              borderColor: `${REGION_COLORS[regions.findIndex(r => r.id === selectedRegion.id) % REGION_COLORS.length]}40`
-            }}
+            className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
           >
-            <p className="font-medium text-sm">
+            <p className="font-medium text-sm text-primary">
               Region {selectedRegion.regionNumber} selected
             </p>
-            <p className="text-xs mt-1 text-slate-600">
+            <p className="text-xs mt-1 text-muted-foreground">
               {selectedRegion.geometry.type} · {Math.round(selectedRegion.geometry.width)}×
               {Math.round(selectedRegion.geometry.height)}px
             </p>
-            <p className="text-xs mt-2 text-slate-500">
+            <p className="text-xs mt-2 text-muted-foreground/70">
               Tip: Reference as &quot;Region {selectedRegion.regionNumber}&quot; in your prompt
             </p>
           </div>
@@ -160,13 +161,13 @@ export default function ControlsPanel() {
 
         {/* Error Message */}
         {errorMessage && (
-          <div className="flex-shrink-0 p-3 bg-red-50 border border-red-200 rounded-lg flex items-start gap-2">
-            <AlertCircle className="h-4 w-4 text-red-500 flex-shrink-0 mt-0.5" />
+          <div className="flex-shrink-0 p-3 bg-destructive/10 border border-destructive/30 rounded-xl flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 text-destructive flex-shrink-0 mt-0.5" />
             <div>
-              <p className="text-red-800 text-sm">{errorMessage}</p>
+              <p className="text-destructive-foreground text-sm">{errorMessage}</p>
               <button
                 onClick={clearError}
-                className="text-red-600 text-xs underline mt-1"
+                className="text-destructive/80 hover:text-destructive text-xs underline mt-1"
               >
                 Dismiss
               </button>
@@ -174,11 +175,11 @@ export default function ControlsPanel() {
           </div>
         )}
 
-        <Separator />
+        <Separator className="bg-white/5" />
 
         {/* Prompt Input */}
         <div className="flex-1 flex flex-col min-h-0">
-          <h4 className="text-sm font-medium mb-2">Prompt</h4>
+          <h4 className="text-sm font-medium mb-2 text-foreground/90">Prompt</h4>
           <Textarea
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
@@ -187,17 +188,21 @@ export default function ControlsPanel() {
                 ? `Describe your design...\n\nExamples:\n• "Region 1 is a hero with gradient"\n• "Create a landing page with my layout"\n• "Region 2 has feature cards"`
                 : `Describe your design...\n\nExamples:\n• "Create a SaaS landing page"\n• "Build a portfolio site"\n• "Design a signup form"`
             }
-            className="flex-1 min-h-[100px] resize-none text-sm"
+            className="flex-1 min-h-[100px] resize-none text-sm bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
             disabled={isLoading}
           />
         </div>
 
         {/* Generate Button */}
-        <div className="flex-shrink-0 space-y-2">
+        <div className="flex-shrink-0 space-y-2 pt-2">
           <Button
             onClick={handleGenerate}
             disabled={!canGenerate}
-            className="w-full h-11"
+            className={`w-full h-12 rounded-xl transition-all duration-300 font-medium ${
+              canGenerate 
+                ? 'shadow-[0_0_20px_rgba(200,150,50,0.4)] hover:shadow-[0_0_35px_rgba(200,150,50,0.6)] hover-lift bg-primary text-primary-foreground' 
+                : 'opacity-50'
+            }`}
             size="lg"
           >
             {isGenerating ? (
@@ -212,17 +217,11 @@ export default function ControlsPanel() {
               </>
             ) : (
               <>
-                <Sparkles className="mr-2 h-4 w-4" />
+                <Sparkles className="mr-2 h-5 w-5" />
                 Generate Design
               </>
             )}
           </Button>
-
-          {lastProvider && status === 'preview_ready' && (
-            <p className="text-xs text-center text-slate-500">
-              Generated with {lastProvider === 'gemini' ? 'Gemini' : 'Groq'}
-            </p>
-          )}
         </div>
       </CardContent>
     </Card>
