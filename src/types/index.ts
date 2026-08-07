@@ -59,11 +59,13 @@ export interface Generation {
   createdAt: string
 }
 
+export type ViewMode = 'canvas' | 'preview'
+
 export type CanvasTool = 'select' | 'rectangle' | 'circle' | 'freeform' | 'arrow'
 
 export interface CanvasState {
   activeTool: CanvasTool
-  selectedRegionId: string | null
+  selectedRegionIds: string[]
   regions: Region[]
   zoom: number
   isDrawing: boolean

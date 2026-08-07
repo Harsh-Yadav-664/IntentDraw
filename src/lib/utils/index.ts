@@ -87,6 +87,18 @@ export function extractHtml(text: string): string {
   return text
 }
 
+export function extractReact(text: string): string {
+  const tsxBlockMatch = text.match(/```(?:tsx|jsx|typescript|javascript|react)?\s*([\s\S]*?)```/)
+  if (tsxBlockMatch) return tsxBlockMatch[1].trim()
+
+  const trimmed = text.trim()
+  if (trimmed.startsWith('import ') || trimmed.startsWith('export ') || trimmed.startsWith('const ')) {
+    return trimmed
+  }
+
+  return text
+}
+
 export function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   if (typeof error === 'string') return error

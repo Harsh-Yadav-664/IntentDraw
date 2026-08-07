@@ -1,6 +1,6 @@
 import { getVisionModel, getProModel } from './gemini'
 import { groqGenerate } from './groq'
-import { extractJson, extractHtml } from '@/lib/utils'
+import { extractJson, extractReact } from '@/lib/utils'
 import type { AnalysisResponse, GenerationResponse } from '@/types'
 import {
   VISION_SYSTEM_PROMPT,
@@ -89,7 +89,7 @@ export async function generateCode(
     ])
 
     const responseText = result.response.text()
-    const code = extractHtml(responseText)
+    const code = extractReact(responseText)
 
     if (!code || code.length < 20) {
       throw new Error('Gemini returned empty or too-short response')
@@ -103,7 +103,7 @@ export async function generateCode(
     // Attempt 2: Groq
     try {
       const responseText = await groqGenerate(GENERATION_SYSTEM_PROMPT, userMessage)
-      const code = extractHtml(responseText)
+      const code = extractReact(responseText)
 
       if (!code || code.length < 20) {
         throw new Error('Groq returned empty or too-short response')
@@ -144,7 +144,7 @@ export async function regenerateRegion(
     ])
 
     const responseText = result.response.text()
-    const code = extractHtml(responseText)
+    const code = extractReact(responseText)
 
     if (!code || code.length < 20) {
       throw new Error('Gemini returned empty or too-short response')
@@ -158,7 +158,7 @@ export async function regenerateRegion(
     // Attempt 2: Groq
     try {
       const responseText = await groqGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage)
-      const code = extractHtml(responseText)
+      const code = extractReact(responseText)
 
       if (!code || code.length < 20) {
         throw new Error('Groq returned empty or too-short response')

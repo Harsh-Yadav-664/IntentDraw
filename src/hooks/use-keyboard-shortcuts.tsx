@@ -7,9 +7,9 @@ import { useCanvasStore } from '@/store/canvas-store'
  */
 export default function useKeyboardShortcuts() {
   const setActiveTool = useCanvasStore((s) => s.setActiveTool)
-  const selectRegion = useCanvasStore((s) => s.selectRegion)
-  const deleteRegion = useCanvasStore((s) => s.deleteRegion)
-  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
+  const selectRegions = useCanvasStore((s) => s.selectRegions)
+  const deleteRegions = useCanvasStore((s) => s.deleteRegions)
+  const selectedRegionIds = useCanvasStore((s) => s.selectedRegionIds)
   const undo = useCanvasStore((s) => s.undo)
   const redo = useCanvasStore((s) => s.redo)
 
@@ -35,12 +35,12 @@ export default function useKeyboardShortcuts() {
         case 'c': setActiveTool('circle'); break
         case 'p': setActiveTool('freeform'); break
         case 'a': setActiveTool('arrow'); break
-        case 'escape': selectRegion(null); break
+        case 'escape': selectRegions([]); break
         case 'delete':
         case 'backspace':
-          if (selectedRegionId) {
+          if (selectedRegionIds.length > 0) {
             e.preventDefault()
-            deleteRegion(selectedRegionId)
+            deleteRegions(selectedRegionIds)
           }
           break
       }
@@ -48,5 +48,5 @@ export default function useKeyboardShortcuts() {
 
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectedRegionId, setActiveTool, selectRegion, deleteRegion, undo, redo])
+  }, [selectedRegionIds, setActiveTool, selectRegions, deleteRegions, undo, redo])
 }

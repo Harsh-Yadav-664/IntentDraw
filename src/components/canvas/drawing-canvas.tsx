@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Stage,
   Layer,
@@ -14,6 +14,9 @@ import {
 } from 'react-konva'
 import type Konva from 'konva'
 import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
+import { useWorkflowStore } from '@/store/workflow-store'
+import { wrapReactForPreview } from '@/lib/utils/sanitize'
+import { Wand2 } from 'lucide-react'
 import type { Region, RegionGeometry, CanvasTool } from '@/types'
 
 const MIN_SHAPE_SIZE = 10
@@ -42,15 +45,20 @@ export default function DrawingCanvas() {
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 500 })
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
+  const [iframeHeight, setIframeHeight] = useState(1000)
 
   const regions = useCanvasStore((s) => s.regions)
   const activeTool = useCanvasStore((s) => s.activeTool)
-  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
+  const selectedRegionIds = useCanvasStore((s) => s.selectedRegionIds)
   const visibility = useCanvasStore((s) => s.visibility)
   const addRegion = useCanvasStore((s) => s.addRegion)
   const updateRegionGeometry = useCanvasStore((s) => s.updateRegionGeometry)
-  const selectRegion = useCanvasStore((s) => s.selectRegion)
+  const selectRegions = useCanvasStore((s) => s.selectRegions)
+  const toggleRegionSelection = useCanvasStore((s) => s.toggleRegionSelection)
   const setStageInstance = useCanvasStore((s) => s.setStageInstance)
+  const previewCode = useWorkflowStore((s) => s.previewCode)
+
+  const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number; active: boolean } | null>(null)
 
   // Opacity logic - Photoshop-like focus
   const getShapeOpacity = useCallback((regionId: string): number => {
@@ -58,14 +66,14 @@ export default function DrawingCanvas() {
     if (visibility[regionId] === false) return 0
     
     // No selection - all slightly visible
-    if (!selectedRegionId) return 0.85
+    if (selectedRegionIds.length === 0) return 0.85
     
     // Selected shape - full opacity
-    if (regionId === selectedRegionId) return 1.0
+    if (selectedRegionIds.includes(regionId)) return 1.0
     
     // Other shapes when something is selected - dimmed
     return 0.25
-  }, [selectedRegionId, visibility])
+  }, [selectedRegionIds, visibility])
 
   // Get color for region based on index
   const getRegionColor = useCallback((regionIndex: number): string => {
@@ -76,13 +84,23 @@ export default function DrawingCanvas() {
     const container = containerRef.current
     if (!container) return
     const updateSize = () => {
-      const { width, height } = container.getBoundingClientRect()
-      setStageSize({ width, height })
+      setStageSize({ width: container.clientWidth, height: container.clientHeight })
     }
     updateSize()
     const observer = new ResizeObserver(updateSize)
     observer.observe(container)
-    return () => observer.disconnect()
+
+    const handleMessage = (e: MessageEvent) => {
+      if (e.data && e.data.type === 'IFRAME_HEIGHT' && typeof e.data.height === 'number') {
+        setIframeHeight(e.data.height)
+      }
+    }
+    window.addEventListener('message', handleMessage)
+
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('message', handleMessage)
+    }
   }, [])
 
   useEffect(() => {
@@ -94,19 +112,27 @@ export default function DrawingCanvas() {
     const tr = transformerRef.current
     if (!tr) return
 
-    const selected = regions.find((r) => r.id === selectedRegionId)
-    const selectedNode = selected ? shapeRefs.current[selected.id] : undefined
+    // Konva Transformer supports multiple nodes naturally
+    const selectedNodes = selectedRegionIds
+      .map(id => shapeRefs.current[id])
+      .filter(Boolean)
 
-    if (selected && selected.geometry.type === 'rectangle' && selectedNode) {
-      tr.nodes([selectedNode])
-    } else {
-      tr.nodes([])
-    }
+    tr.nodes(selectedNodes)
     tr.getLayer()?.batchDraw()
-  }, [selectedRegionId, regions])
+  }, [selectedRegionIds, regions])
 
-  const BASE_WIDTH = 1000
+  const BASE_WIDTH = 1280 // Match typical desktop width for generation
   const scale = stageSize.width > 0 ? stageSize.width / BASE_WIDTH : 1
+  
+  const maxShapeY = regions.reduce((max, r) => Math.max(max, r.geometry.y + r.geometry.height), 0)
+  // Base logical height of 1000, or the iframe's reported height. Grow as needed.
+  const logicalHeight = Math.max(Math.max(1000, iframeHeight), maxShapeY + 400)
+  const physicalStageHeight = Math.max(stageSize.height, logicalHeight * scale)
+
+  const srcDoc = useMemo(() => {
+    if (!previewCode) return null
+    return wrapReactForPreview(previewCode)
+  }, [previewCode])
 
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
     const pos = stageRef.current?.getPointerPosition()
@@ -120,6 +146,16 @@ export default function DrawingCanvas() {
   const startDrawing = useCallback(() => {
     const pos = getPointerPos()
     if (!pos) return
+    if (activeTool === 'select') {
+      setSelectionBox({
+        startX: pos.x,
+        startY: pos.y,
+        currentX: pos.x,
+        currentY: pos.y,
+        active: true
+      })
+      return
+    }
     setDrawing({
       startX: pos.x,
       startY: pos.y,
@@ -130,9 +166,15 @@ export default function DrawingCanvas() {
   }, [activeTool, getPointerPos])
 
   const continueDrawing = useCallback(() => {
-    if (!drawing) return
     const pos = getPointerPos()
     if (!pos) return
+
+    if (activeTool === 'select' && selectionBox?.active) {
+      setSelectionBox(prev => prev ? { ...prev, currentX: pos.x, currentY: pos.y } : null)
+      return
+    }
+
+    if (!drawing) return
 
     if (activeTool === 'freeform') {
       setDrawing((prev) =>
@@ -148,9 +190,38 @@ export default function DrawingCanvas() {
     } else {
       setDrawing((prev) => (prev ? { ...prev, currentX: pos.x, currentY: pos.y } : null))
     }
-  }, [drawing, activeTool, getPointerPos])
+  }, [drawing, selectionBox, activeTool, getPointerPos])
 
   const finishDrawing = useCallback(() => {
+    if (activeTool === 'select' && selectionBox?.active) {
+      const { startX, startY, currentX, currentY } = selectionBox
+      
+      const x1 = Math.min(startX, currentX)
+      const y1 = Math.min(startY, currentY)
+      const x2 = Math.max(startX, currentX)
+      const y2 = Math.max(startY, currentY)
+      
+      if (x2 - x1 >= MIN_SHAPE_SIZE && y2 - y1 >= MIN_SHAPE_SIZE) {
+        // Find all intersecting shapes
+        const intersectingIds = regions.filter(r => {
+          const node = shapeRefs.current[r.id]
+          if (!node || visibility[r.id] === false) return false
+          const box = node.getClientRect()
+          const boxX1 = box.x / scale
+          const boxY1 = box.y / scale
+          const boxX2 = (box.x + box.width) / scale
+          const boxY2 = (box.y + box.height) / scale
+          
+          return !(boxX2 < x1 || boxX1 > x2 || boxY2 < y1 || boxY1 > y2)
+        }).map(r => r.id)
+        
+        selectRegions(intersectingIds)
+      }
+      
+      setSelectionBox(null)
+      return
+    }
+
     if (!drawing) return
 
     const { startX, startY, currentX, currentY, points } = drawing
@@ -228,13 +299,19 @@ export default function DrawingCanvas() {
 
     if (geometry) addRegion(geometry)
     setDrawing(null)
-  }, [drawing, activeTool, addRegion])
+  }, [drawing, selectionBox, activeTool, addRegion, regions, visibility, scale, selectRegions])
 
   const handleShapeClick = useCallback(
-    (regionId: string) => {
-      if (activeTool === 'select') selectRegion(regionId)
+    (e: any, regionId: string) => {
+      if (activeTool === 'select') {
+        if (e.evt.shiftKey) {
+          toggleRegionSelection(regionId)
+        } else {
+          selectRegions([regionId])
+        }
+      }
     },
-    [activeTool, selectRegion]
+    [activeTool, selectRegions, toggleRegionSelection]
   )
 
   const handleDragEnd = useCallback(
@@ -279,7 +356,7 @@ export default function DrawingCanvas() {
 
   const renderRegion = (region: Region, index: number) => {
     const { geometry, id } = region
-    const isSelected = id === selectedRegionId
+    const isSelected = selectedRegionIds.includes(id)
     const isVisible = visibility[id] !== false
     const regionColor = getRegionColor(index)
     const opacity = getShapeOpacity(id)
@@ -289,8 +366,8 @@ export default function DrawingCanvas() {
     if (!isVisible) return null
 
     const commonProps = {
-      onClick: () => handleShapeClick(id),
-      onTap: () => handleShapeClick(id),
+      onClick: (e: any) => handleShapeClick(e, id),
+      onTap: (e: any) => handleShapeClick(e, id),
       onDragEnd: () => handleDragEnd(id, geometry.type, geometry.width, geometry.height),
       onTransformEnd: () => handleTransformEnd(id),
       draggable: isDraggable,
@@ -490,28 +567,86 @@ export default function DrawingCanvas() {
     }
   }
 
+  const renderSelectionBox = () => {
+    if (!selectionBox || !selectionBox.active) return null
+    const { startX, startY, currentX, currentY } = selectionBox
+    return (
+      <Rect
+        x={Math.min(startX, currentX)}
+        y={Math.min(startY, currentY)}
+        width={Math.abs(currentX - startX)}
+        height={Math.abs(currentY - startY)}
+        fill="rgba(58, 123, 255, 0.2)"
+        stroke="#3A7BFF"
+        strokeWidth={1}
+        listening={false}
+      />
+    )
+  }
+
   return (
     <div
       ref={containerRef}
-      className="w-full h-full"
+      className="w-full h-full overflow-y-auto overflow-x-hidden relative"
       style={{ cursor: CURSOR_MAP[activeTool] }}
     >
+      {/* Background layer: Generated Website or Empty State */}
+      <div 
+        className="absolute top-0 left-0 bg-[#0A0A0B]"
+        style={{
+          width: BASE_WIDTH,
+          height: Math.max(1000, physicalStageHeight / scale),
+          transform: `scale(${scale})`,
+          transformOrigin: 'top left',
+          zIndex: 0,
+        }}
+      >
+        {previewCode ? (
+          <iframe
+            srcDoc={srcDoc || ''}
+            sandbox="allow-scripts"
+            className="w-full h-full border-0 bg-white"
+          />
+        ) : regions.length === 0 ? (
+          <div className="w-full h-full flex flex-col items-center justify-center border border-white/5 border-dashed">
+            <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 shadow-xl">
+               <Wand2 className="h-8 w-8 text-primary/50" />
+            </div>
+            <p className="text-xl font-medium text-foreground/90">Your canvas is empty</p>
+            <p className="text-sm text-muted-foreground mt-2 max-w-md text-center">
+              Draw shapes here to give the AI a layout to follow, or just write a prompt in the controls panel to generate a website instantly!
+            </p>
+          </div>
+        ) : null}
+      </div>
+
       <Stage
         ref={stageRef}
-        width={stageSize.width}
-        height={stageSize.height}
+        width={Math.max(1, stageSize.width)}
+        height={Math.max(1, physicalStageHeight)}
+        style={{ position: 'absolute', top: 0, left: 0, zIndex: 10 }}
         onMouseDown={(e) => {
           if (activeTool === 'select') {
-            if (e.target === stageRef.current) selectRegion(null)
+            if (e.target === stageRef.current) {
+              selectRegions([])
+              startDrawing() // This will now start the selection box
+            }
             return
           }
           startDrawing()
         }}
         onMouseMove={continueDrawing}
         onMouseUp={finishDrawing}
-        onMouseLeave={() => { if (drawing) finishDrawing() }}
-        onTouchStart={() => {
-          if (activeTool !== 'select') startDrawing()
+        onMouseLeave={() => { if (drawing || selectionBox?.active) finishDrawing() }}
+        onTouchStart={(e) => {
+          if (activeTool === 'select') {
+            if (e.target === stageRef.current) {
+              selectRegions([])
+              startDrawing()
+            }
+            return
+          }
+          startDrawing()
         }}
         onTouchMove={continueDrawing}
         onTouchEnd={finishDrawing}
@@ -521,6 +656,7 @@ export default function DrawingCanvas() {
 
           {regions.map((region, index) => renderRegion(region, index))}
           {renderDrawingPreview()}
+          {renderSelectionBox()}
           {regions.map((region, index) => renderLabel(region, index))}
 
           {activeTool === 'select' && (

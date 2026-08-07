@@ -29,6 +29,9 @@ export default function ProjectPage({ params }: PageProps) {
   const router = useRouter()
 
   const { loadProject, triggerAutoSave, projectName } = useWorkflowStore()
+  const prompt = useWorkflowStore((s) => s.prompt)
+  const previewCode = useWorkflowStore((s) => s.previewCode)
+  const globalTheme = useWorkflowStore((s) => s.globalTheme)
   const { regions, setRegions } = useCanvasStore()
   const viewMode = useCanvasStore((s) => s.viewMode)
   
@@ -77,12 +80,12 @@ export default function ProjectPage({ params }: PageProps) {
     return useCanvasStore.getState().regions
   }, [])
 
-  // Trigger auto-save whenever regions change
+  // Trigger auto-save whenever regions, prompt, or generated code changes
   useEffect(() => {
     if (loading) return // Don't save while loading
     triggerAutoSave(getCanvasData)
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regions]) // intentionally only watching regions for canvas changes
+  }, [regions, prompt, previewCode, globalTheme]) 
 
   // ─── Not found ────────────────────────────────────────────────────────────
 
@@ -139,12 +142,6 @@ export default function ProjectPage({ params }: PageProps) {
               className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all duration-300 ${viewMode === 'canvas' ? 'bg-primary text-primary-foreground shadow-[0_0_15px_rgba(200,150,50,0.4)]' : 'hover:bg-white/10 text-muted-foreground'}`}
             >
               Design
-            </button>
-            <button 
-              onClick={() => useCanvasStore.getState().setViewMode('split')} 
-              className={`px-5 py-1.5 text-sm font-medium rounded-full transition-all duration-300 ${viewMode === 'split' ? 'bg-primary text-primary-foreground shadow-[0_0_15px_rgba(200,150,50,0.4)]' : 'hover:bg-white/10 text-muted-foreground'}`}
-            >
-              Split View
             </button>
             <button 
               onClick={() => useCanvasStore.getState().setViewMode('preview')} 

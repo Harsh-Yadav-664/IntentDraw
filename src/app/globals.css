@@ -4,53 +4,53 @@
 
 /* Force dark mode by default on the :root */
 :root {
-  /* Coffee/Charcoal Base */
-  --background: oklch(0.15 0.01 75); 
-  --foreground: oklch(0.92 0.01 80); 
+  /* Deep Black Base */
+  --background: oklch(0.10 0 0); 
+  --foreground: oklch(0.95 0 0); 
   
-  /* Panels and Cards - slightly lighter charcoal */
-  --card: oklch(0.20 0.01 75);
-  --card-foreground: oklch(0.92 0.01 80);
-  --popover: oklch(0.20 0.01 75);
-  --popover-foreground: oklch(0.92 0.01 80);
+  /* Panels and Cards - slightly lighter than black */
+  --card: oklch(0.12 0 0);
+  --card-foreground: oklch(0.95 0 0);
+  --popover: oklch(0.12 0 0);
+  --popover-foreground: oklch(0.95 0 0);
   
-  /* Primary Accent: Golden/Amber Coffee */
-  --primary: oklch(0.75 0.15 75);
-  --primary-foreground: oklch(0.15 0.01 75);
+  /* Primary Accent: Vibrant Golden Yellow */
+  --primary: oklch(0.85 0.16 85);
+  --primary-foreground: oklch(0.10 0 0);
   
-  /* Secondary: Silver/Grey */
-  --secondary: oklch(0.28 0.01 75);
-  --secondary-foreground: oklch(0.90 0.01 80);
+  /* Secondary: Deep Charcoal */
+  --secondary: oklch(0.18 0 0);
+  --secondary-foreground: oklch(0.90 0 0);
   
   /* Muted */
-  --muted: oklch(0.25 0.01 75);
-  --muted-foreground: oklch(0.65 0.02 80);
+  --muted: oklch(0.18 0 0);
+  --muted-foreground: oklch(0.65 0 0);
   
   /* Accent hover state */
-  --accent: oklch(0.28 0.02 75);
-  --accent-foreground: oklch(0.95 0.01 80);
+  --accent: oklch(0.20 0 0);
+  --accent-foreground: oklch(0.95 0 0);
   
   /* Destructive/Red */
   --destructive: oklch(0.55 0.20 25);
-  --destructive-foreground: oklch(0.95 0.01 80);
+  --destructive-foreground: oklch(0.95 0 0);
   
   /* Borders and Inputs */
-  --border: oklch(0.28 0.01 75);
-  --input: oklch(0.25 0.01 75);
-  --ring: oklch(0.75 0.15 75);
+  --border: oklch(0.20 0 0);
+  --input: oklch(0.18 0 0);
+  --ring: oklch(0.85 0.16 85);
   
-  /* Charts */
-  --chart-1: oklch(0.75 0.15 75);
-  --chart-2: oklch(0.85 0.10 90);
-  --chart-3: oklch(0.65 0.12 60);
-  --chart-4: oklch(0.55 0.08 45);
-  --chart-5: oklch(0.45 0.05 30);
+  /* Charts (warm tones) */
+  --chart-1: oklch(0.85 0.16 85);
+  --chart-2: oklch(0.85 0.08 75);
+  --chart-3: oklch(0.70 0.12 45);
+  --chart-4: oklch(0.60 0.10 35);
+  --chart-5: oklch(0.50 0.08 25);
   
   /* Radius */
   --radius: 0.75rem;
 
   /* Custom UI tokens */
-  --glass-bg: rgba(30, 28, 26, 0.65);
+  --glass-bg: rgba(10, 10, 10, 0.65);
   --glass-border: rgba(255, 255, 255, 0.08);
 }
 

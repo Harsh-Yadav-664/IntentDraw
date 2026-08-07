@@ -12,7 +12,7 @@ let _historyIndex = 0
 interface CanvasStore {
   regions: Region[]
   activeTool: CanvasTool
-  selectedRegionId: string | null
+  selectedRegionIds: string[]
   canUndo: boolean
   canRedo: boolean
   _stageInstance: StageExporter | null
@@ -25,13 +25,14 @@ interface CanvasStore {
   setViewMode: (mode: 'canvas' | 'split' | 'preview') => void
 
   setActiveTool: (tool: CanvasTool) => void
-  selectRegion: (id: string | null) => void
+  selectRegions: (ids: string[]) => void
+  toggleRegionSelection: (id: string) => void
   setStageInstance: (stage: StageExporter | null) => void
 
   addRegion: (geometry: RegionGeometry) => void
   updateRegionGeometry: (id: string, updates: Partial<RegionGeometry>) => void
   updateRegionIntent: (id: string, intent: string) => void
-  deleteRegion: (id: string) => void
+  deleteRegions: (ids: string[]) => void
   clearRegions: () => void
   setRegions: (regions: Region[]) => void
   
@@ -80,7 +81,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
   return {
     regions: [],
     activeTool: 'select',
-    selectedRegionId: null,
+    selectedRegionIds: [],
     canUndo: false,
     canRedo: false,
     _stageInstance: null,
@@ -88,8 +89,13 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     visibility: {},
 
     setViewMode: (mode) => set({ viewMode: mode }),
-    setActiveTool: (tool) => set({ activeTool: tool, selectedRegionId: null }),
-    selectRegion: (id) => set({ selectedRegionId: id }),
+    setActiveTool: (tool) => set({ activeTool: tool, selectedRegionIds: [] }),
+    selectRegions: (ids) => set({ selectedRegionIds: ids }),
+    toggleRegionSelection: (id) => set((state) => ({
+      selectedRegionIds: state.selectedRegionIds.includes(id)
+        ? state.selectedRegionIds.filter((selectedId) => selectedId !== id)
+        : [...state.selectedRegionIds, id]
+    })),
     setStageInstance: (stage) => set({ _stageInstance: stage }),
 
     addRegion: (geometry) => {
@@ -132,21 +138,21 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       }))
     },
 
-    deleteRegion: (id) => {
-      const { selectedRegionId, visibility } = get()
+    deleteRegions: (ids) => {
+      const { selectedRegionIds, visibility } = get()
       const newVisibility = { ...visibility }
-      delete newVisibility[id]
+      ids.forEach(id => delete newVisibility[id])
       
       set((state) => ({
-        regions: renumber(state.regions.filter((r) => r.id !== id)),
-        selectedRegionId: selectedRegionId === id ? null : selectedRegionId,
+        regions: renumber(state.regions.filter((r) => !ids.includes(r.id))),
+        selectedRegionIds: selectedRegionIds.filter(id => !ids.includes(id)),
         visibility: newVisibility,
       }))
       pushHistory()
     },
 
     clearRegions: () => {
-      set({ regions: [], selectedRegionId: null, visibility: {} })
+      set({ regions: [], selectedRegionIds: [], visibility: {} })
       pushHistory()
     },
 
@@ -177,7 +183,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
       const visibility: Record<string, boolean> = {}
       regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, selectedRegionId: null, visibility })
+      set({ regions, selectedRegionIds: [], visibility })
       syncHistoryFlags()
     },
 
@@ -187,7 +193,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
       const visibility: Record<string, boolean> = {}
       regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, selectedRegionId: null, visibility })
+      set({ regions, selectedRegionIds: [], visibility })
       syncHistoryFlags()
     },
 
@@ -204,7 +210,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
         const regions = JSON.parse(json) as Region[]
         const visibility: Record<string, boolean> = {}
         regions.forEach(r => { visibility[r.id] = true })
-        set({ regions, selectedRegionId: null, visibility })
+        set({ regions, selectedRegionIds: [], visibility })
         pushHistory()
       } catch (e) {
         console.error('Failed to import canvas JSON:', e)

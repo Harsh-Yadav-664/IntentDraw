@@ -74,8 +74,10 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
           backgroundSize: '24px 24px' 
         }} 
       />
-      {/* Subtle ambient glow */}
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-transparent pointer-events-none" />
+      {/* Subtle ambient glows for premium feel */}
+      <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen opacity-60" />
+      <div className="absolute bottom-0 right-0 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[150px] pointer-events-none mix-blend-screen opacity-40" />
+      <div className="absolute inset-0 bg-gradient-to-br from-black/20 via-transparent to-primary/5 pointer-events-none mix-blend-overlay" />
       
       <div className="h-full flex relative z-10">
         
@@ -86,8 +88,8 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
           <div className="flex-1 flex w-full h-full p-6 md:p-8 gap-6 overflow-hidden items-center justify-center">
              
              {/* Canvas Artboard */}
-             {(viewMode === 'canvas' || viewMode === 'split') && (
-               <div className={`relative flex flex-col animate-in fade-in zoom-in-95 duration-300 ${viewMode === 'split' ? 'flex-1 h-full max-h-full' : 'w-full max-w-5xl aspect-video max-h-[85vh]'}`}>
+             {viewMode === 'canvas' && (
+               <div className="relative flex flex-col animate-in fade-in zoom-in-95 duration-300 w-full h-full max-w-5xl max-h-full">
                  {/* Window Wrapper */}
                  <div className="flex-1 flex flex-col w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-[#121214] ring-1 ring-white/5 relative">
                     
@@ -105,9 +107,9 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
              )}
              
              {/* Preview Artboard */}
-             {(viewMode === 'preview' || viewMode === 'split') && (
-               <div className={`relative flex items-center justify-center animate-in fade-in zoom-in-95 duration-300 ${viewMode === 'split' ? 'flex-1 h-full max-h-full' : 'w-full max-w-5xl aspect-video max-h-[85vh]'}`}>
-                 <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 ring-1 ring-white/5">
+             {viewMode === 'preview' && (
+               <div className="relative flex flex-col animate-in fade-in zoom-in-95 duration-300 w-full h-full max-w-5xl max-h-full">
+                 <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 ring-1 ring-white/5 flex flex-col">
                     <PreviewPanel />
                  </div>
                </div>

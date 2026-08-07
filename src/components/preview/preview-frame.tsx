@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo, useRef, useState, useEffect } from 'react'
-import { wrapHtmlForPreview } from '@/lib/utils/sanitize'
+import { wrapReactForPreview } from '@/lib/utils/sanitize'
 
 interface PreviewFrameProps {
   code: string | null
@@ -18,18 +18,16 @@ const DEVICE_WIDTHS = {
 export default function PreviewFrame({ code, deviceSize = 'desktop', className = '' }: PreviewFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
-  const [containerWidth, setContainerWidth] = useState(0)
 
   const targetWidth = DEVICE_WIDTHS[deviceSize]
 
-  // Calculate scale to fit iframe in container
+  // Calculate scale to fit in container
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
     const updateScale = () => {
       const rect = container.getBoundingClientRect()
-      setContainerWidth(rect.width)
       
       // Scale down to fit, but never scale up
       const newScale = Math.min(1, (rect.width - 20) / targetWidth)
@@ -44,7 +42,7 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
 
   const srcDoc = useMemo(() => {
     if (!code) return null
-    return wrapHtmlForPreview(code)
+    return wrapReactForPreview(code)
   }, [code])
 
   if (!srcDoc) {

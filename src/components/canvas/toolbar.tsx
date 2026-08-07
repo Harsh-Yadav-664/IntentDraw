@@ -29,8 +29,8 @@ const TOOLS: { id: CanvasTool; icon: LucideIcon; label: string; shortcut: string
 export default function Toolbar() {
   const activeTool = useCanvasStore((s) => s.activeTool)
   const setActiveTool = useCanvasStore((s) => s.setActiveTool)
-  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
-  const deleteRegion = useCanvasStore((s) => s.deleteRegion)
+  const selectedRegionIds = useCanvasStore((s) => s.selectedRegionIds)
+  const deleteRegions = useCanvasStore((s) => s.deleteRegions)
   const clearRegions = useCanvasStore((s) => s.clearRegions)
   const canUndo = useCanvasStore((s) => s.canUndo)
   const canRedo = useCanvasStore((s) => s.canRedo)
@@ -96,8 +96,8 @@ export default function Toolbar() {
               variant="ghost"
               size="sm"
               className="h-8 w-8 p-0 text-destructive/80 hover:text-destructive hover:bg-destructive/20"
-              onClick={() => { if (selectedRegionId) deleteRegion(selectedRegionId) }}
-              disabled={!selectedRegionId}
+              onClick={() => { if (selectedRegionIds.length > 0) deleteRegions(selectedRegionIds) }}
+              disabled={selectedRegionIds.length === 0}
             >
               <Trash2 className="h-4 w-4" />
             </Button>

@@ -24,11 +24,12 @@ const getShapeIcon = (type: string, color: string) => {
 
 export default function ControlsPanel() {
   const regions = useCanvasStore((s) => s.regions)
-  const selectedRegionId = useCanvasStore((s) => s.selectedRegionId)
-  const selectRegion = useCanvasStore((s) => s.selectRegion)
+  const selectedRegionIds = useCanvasStore((s) => s.selectedRegionIds)
+  const selectRegions = useCanvasStore((s) => s.selectRegions)
+  const toggleRegionSelection = useCanvasStore((s) => s.toggleRegionSelection)
   const visibility = useCanvasStore((s) => s.visibility)
   const toggleVisibility = useCanvasStore((s) => s.toggleVisibility)
-  const deleteRegion = useCanvasStore((s) => s.deleteRegion)
+  const deleteRegions = useCanvasStore((s) => s.deleteRegions)
 
   const prompt = useWorkflowStore((s) => s.prompt)
   const setPrompt = useWorkflowStore((s) => s.setPrompt)
@@ -38,7 +39,6 @@ export default function ControlsPanel() {
 
   const { isAnalyzing, isGenerating, generateCode } = useAI()
 
-  const selectedRegion = regions.find((r) => r.id === selectedRegionId)
   const isLoading = isAnalyzing || isGenerating
   const canGenerate = prompt.trim().length > 0 && !isLoading
 
@@ -82,7 +82,7 @@ export default function ControlsPanel() {
                 {/* Reverse to show top layer first (like Photoshop) */}
                 {[...regions].reverse().map((region, reverseIndex) => {
                   const actualIndex = regions.length - 1 - reverseIndex
-                  const isSelected = region.id === selectedRegionId
+                  const isSelected = selectedRegionIds.includes(region.id)
                   const isVisible = visibility[region.id] !== false
                   const color = REGION_COLORS[actualIndex % REGION_COLORS.length]
 
@@ -94,7 +94,13 @@ export default function ControlsPanel() {
                           ? 'bg-primary/15'
                           : 'hover:bg-white/5'
                       } ${!isVisible ? 'opacity-50' : ''}`}
-                      onClick={() => selectRegion(isSelected ? null : region.id)}
+                      onClick={(e) => {
+                        if (e.shiftKey) {
+                          toggleRegionSelection(region.id)
+                        } else {
+                          selectRegions([region.id])
+                        }
+                      }}
                     >
                       {/* Shape icon */}
                       <div className="flex-shrink-0 flex items-center justify-center opacity-80 shadow-[0_0_8px_currentColor] rounded-full p-1 bg-black/20" style={{ color: color }}>
@@ -127,7 +133,7 @@ export default function ControlsPanel() {
                           className="p-1 hover:bg-destructive/20 rounded transition-colors"
                           onClick={(e) => {
                             e.stopPropagation()
-                            deleteRegion(region.id)
+                            deleteRegions([region.id])
                           }}
                         >
                           <Trash2 className="h-3.5 w-3.5 text-destructive" />
@@ -142,20 +148,41 @@ export default function ControlsPanel() {
         </div>
 
         {/* Selected Region Info */}
-        {selectedRegion && (
+        {selectedRegionIds.length === 1 && (
           <div 
             className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
           >
             <p className="font-medium text-sm text-primary">
-              Region {selectedRegion.regionNumber} selected
+              Region {regions.find(r => r.id === selectedRegionIds[0])?.regionNumber} selected
             </p>
             <p className="text-xs mt-1 text-muted-foreground">
-              {selectedRegion.geometry.type} · {Math.round(selectedRegion.geometry.width)}×
-              {Math.round(selectedRegion.geometry.height)}px
+              {regions.find(r => r.id === selectedRegionIds[0])?.geometry.type} · {Math.round(regions.find(r => r.id === selectedRegionIds[0])?.geometry.width || 0)}×
+              {Math.round(regions.find(r => r.id === selectedRegionIds[0])?.geometry.height || 0)}px
             </p>
             <p className="text-xs mt-2 text-muted-foreground/70">
-              Tip: Reference as &quot;Region {selectedRegion.regionNumber}&quot; in your prompt
+              Tip: Reference as &quot;Region {regions.find(r => r.id === selectedRegionIds[0])?.regionNumber}&quot; in your prompt
             </p>
+          </div>
+        )}
+        {selectedRegionIds.length > 1 && (
+          <div 
+            className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
+          >
+            <p className="font-medium text-sm text-primary">
+              {selectedRegionIds.length} regions selected
+            </p>
+            <p className="text-xs mt-1 text-muted-foreground">
+              Multiple shapes selected
+            </p>
+            <Button 
+              variant="outline" 
+              size="sm"
+              className="mt-2 w-full text-xs h-7 border-destructive/30 hover:bg-destructive/10 hover:text-destructive text-destructive/80"
+              onClick={() => deleteRegions(selectedRegionIds)}
+            >
+              <Trash2 className="h-3 w-3 mr-1.5" />
+              Delete {selectedRegionIds.length} regions
+            </Button>
           </div>
         )}
 
