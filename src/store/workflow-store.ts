@@ -34,6 +34,8 @@ export interface WorkflowState {
   prompt: string
   globalTheme: string
   previewCode: string
+  aiProvider: 'gemini' | 'groq' | 'nvidia'
+  nvidiaModelId: string
 
   // Save state
   saveStatus: SaveStatus
@@ -63,6 +65,8 @@ export interface WorkflowActions {
   setPrompt: (prompt: string) => void
   setGlobalTheme: (theme: string) => void
   setPreviewCode: (code: string) => void
+  setAiProvider: (provider: 'gemini' | 'groq' | 'nvidia') => void
+  setNvidiaModelId: (modelId: string) => void
 
   // Save
   setSaveStatus: (status: SaveStatus) => void
@@ -85,6 +89,8 @@ const initialState: WorkflowState = {
   prompt: '',
   globalTheme: '',
   previewCode: '',
+  aiProvider: 'gemini',
+  nvidiaModelId: 'meta/llama-3.1-70b-instruct',
   saveStatus: 'saved',
   lastSavedAt: null,
   _saveTimer: null,
@@ -164,6 +170,14 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
 
   setPreviewCode: (previewCode) => {
     set({ previewCode, saveStatus: 'unsaved' })
+  },
+
+  setAiProvider: (aiProvider) => {
+    set({ aiProvider })
+  },
+
+  setNvidiaModelId: (nvidiaModelId) => {
+    set({ nvidiaModelId })
   },
 
   // ─── Save ─────────────────────────────────────────────────────────────────

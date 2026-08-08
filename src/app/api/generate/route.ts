@@ -37,10 +37,12 @@ export async function POST(request: Request) {
 
     // --- Parse body ---
     const body = await request.json()
-    const { regions, prompt, globalTheme } = body as {
+    const { regions, prompt, globalTheme, provider, nvidiaModelId } = body as {
       regions?: Region[]
       prompt?: string
       globalTheme?: string
+      provider?: 'gemini' | 'groq' | 'nvidia'
+      nvidiaModelId?: string
     }
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -62,7 +64,7 @@ export async function POST(request: Request) {
     console.log(`[Generate] user=${userId} | ${validRegions.length} regions | prompt: "${prompt.substring(0, 100)}..."`)
 
     // --- Call AI ---
-    const result = await generateCode(validRegions, prompt.trim(), globalTheme)
+    const result = await generateCode(validRegions, prompt.trim(), globalTheme, provider, nvidiaModelId)
 
     if (!result.success || !result.code) {
       return NextResponse.json(

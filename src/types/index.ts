@@ -55,7 +55,7 @@ export interface Generation {
   prompt: string
   generatedCode: string
   version: number
-  provider: 'gemini' | 'groq'
+  provider: 'gemini' | 'groq' | 'nvidia'
   createdAt: string
 }
 
@@ -112,7 +112,7 @@ export interface AnalysisResponse {
 export interface GenerationResponse {
   success: boolean
   code?: string
-  provider?: 'gemini' | 'groq'
+  provider?: 'gemini' | 'groq' | 'nvidia'
   error?: string
 }
 

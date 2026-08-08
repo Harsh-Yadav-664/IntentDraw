@@ -100,6 +100,7 @@ LAYOUT:
 BANNED PATTERNS — NEVER PRODUCE THESE
 ════════════════════════════════════════════
 
+NEVER: Import or use ANY external libraries (e.g., framer-motion, next/image, next/link, react-router). You ONLY have access to 'react' and 'lucide-react'. If you need an image, use a standard <img> tag.
 NEVER: Bootstrap-style generic cards with heavy drop shadows.
 NEVER: placeholder images from picsum.photos. Use realistic Unsplash source URLs if an image is absolutely required, or better, use CSS gradients/Lucide icons.
 NEVER: Lorem ipsum — invent real-sounding placeholder content.

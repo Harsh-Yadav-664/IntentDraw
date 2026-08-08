@@ -1,5 +1,6 @@
 import { getVisionModel, getProModel } from './gemini'
 import { groqGenerate } from './groq'
+import { nvidiaGenerate } from './nvidia'
 import { extractJson, extractReact } from '@/lib/utils'
 import type { AnalysisResponse, GenerationResponse } from '@/types'
 import {
@@ -76,49 +77,53 @@ export async function analyzeDrawing(
 export async function generateCode(
   regions: Region[],
   userPrompt: string,
-  globalTheme?: string
+  globalTheme?: string,
+  provider: 'gemini' | 'groq' | 'nvidia' = 'gemini',
+  nvidiaModelId: string = 'meta/llama-3.1-70b-instruct'
 ): Promise<GenerationResponse> {
   const userMessage = buildGenerationUserPrompt(regions, userPrompt, globalTheme)
 
-  // Attempt 1: Gemini Pro
-  try {
-    const model = getProModel()
-    const result = await model.generateContent([
-      { text: GENERATION_SYSTEM_PROMPT },
-      { text: userMessage },
-    ])
-
-    const responseText = result.response.text()
-    const code = extractReact(responseText)
-
-    if (!code || code.length < 20) {
-      throw new Error('Gemini returned empty or too-short response')
+  // Helper to run a specific provider
+  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia'): Promise<string> => {
+    if (p === 'nvidia') {
+      return nvidiaGenerate(GENERATION_SYSTEM_PROMPT, userMessage, nvidiaModelId)
+    } else if (p === 'groq') {
+      return groqGenerate(GENERATION_SYSTEM_PROMPT, userMessage)
+    } else {
+      const model = getProModel()
+      const result = await model.generateContent([{ text: GENERATION_SYSTEM_PROMPT }, { text: userMessage }])
+      return result.response.text()
     }
+  }
 
-    return { success: true, code, provider: 'gemini' }
-  } catch (geminiError) {
-    const geminiMsg = geminiError instanceof Error ? geminiError.message : 'Gemini failed'
-    console.warn('[AI Gen] Gemini failed, trying Groq:', geminiMsg)
+  // Define fallback chain based on selected provider
+  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> = 
+    provider === 'nvidia' ? ['nvidia', 'gemini', 'groq'] :
+    provider === 'groq' ? ['groq', 'gemini', 'nvidia'] :
+    ['gemini', 'groq', 'nvidia']
 
-    // Attempt 2: Groq
+  let lastError = 'Unknown error'
+
+  for (const currentProvider of fallbacks) {
     try {
-      const responseText = await groqGenerate(GENERATION_SYSTEM_PROMPT, userMessage)
+      const responseText = await runProvider(currentProvider)
       const code = extractReact(responseText)
 
       if (!code || code.length < 20) {
-        throw new Error('Groq returned empty or too-short response')
+        throw new Error(`${currentProvider} returned empty or too-short response`)
       }
 
-      return { success: true, code, provider: 'groq' }
-    } catch (groqError) {
-      const groqMsg = groqError instanceof Error ? groqError.message : 'Groq failed'
-      console.error('[AI Gen] Both providers failed. Gemini:', geminiMsg, 'Groq:', groqMsg)
-
-      return {
-        success: false,
-        error: 'Generation failed with both AI providers. Please try again.',
-      }
+      return { success: true, code, provider: currentProvider }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      console.warn(`[AI Gen] ${currentProvider} failed, trying next fallback:`, lastError)
     }
+  }
+
+  console.error('[AI Gen] All providers failed. Last error:', lastError)
+  return {
+    success: false,
+    error: 'Generation failed with all AI providers. Please check API keys or try again.',
   }
 }
 
@@ -131,48 +136,52 @@ export async function regenerateRegion(
   regionNumber: number,
   userPrompt: string,
   existingCode: string,
-  allRegions: Region[]
+  allRegions: Region[],
+  provider: 'gemini' | 'groq' | 'nvidia' = 'gemini',
+  nvidiaModelId: string = 'meta/llama-3.1-70b-instruct'
 ): Promise<GenerationResponse> {
   const userMessage = buildRegenerateUserPrompt(regionNumber, userPrompt, existingCode, allRegions)
 
-  // Attempt 1: Gemini Pro
-  try {
-    const model = getProModel()
-    const result = await model.generateContent([
-      { text: REGENERATE_REGION_SYSTEM_PROMPT },
-      { text: userMessage },
-    ])
-
-    const responseText = result.response.text()
-    const code = extractReact(responseText)
-
-    if (!code || code.length < 20) {
-      throw new Error('Gemini returned empty or too-short response')
+  // Helper to run a specific provider
+  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia'): Promise<string> => {
+    if (p === 'nvidia') {
+      return nvidiaGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage, nvidiaModelId)
+    } else if (p === 'groq') {
+      return groqGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage)
+    } else {
+      const model = getProModel()
+      const result = await model.generateContent([{ text: REGENERATE_REGION_SYSTEM_PROMPT }, { text: userMessage }])
+      return result.response.text()
     }
+  }
 
-    return { success: true, code, provider: 'gemini' }
-  } catch (geminiError) {
-    const geminiMsg = geminiError instanceof Error ? geminiError.message : 'Gemini failed'
-    console.warn('[AI Regen] Gemini failed, trying Groq:', geminiMsg)
+  // Define fallback chain based on selected provider
+  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> = 
+    provider === 'nvidia' ? ['nvidia', 'gemini', 'groq'] :
+    provider === 'groq' ? ['groq', 'gemini', 'nvidia'] :
+    ['gemini', 'groq', 'nvidia']
 
-    // Attempt 2: Groq
+  let lastError = 'Unknown error'
+
+  for (const currentProvider of fallbacks) {
     try {
-      const responseText = await groqGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage)
+      const responseText = await runProvider(currentProvider)
       const code = extractReact(responseText)
 
       if (!code || code.length < 20) {
-        throw new Error('Groq returned empty or too-short response')
+        throw new Error(`${currentProvider} returned empty or too-short response`)
       }
 
-      return { success: true, code, provider: 'groq' }
-    } catch (groqError) {
-      const groqMsg = groqError instanceof Error ? groqError.message : 'Groq failed'
-      console.error('[AI Regen] Both failed. Gemini:', geminiMsg, 'Groq:', groqMsg)
-
-      return {
-        success: false,
-        error: 'Regeneration failed. Please try again.',
-      }
+      return { success: true, code, provider: currentProvider }
+    } catch (err) {
+      lastError = err instanceof Error ? err.message : String(err)
+      console.warn(`[AI Regen] ${currentProvider} failed, trying next fallback:`, lastError)
     }
+  }
+
+  console.error('[AI Regen] All providers failed. Last error:', lastError)
+  return {
+    success: false,
+    error: 'Regeneration failed. Please check API keys or try again.',
   }
 }

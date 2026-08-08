@@ -19,6 +19,8 @@ export function useAI() {
   const setStatus = useWorkflowStore((s) => s.setStatus)
   const setError = useWorkflowStore((s) => s.setError)
   const setPreviewCode = useWorkflowStore((s) => s.setPreviewCode)
+  const aiProvider = useWorkflowStore((s) => s.aiProvider)
+  const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
 
   /**
    * Analyzes the canvas drawing using Gemini Vision.
@@ -85,6 +87,8 @@ export function useAI() {
           regions,
           prompt: prompt.trim(),
           globalTheme: globalTheme.trim() || undefined,
+          provider: aiProvider,
+          nvidiaModelId,
         }),
       })
 
@@ -104,7 +108,7 @@ export function useAI() {
     } finally {
       setIsGenerating(false)
     }
-  }, [regions, prompt, globalTheme, setStatus, setError, setPreviewCode])
+  }, [regions, prompt, globalTheme, aiProvider, nvidiaModelId, setStatus, setError, setPreviewCode])
 
   /**
    * Regenerates a single region while keeping others intact.
@@ -131,6 +135,8 @@ export function useAI() {
           prompt: regionPrompt.trim(),
           existingCode,
           regions,
+          provider: aiProvider,
+          nvidiaModelId,
         }),
       })
 
@@ -150,7 +156,7 @@ export function useAI() {
     } finally {
       setIsGenerating(false)
     }
-  }, [regions, setStatus, setError, setPreviewCode])
+  }, [regions, aiProvider, nvidiaModelId, setStatus, setError, setPreviewCode])
 
   return {
     isAnalyzing,

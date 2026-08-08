@@ -15,13 +15,21 @@ const DEVICE_WIDTHS = {
   mobile: 375,
 }
 
+// Typical viewport heights to simulate real browser windows
+const DEVICE_HEIGHTS = {
+  desktop: 800,
+  tablet: 1024,
+  mobile: 812,
+}
+
 export default function PreviewFrame({ code, deviceSize = 'desktop', className = '' }: PreviewFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scale, setScale] = useState(1)
 
   const targetWidth = DEVICE_WIDTHS[deviceSize]
+  const targetHeight = DEVICE_HEIGHTS[deviceSize]
 
-  // Calculate scale to fit in container
+  // Calculate scale to fit in container width
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
@@ -30,7 +38,8 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
       const rect = container.getBoundingClientRect()
       
       // Scale down to fit, but never scale up
-      const newScale = Math.min(1, (rect.width - 20) / targetWidth)
+      // 32px padding for the container
+      const newScale = Math.min(1, (rect.width - 32) / targetWidth)
       setScale(newScale)
     }
 
@@ -56,32 +65,29 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
     )
   }
 
-  const scaledHeight = 800 / scale // Maintain aspect ratio
-
   return (
     <div 
       ref={containerRef} 
-      className={`overflow-auto bg-slate-100 ${className}`}
+      className={`overflow-auto bg-slate-100 flex justify-center py-4 ${className}`}
     >
-      <div 
-        className="origin-top-left bg-white shadow-sm mx-auto"
-        style={{
-          width: targetWidth,
-          transform: `scale(${scale})`,
-          transformOrigin: 'top left',
-        }}
-      >
-        <iframe
-          srcDoc={srcDoc}
-          sandbox="allow-scripts"
-          title="Design Preview"
-          className="w-full border-0"
-          style={{ 
+      {/* Wrapper element that matches the exact scaled size of the iframe */}
+      <div style={{ width: targetWidth * scale, height: targetHeight * scale }}>
+        <div 
+          className="bg-white shadow-md ring-1 ring-black/5"
+          style={{
             width: targetWidth,
-            height: scaledHeight,
-            minHeight: '600px',
+            height: targetHeight,
+            transform: `scale(${scale})`,
+            transformOrigin: 'top left',
           }}
-        />
+        >
+          <iframe
+            srcDoc={srcDoc}
+            sandbox="allow-scripts"
+            title="Design Preview"
+            className="w-full h-full border-0"
+          />
+        </div>
       </div>
     </div>
   )

@@ -1,5 +1,7 @@
 'use client'
 
+import { useState, useEffect } from 'react'
+
 import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { useAI } from '@/hooks/use-ai'
@@ -8,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2, Square, Circle, PenTool, Navigation } from 'lucide-react'
 
 // Helper to get shape icon
@@ -36,6 +39,30 @@ export default function ControlsPanel() {
   const status = useWorkflowStore((s) => s.status)
   const errorMessage = useWorkflowStore((s) => s.error)
   const clearError = () => useWorkflowStore.getState().setError(null)
+  
+  const aiProvider = useWorkflowStore((s) => s.aiProvider)
+  const setAiProvider = useWorkflowStore((s) => s.setAiProvider)
+  const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
+  const setNvidiaModelId = useWorkflowStore((s) => s.setNvidiaModelId)
+
+  const [availableModels, setAvailableModels] = useState<string[]>([])
+  const [isLoadingModels, setIsLoadingModels] = useState(false)
+
+  // Fetch NVIDIA models dynamically
+  useEffect(() => {
+    if (aiProvider === 'nvidia' && availableModels.length === 0 && !isLoadingModels) {
+      setIsLoadingModels(true)
+      fetch('/api/models')
+        .then(r => r.json())
+        .then(data => {
+          if (data.success && data.models) {
+            setAvailableModels(data.models)
+          }
+        })
+        .catch(console.error)
+        .finally(() => setIsLoadingModels(false))
+    }
+  }, [aiProvider, availableModels.length, isLoadingModels])
 
   const { isAnalyzing, isGenerating, generateCode } = useAI()
 
@@ -219,6 +246,40 @@ export default function ControlsPanel() {
             disabled={isLoading}
           />
         </div>
+
+        {/* AI Provider Selection */}
+        <div className="flex-shrink-0 pt-2">
+          <Select value={aiProvider} onValueChange={(v) => setAiProvider(v as 'gemini' | 'groq' | 'nvidia')}>
+            <SelectTrigger className="w-full bg-black/20 border-white/10 text-sm h-10">
+              <SelectValue placeholder="Select AI Provider" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="gemini">Gemini Pro (Google)</SelectItem>
+              <SelectItem value="groq">Llama 3 (Groq)</SelectItem>
+              <SelectItem value="nvidia">NIM Llama 3.1 (NVIDIA)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+
+        {/* NVIDIA Specific Model Selection */}
+        {aiProvider === 'nvidia' && (
+          <div className="flex-shrink-0 pt-2">
+            <Select value={nvidiaModelId} onValueChange={setNvidiaModelId}>
+              <SelectTrigger className="w-full bg-black/20 border-white/10 text-xs h-9">
+                <SelectValue placeholder={isLoadingModels ? "Loading models..." : "Select NIM Model"} />
+              </SelectTrigger>
+              <SelectContent className="max-h-60">
+                {availableModels.length === 0 ? (
+                  <SelectItem value="meta/llama-3.1-70b-instruct">meta/llama-3.1-70b-instruct</SelectItem>
+                ) : (
+                  availableModels.map(model => (
+                    <SelectItem key={model} value={model}>{model}</SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {/* Generate Button */}
         <div className="flex-shrink-0 space-y-2 pt-2">

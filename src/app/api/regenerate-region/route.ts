@@ -36,11 +36,13 @@ export async function POST(request: Request) {
 
     // --- Parse body ---
     const body = await request.json()
-    const { regionNumber, prompt, existingCode, regions } = body as {
+    const { regionNumber, prompt, existingCode, regions, provider, nvidiaModelId } = body as {
       regionNumber?: number
       prompt?: string
       existingCode?: string
       regions?: Region[]
+      provider?: 'gemini' | 'groq' | 'nvidia'
+      nvidiaModelId?: string
     }
 
     // --- Input validation ---
@@ -86,7 +88,9 @@ export async function POST(request: Request) {
       regionNumber,
       prompt.trim(),
       existingCode,
-      regions
+      validRegions,
+      provider,
+      nvidiaModelId
     )
 
     if (!result.success || !result.code) {
