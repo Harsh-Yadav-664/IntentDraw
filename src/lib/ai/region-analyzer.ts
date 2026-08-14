@@ -105,56 +105,45 @@ export function analyzeRegionLayout(regions: Region[]): LayoutGrid {
 }
 
 /**
- * Converts analyzed layout into a clear text description for the AI.
+ * Converts analyzed layout into a concrete TSX layout skeleton for the AI.
  */
 export function describeLayout(regions: Region[]): string {
   const grid = analyzeRegionLayout(regions)
   
   if (grid.rows.length === 0) {
-    return 'No regions drawn. Create a complete page layout based on the prompt.'
+    return 'NO REGIONS DRAWN — Create a complete website based only on the prompt.'
   }
 
   const lines: string[] = []
-  lines.push(`LAYOUT STRUCTURE (${grid.rows.length} rows detected from your drawing):`)
-  lines.push('')
+  lines.push(`LAYOUT SKELETON:`)
+  lines.push(`You MUST use this exact HTML structure. Replace the <RegionX /> placeholders with your generated components based on the user's prompt. Do NOT change the layout flex/grid classes unless absolutely necessary for responsiveness.`)
+  lines.push(``)
+  lines.push(`\`\`\`tsx`)
+  lines.push(`<div className="w-full flex flex-col gap-8">`)
 
   for (const row of grid.rows) {
-    const rowHeight = Math.round((row.height / grid.totalHeight) * 100)
-    
     if (row.columns.length === 1) {
       const col = row.columns[0]
-      const r = col.region
-      lines.push(`ROW ${row.rowIndex + 1}: Full-width section`)
-      lines.push(`  → Region ${col.regionNumber} (${r.geometry.type}): spans full width`)
-      if (r.geometry.type === 'arrow' && r.geometry.path && r.geometry.path.length >= 2) {
-        const direction = getArrowDirection(r)
-        lines.push(`    ↳ Arrow direction: ${direction} (use for gradient/animation direction)`)
-      }
+      lines.push(`  {/* ROW ${row.rowIndex + 1}: Full width */}`)
+      lines.push(`  <div className="w-full">`)
+      lines.push(`    <Region${col.regionNumber} />`)
+      lines.push(`  </div>`)
     } else {
-      lines.push(`ROW ${row.rowIndex + 1}: Multi-column layout (${row.columns.length} columns)`)
-      
-      // Calculate grid template
-      const totalRowWidth = row.columns.reduce((sum, c) => sum + c.width, 0)
-      const gridCols = row.columns.map(c => {
-        const percent = Math.round((c.width / totalRowWidth) * 100)
-        return `${percent}%`
-      }).join(' | ')
-      
-      lines.push(`  → Grid: ${gridCols}`)
-      
+      lines.push(`  {/* ROW ${row.rowIndex + 1}: ${row.columns.length} columns */}`)
+      lines.push(`  <div className="w-full flex flex-col md:flex-row gap-6">`)
       for (const col of row.columns) {
-        const r = col.region
-        const position = col.xStart < totalRowWidth / 3 ? 'left' : 
-                        col.xStart > totalRowWidth * 2/3 ? 'right' : 'center'
-        lines.push(`  → Region ${col.regionNumber} (${r.geometry.type}): ${position} column, ~${col.widthPercent}% width`)
-        if (r.geometry.type === 'arrow' && r.geometry.path && r.geometry.path.length >= 2) {
-          const direction = getArrowDirection(r)
-          lines.push(`    ↳ Arrow direction: ${direction}`)
-        }
+        // Using inline style for exact width, or just w-full on mobile
+        lines.push(`    <div style={{ flexBasis: '${col.widthPercent}%' }} className="flex-grow">`)
+        lines.push(`      <Region${col.regionNumber} />`)
+        lines.push(`    </div>`)
       }
+      lines.push(`  </div>`)
     }
-    lines.push('')
   }
+
+  lines.push(`</div>`)
+  lines.push(`\`\`\``)
+  lines.push(``)
 
   // Add special shapes description
   const arrows = regions.filter(r => r.geometry.type === 'arrow')
@@ -162,7 +151,7 @@ export function describeLayout(regions: Region[]): string {
   const freeforms = regions.filter(r => r.geometry.type === 'freeform')
 
   if (arrows.length > 0 || circles.length > 0 || freeforms.length > 0) {
-    lines.push('SPECIAL SHAPES:')
+    lines.push('SPECIAL SHAPES / FLOATING ELEMENTS:')
     if (arrows.length > 0) {
       lines.push(`  • ${arrows.length} arrow(s): Use as directional hints for gradients, animations, or content flow`)
     }
@@ -170,7 +159,7 @@ export function describeLayout(regions: Region[]): string {
       lines.push(`  • ${circles.length} circle(s): Could be decorative elements, icons, avatars, or rounded sections`)
     }
     if (freeforms.length > 0) {
-      lines.push(`  • ${freeforms.length} freeform shape(s): Interpret based on context (decorative, wave patterns, etc.)`)
+      lines.push(`  • ${freeforms.length} freeform shape(s): Interpret based on context (decorative, SVG waves, underlines, etc.)`)
     }
     lines.push('')
   }

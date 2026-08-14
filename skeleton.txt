@@ -1,0 +1,52 @@
+LAYOUT SKELETON:
+You MUST use this exact HTML structure. Replace the <RegionX /> placeholders with your generated components based on the user's prompt. Do NOT change the layout flex/grid classes unless absolutely necessary for responsiveness.
+
+```tsx
+<div className="w-full flex flex-col gap-8">
+  {/* ROW 1: Full width */}
+  <div className="w-full">
+    <Region1 />
+  </div>
+  {/* ROW 2: Full width */}
+  <div className="w-full">
+    <Region2 />
+  </div>
+  {/* ROW 3: 2 columns */}
+  <div className="w-full flex flex-col md:flex-row gap-6">
+    <div style={{ flexBasis: '40%' }} className="flex-grow">
+      <Region3 />
+    </div>
+    <div style={{ flexBasis: '5%' }} className="flex-grow">
+      <Region4 />
+    </div>
+  </div>
+  {/* ROW 4: Full width */}
+  <div className="w-full">
+    <Region5 />
+  </div>
+  {/* ROW 5: Full width */}
+  <div className="w-full">
+    <Region6 />
+  </div>
+  {/* ROW 6: 3 columns */}
+  <div className="w-full flex flex-col md:flex-row gap-6">
+    <div style={{ flexBasis: '20%' }} className="flex-grow">
+      <Region7 />
+    </div>
+    <div style={{ flexBasis: '20%' }} className="flex-grow">
+      <Region8 />
+    </div>
+    <div style={{ flexBasis: '20%' }} className="flex-grow">
+      <Region9 />
+    </div>
+  </div>
+  {/* ROW 7: Full width */}
+  <div className="w-full">
+    <Region10 />
+  </div>
+</div>
+```
+
+SPECIAL SHAPES / FLOATING ELEMENTS:
+  • 1 arrow(s): Use as directional hints for gradients, animations, or content flow
+  • 2 freeform shape(s): Interpret based on context (decorative, SVG waves, underlines, etc.)

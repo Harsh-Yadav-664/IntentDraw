@@ -28,11 +28,10 @@ export default function ProjectPage({ params }: PageProps) {
   const { id } = use(params)
   const router = useRouter()
 
-  const { loadProject, triggerAutoSave, projectName } = useWorkflowStore()
-  const prompt = useWorkflowStore((s) => s.prompt)
-  const previewCode = useWorkflowStore((s) => s.previewCode)
-  const globalTheme = useWorkflowStore((s) => s.globalTheme)
-  const { regions, setRegions } = useCanvasStore()
+  const loadProject = useWorkflowStore((s) => s.loadProject)
+  const triggerAutoSave = useWorkflowStore((s) => s.triggerAutoSave)
+  const projectName = useWorkflowStore((s) => s.projectName)
+  const setRegions = useCanvasStore((s) => s.setRegions)
   const viewMode = useCanvasStore((s) => s.viewMode)
   
   const [loading, setLoading] = useState(true)
@@ -80,12 +79,36 @@ export default function ProjectPage({ params }: PageProps) {
     return useCanvasStore.getState().regions
   }, [])
 
-  // Trigger auto-save whenever regions, prompt, or generated code changes
+  // Trigger auto-save without causing re-renders using store subscriptions
   useEffect(() => {
     if (loading) return // Don't save while loading
-    triggerAutoSave(getCanvasData)
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [regions, prompt, previewCode, globalTheme]) 
+    
+    let lastPrompt = useWorkflowStore.getState().prompt
+    let lastCode = useWorkflowStore.getState().previewCode
+    let lastTheme = useWorkflowStore.getState().globalTheme
+    let lastRegions = useCanvasStore.getState().regions
+
+    const unsubWorkflow = useWorkflowStore.subscribe((state) => {
+      if (state.prompt !== lastPrompt || state.previewCode !== lastCode || state.globalTheme !== lastTheme) {
+        lastPrompt = state.prompt
+        lastCode = state.previewCode
+        lastTheme = state.globalTheme
+        triggerAutoSave(getCanvasData)
+      }
+    })
+
+    const unsubCanvas = useCanvasStore.subscribe((state) => {
+      if (state.regions !== lastRegions) {
+        lastRegions = state.regions
+        triggerAutoSave(getCanvasData)
+      }
+    })
+
+    return () => {
+      unsubWorkflow()
+      unsubCanvas()
+    }
+  }, [loading, triggerAutoSave, getCanvasData]) 
 
   // ─── Not found ────────────────────────────────────────────────────────────
 

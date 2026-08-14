@@ -12,7 +12,8 @@ import { useWorkflowStore } from '@/store/workflow-store'
 import { cn } from '@/lib/utils'
 
 export function SaveStatus() {
-  const { saveStatus, lastSavedAt } = useWorkflowStore()
+  const saveStatus = useWorkflowStore((s) => s.saveStatus)
+  const lastSavedAt = useWorkflowStore((s) => s.lastSavedAt)
 
   const formatTime = (date: Date) => {
     return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })

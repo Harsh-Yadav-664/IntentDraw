@@ -84,14 +84,14 @@ export async function generateCode(
   const userMessage = buildGenerationUserPrompt(regions, userPrompt, globalTheme)
 
   // Helper to run a specific provider
-  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia'): Promise<string> => {
+  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia', msg: string): Promise<string> => {
     if (p === 'nvidia') {
-      return nvidiaGenerate(GENERATION_SYSTEM_PROMPT, userMessage, nvidiaModelId)
+      return nvidiaGenerate(GENERATION_SYSTEM_PROMPT, msg, nvidiaModelId)
     } else if (p === 'groq') {
-      return groqGenerate(GENERATION_SYSTEM_PROMPT, userMessage)
+      return groqGenerate(GENERATION_SYSTEM_PROMPT, msg)
     } else {
       const model = getProModel()
-      const result = await model.generateContent([{ text: GENERATION_SYSTEM_PROMPT }, { text: userMessage }])
+      const result = await model.generateContent([{ text: GENERATION_SYSTEM_PROMPT }, { text: msg }])
       return result.response.text()
     }
   }
@@ -106,11 +106,31 @@ export async function generateCode(
 
   for (const currentProvider of fallbacks) {
     try {
-      const responseText = await runProvider(currentProvider)
-      const code = extractReact(responseText)
+      const responseText = await runProvider(currentProvider, userMessage)
+      let code = extractReact(responseText)
 
       if (!code || code.length < 20) {
         throw new Error(`${currentProvider} returned empty or too-short response`)
+      }
+
+      // POST-GENERATION CHECK: Verify all regions from drawing exist in code
+      if (regions.length > 0) {
+        const missingRegions = regions.filter(r => {
+          return !code.includes(`Region${r.regionNumber}`) && !code.includes(`locked-r${r.regionNumber}`)
+        })
+
+        if (missingRegions.length > 0) {
+          console.warn(`[AI Gen] ${currentProvider} missing regions:`, missingRegions.map(r => r.regionNumber))
+          
+          const missingIds = missingRegions.map(r => `Region${r.regionNumber}`).join(', ')
+          const correctionMsg = `${userMessage}\n\nYOUR PREVIOUS OUTPUT:\n\`\`\`tsx\n${code}\n\`\`\`\n\nCRITICAL ERROR: You dropped the following components from the layout skeleton: ${missingIds}. You MUST include ALL RegionX placeholders from the skeleton exactly as provided. Fix the code to include them now.`
+          
+          const correctedText = await runProvider(currentProvider, correctionMsg)
+          const correctedCode = extractReact(correctedText)
+          if (correctedCode && correctedCode.length > 20) {
+            code = correctedCode
+          }
+        }
       }
 
       return { success: true, code, provider: currentProvider }
