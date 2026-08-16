@@ -16,7 +16,7 @@ function getClient(): GoogleGenerativeAI {
  * Used for analyzing canvas drawings.
  */
 export function getVisionModel() {
-  return getClient().getGenerativeModel({ model: 'gemini-2.0-flash' })
+  return getClient().getGenerativeModel({ model: 'gemini-2.5-flash' })
 }
 
 /**

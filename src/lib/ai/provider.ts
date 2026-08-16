@@ -7,10 +7,15 @@ import {
   VISION_SYSTEM_PROMPT,
   GENERATION_SYSTEM_PROMPT,
   REGENERATE_REGION_SYSTEM_PROMPT,
+  CHUNKED_SHELL_SYSTEM_PROMPT,
+  CHUNKED_REGION_SYSTEM_PROMPT,
   buildVisionUserPrompt,
   buildGenerationUserPrompt,
   buildRegenerateUserPrompt,
+  buildShellUserPrompt,
+  buildChunkUserPrompt,
 } from './prompts'
+import { resolveDesignTokens } from './design-tokens'
 import type { Region } from '@/types'
 
 // =============================================================================
@@ -70,8 +75,9 @@ export async function analyzeDrawing(
 }
 
 // =============================================================================
-// Code Generation — Regions + Prompt → HTML/CSS
-// Gemini Pro → Groq fallback
+// Code Generation — Regions + Prompt → React TSX
+// Gemini Pro → Groq → Nvidia fallback chain
+// Uses monolithic generation for <= 5 regions, chunked for > 5.
 // =============================================================================
 
 export async function generateCode(
@@ -81,75 +87,152 @@ export async function generateCode(
   provider: 'gemini' | 'groq' | 'nvidia' = 'gemini',
   nvidiaModelId: string = 'meta/llama-3.1-70b-instruct'
 ): Promise<GenerationResponse> {
-  const userMessage = buildGenerationUserPrompt(regions, userPrompt, globalTheme)
+  const tokens = await resolveDesignTokens(userPrompt)
 
   // Helper to run a specific provider
-  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia', msg: string): Promise<string> => {
+  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia', sysPrompt: string, msg: string): Promise<string> => {
     if (p === 'nvidia') {
-      return nvidiaGenerate(GENERATION_SYSTEM_PROMPT, msg, nvidiaModelId)
+      return nvidiaGenerate(sysPrompt, msg, nvidiaModelId)
     } else if (p === 'groq') {
-      return groqGenerate(GENERATION_SYSTEM_PROMPT, msg)
+      return groqGenerate(sysPrompt, msg)
     } else {
       const model = getProModel()
-      const result = await model.generateContent([{ text: GENERATION_SYSTEM_PROMPT }, { text: msg }])
+      const result = await model.generateContent([{ text: sysPrompt }, { text: msg }])
       return result.response.text()
     }
   }
 
-  // Define fallback chain based on selected provider
-  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> = 
+  // Fallback chain based on user's selected provider
+  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> =
     provider === 'nvidia' ? ['nvidia', 'gemini', 'groq'] :
     provider === 'groq' ? ['groq', 'gemini', 'nvidia'] :
     ['gemini', 'groq', 'nvidia']
 
+  // -------------------------------------------------------------------------
+  // Monolithic generation path (≤ 5 regions — fast, cheap, single call)
+  // -------------------------------------------------------------------------
+  if (regions.length <= 5) {
+    const userMessage = buildGenerationUserPrompt(regions, userPrompt, tokens, globalTheme)
+    let lastError = 'Unknown error'
+
+    for (const currentProvider of fallbacks) {
+      try {
+        const responseText = await runProvider(currentProvider, GENERATION_SYSTEM_PROMPT, userMessage)
+        const code = extractReact(responseText)
+
+        if (!code || code.length < 20) throw new Error(`${currentProvider} returned empty response`)
+        if (!code.includes('export default')) throw new Error('Generation truncated — output incomplete')
+
+        return { success: true, code, provider: currentProvider }
+      } catch (err) {
+        lastError = err instanceof Error ? err.message : String(err)
+        console.warn(`[AI Gen Monolithic] ${currentProvider} failed:`, lastError)
+      }
+    }
+    return { success: false, error: `Generation failed: ${lastError}` }
+  }
+
+  // -------------------------------------------------------------------------
+  // Chunked generation path (> 5 regions — parallel, scalable)
+  // Phase 1: Shell (layout App() + placeholder tags)
+  // Phase 2: Component chunks (3 regions per batch, in parallel)
+  // Phase 3: Assembly (merge imports + inject chunks)
+  // -------------------------------------------------------------------------
+  console.log(`[AI Gen] Using Chunked Generation for ${regions.length} regions`)
+
+  let shellCode = ''
+  let activeProvider = fallbacks[0]
   let lastError = 'Unknown error'
+
+  // Phase 1: Shell
+  const shellMessage = buildShellUserPrompt(regions, userPrompt, tokens, globalTheme)
+  let shellSuccess = false
 
   for (const currentProvider of fallbacks) {
     try {
-      const responseText = await runProvider(currentProvider, userMessage)
-      let code = extractReact(responseText)
-
-      if (!code || code.length < 20) {
-        throw new Error(`${currentProvider} returned empty or too-short response`)
-      }
-
-      // POST-GENERATION CHECK: Verify all regions from drawing exist in code
-      if (regions.length > 0) {
-        const missingRegions = regions.filter(r => {
-          return !code.includes(`Region${r.regionNumber}`) && !code.includes(`locked-r${r.regionNumber}`)
-        })
-
-        if (missingRegions.length > 0) {
-          console.warn(`[AI Gen] ${currentProvider} missing regions:`, missingRegions.map(r => r.regionNumber))
-          
-          const missingIds = missingRegions.map(r => `Region${r.regionNumber}`).join(', ')
-          const correctionMsg = `${userMessage}\n\nYOUR PREVIOUS OUTPUT:\n\`\`\`tsx\n${code}\n\`\`\`\n\nCRITICAL ERROR: You dropped the following components from the layout skeleton: ${missingIds}. You MUST include ALL RegionX placeholders from the skeleton exactly as provided. Fix the code to include them now.`
-          
-          const correctedText = await runProvider(currentProvider, correctionMsg)
-          const correctedCode = extractReact(correctedText)
-          if (correctedCode && correctedCode.length > 20) {
-            code = correctedCode
-          }
-        }
-      }
-
-      return { success: true, code, provider: currentProvider }
+      const responseText = await runProvider(currentProvider, CHUNKED_SHELL_SYSTEM_PROMPT, shellMessage)
+      shellCode = extractReact(responseText)
+      if (!shellCode || shellCode.length < 20) throw new Error('Shell empty')
+      if (!shellCode.includes('export default')) throw new Error('Shell truncated')
+      activeProvider = currentProvider
+      shellSuccess = true
+      break
     } catch (err) {
       lastError = err instanceof Error ? err.message : String(err)
-      console.warn(`[AI Gen] ${currentProvider} failed, trying next fallback:`, lastError)
+      console.warn(`[AI Gen Shell] ${currentProvider} failed:`, lastError)
     }
   }
 
-  console.error('[AI Gen] All providers failed. Last error:', lastError)
-  return {
-    success: false,
-    error: 'Generation failed with all AI providers. Please check API keys or try again.',
+  if (!shellSuccess) {
+    return { success: false, error: `Shell generation failed: ${lastError}` }
   }
+
+  // Phase 2: Chunks (parallel)
+  const CHUNK_SIZE = 3
+  const chunks: Region[][] = []
+  for (let i = 0; i < regions.length; i += CHUNK_SIZE) {
+    chunks.push(regions.slice(i, i + CHUNK_SIZE))
+  }
+
+  const generatedComponents: string[] = new Array(chunks.length).fill('')
+  const allImports = new Set<string>()
+
+  await Promise.all(chunks.map(async (chunk, index) => {
+    const chunkMessage = buildChunkUserPrompt(chunk, userPrompt, tokens, globalTheme)
+
+    for (const currentProvider of fallbacks) {
+      try {
+        const responseText = await runProvider(currentProvider, CHUNKED_REGION_SYSTEM_PROMPT, chunkMessage)
+        const chunkCode = extractReact(responseText)
+        if (!chunkCode || chunkCode.length < 10) throw new Error(`Chunk ${index} empty`)
+
+        const lines = chunkCode.split('\n')
+        lines.filter(l => l.trim().startsWith('import ')).forEach(l => allImports.add(l.trim()))
+
+        const componentLines = lines.filter(
+          l => !l.trim().startsWith('import ') && !l.trim().startsWith('export default')
+        )
+        generatedComponents[index] = componentLines.join('\n')
+        break
+      } catch (err) {
+        console.warn(`[AI Gen Chunk ${index}] ${currentProvider} failed:`, err)
+      }
+    }
+  }))
+
+  // Phase 3: Assembly
+  const shellLines = shellCode.split('\n')
+  const finalImports = new Set<string>()
+  const nonImportLines: string[] = []
+
+  for (const line of shellLines) {
+    if (line.trim().startsWith('import ')) {
+      finalImports.add(line.trim())
+    } else {
+      nonImportLines.push(line)
+    }
+  }
+  for (const imp of allImports) finalImports.add(imp)
+
+  const mergedImports = Array.from(finalImports).join('\n')
+  const shellBody = nonImportLines.join('\n')
+  const exportIndex = shellBody.indexOf('export default')
+
+  if (exportIndex === -1) {
+    return { success: false, error: 'Could not assemble: shell is missing export default' }
+  }
+
+  const assembledCode =
+    mergedImports + '\n\n' +
+    shellBody.substring(0, exportIndex) + '\n\n' +
+    generatedComponents.filter(Boolean).join('\n\n') + '\n\n' +
+    shellBody.substring(exportIndex)
+
+  return { success: true, code: assembledCode, provider: activeProvider }
 }
 
 // =============================================================================
 // Region Regeneration — Change one region, keep the rest
-// Gemini Pro → Groq fallback
 // =============================================================================
 
 export async function regenerateRegion(
@@ -162,7 +245,6 @@ export async function regenerateRegion(
 ): Promise<GenerationResponse> {
   const userMessage = buildRegenerateUserPrompt(regionNumber, userPrompt, existingCode, allRegions)
 
-  // Helper to run a specific provider
   const runProvider = async (p: 'gemini' | 'groq' | 'nvidia'): Promise<string> => {
     if (p === 'nvidia') {
       return nvidiaGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage, nvidiaModelId)
@@ -175,8 +257,7 @@ export async function regenerateRegion(
     }
   }
 
-  // Define fallback chain based on selected provider
-  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> = 
+  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> =
     provider === 'nvidia' ? ['nvidia', 'gemini', 'groq'] :
     provider === 'groq' ? ['groq', 'gemini', 'nvidia'] :
     ['gemini', 'groq', 'nvidia']

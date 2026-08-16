@@ -80,11 +80,13 @@ export function useAI() {
     setStatus('generating')
 
     try {
+      const imageData = exportToPng() // Capture canvas drawing
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           regions,
+          imageData, // Send to backend for pre-generation intent classification
           prompt: prompt.trim(),
           globalTheme: globalTheme.trim() || undefined,
           provider: aiProvider,
@@ -100,6 +102,7 @@ export function useAI() {
       }
 
       setPreviewCode(result.data.code)
+      setStatus('preview_ready')
       return true
     } catch (error) {
       console.error('[useAI] Generation error:', error)

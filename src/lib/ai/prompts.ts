@@ -1,6 +1,7 @@
 import { wrapUserPrompt, sanitizeUserPrompt } from './prompt-rules'
 import { describeLayout } from './region-analyzer'
 import type { Region } from '@/types'
+import type { DesignTokenSet } from './design-tokens'
 
 // =============================================================================
 // VISION SYSTEM PROMPT
@@ -93,6 +94,8 @@ STYLING (ANTI-GENERIC DESIGN PRINCIPLE):
 LAYOUT:
   Build the layout STRICTLY from the provided skeleton.
   Never default to: centered single-column, equal-card-grid, 4-column footer, unless the skeleton dictates it.
+  STRUCTURAL VARIETY: Avoid generic structural patterns. For example, if you generate a feature grid or list, NEVER use the standard 'icon-square + title + description x3 in a row' pattern unless forced by the skeleton. Vary structural presentation heavily using alternate layouts, asymmetric grids, staggered content, masonry, or numbered lists.
+  CONCISENESS: If the skeleton contains many regions (e.g. > 4), prioritize concise component implementations to avoid hitting token limits. Do not generate overly repetitive or unnecessarily verbose code.
 
 ════════════════════════════════════════════
 BANNED PATTERNS — NEVER PRODUCE THESE
@@ -137,6 +140,64 @@ Top comment: /* IntentDraw | Regions used: R1, R2... */`
 
 
 // =============================================================================
+// CHUNKED GENERATION SYSTEM PROMPTS
+// =============================================================================
+
+export const CHUNKED_SHELL_SYSTEM_PROMPT = `You are IntentDraw's React layout generation engine.
+Your job is to generate ONLY the main layout shell.
+
+You will receive:
+  1. A list of regions
+  2. A CONCRETE LAYOUT SKELETON
+  3. The user prompt
+
+CRITICAL REQUIREMENTS:
+1. Generate the 'export default function App()' exactly as the layout skeleton dictates.
+2. For EVERY region in the list, use it inside the App component as <RegionX />.
+3. YOU MUST NOT define the RegionX components (e.g. do not write 'const Region1 = ...'). Another AI will generate those components.
+
+Structure:
+import React, { useState } from 'react';
+
+export default function App() {
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900">
+       {/* YOUR LAYOUT SKELETON GOES HERE */}
+       <Region1 />
+       <Region2 />
+    </div>
+  );
+}
+`
+
+export const CHUNKED_REGION_SYSTEM_PROMPT = `You are IntentDraw's React component generation engine.
+Your job is to generate ONLY the React components for a specific subset of regions.
+
+You will receive:
+  1. The user prompt describing the website
+  2. The specific regions you need to build
+
+CRITICAL REQUIREMENTS:
+1. ONLY generate the React components for the requested regions.
+2. DO NOT generate the 'export default function App()' component.
+3. Follow the same extreme visual quality and anti-generic design rules (bold, unique, Tailwind).
+4. If you need icons, include 'import { IconName } from "lucide-react";' at the top.
+
+Structure:
+import { Camera, Star } from 'lucide-react';
+
+// <!-- CHUNK:R1 -->
+const Region1 = () => (
+  <section className="...">...</section>
+)
+
+// <!-- CHUNK:R2 -->
+const Region2 = () => (
+  <div className="...">...</div>
+)
+`
+
+// =============================================================================
 // REGENERATE REGION SYSTEM PROMPT
 // =============================================================================
 
@@ -175,11 +236,25 @@ export function buildVisionUserPrompt(additionalContext?: string): string {
 export function buildGenerationUserPrompt(
   regions: Region[],
   userPrompt: string,
+  tokens: DesignTokenSet,
   globalTheme?: string
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
   
   const sections: string[] = []
+
+  // Add Design Tokens (Aesthetic Enforcement)
+  sections.push(`HARD DESIGN CONSTRAINTS (PRESET: ${tokens.name}):
+You MUST follow these concrete style tokens exactly. Do NOT use generic fallback classes.
+- Border Radius: ${tokens.borderRadius}
+- Colors: ${tokens.colorPalette}
+- Typography: ${tokens.typography}
+- Shadows/Borders: ${tokens.shadowTreatment}
+- Special Instructions: ${tokens.specialInstructions || 'None'}
+
+CRITICAL - BANNED CLASSES:
+You are explicitly BANNED from using the following Tailwind classes anywhere in your output:
+${tokens.bannedClasses.join(', ')}`)
 
   // Build normalized region data
   if (regions.length > 0) {
@@ -284,4 +359,74 @@ ${sanitized}
 Return complete React TSX code with ONLY R${regionNumber} modified.`
 
   return wrapUserPrompt(prompt)
+}
+
+export function buildShellUserPrompt(
+  regions: Region[],
+  userPrompt: string,
+  tokens: DesignTokenSet,
+  globalTheme?: string
+): string {
+  const sanitized = sanitizeUserPrompt(userPrompt)
+  
+  const sections: string[] = []
+
+  sections.push(`HARD DESIGN CONSTRAINTS (PRESET: ${tokens.name}):
+You MUST follow these concrete style tokens exactly. Do NOT use generic fallback classes.
+- Border Radius: ${tokens.borderRadius}
+- Colors: ${tokens.colorPalette}
+- Typography: ${tokens.typography}
+- Shadows/Borders: ${tokens.shadowTreatment}
+- Special Instructions: ${tokens.specialInstructions || 'None'}
+
+CRITICAL - BANNED CLASSES:
+You are explicitly BANNED from using the following Tailwind classes anywhere in your output:
+${tokens.bannedClasses.join(', ')}`)
+
+  if (regions.length > 0) {
+    sections.push(describeLayout(regions))
+  } else {
+    sections.push('NO REGIONS DRAWN — Create a complete website based only on the prompt.')
+  }
+
+  if (globalTheme) {
+    sections.push(`THEME: ${globalTheme}`)
+  }
+
+  sections.push(`USER PROMPT:\n${sanitized}`)
+
+  return wrapUserPrompt(sections.join('\n\n'))
+}
+
+export function buildChunkUserPrompt(
+  regions: Region[],
+  userPrompt: string,
+  tokens: DesignTokenSet,
+  globalTheme?: string
+): string {
+  const sanitized = sanitizeUserPrompt(userPrompt)
+  
+  const sections: string[] = []
+
+  sections.push(`HARD DESIGN CONSTRAINTS (PRESET: ${tokens.name}):
+You MUST follow these concrete style tokens exactly.
+- Border Radius: ${tokens.borderRadius}
+- Colors: ${tokens.colorPalette}
+- Typography: ${tokens.typography}
+- Shadows/Borders: ${tokens.shadowTreatment}
+
+CRITICAL - BANNED CLASSES:
+You are explicitly BANNED from using the following Tailwind classes anywhere in your output:
+${tokens.bannedClasses.join(', ')}`)
+
+  const regionList = regions.map(r => `R${r.regionNumber}: ${r.geometry.type}`).join('\n')
+  sections.push(`YOU MUST GENERATE CODE FOR THESE REGIONS ONLY:\n${regionList}`)
+
+  if (globalTheme) {
+    sections.push(`THEME: ${globalTheme}`)
+  }
+
+  sections.push(`USER PROMPT:\n${sanitized}`)
+
+  return wrapUserPrompt(sections.join('\n\n'))
 }

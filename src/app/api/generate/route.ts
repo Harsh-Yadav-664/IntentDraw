@@ -3,6 +3,7 @@ import { generateCode } from '@/lib/ai/provider'
 import { sanitizeHtml } from '@/lib/utils/sanitize'
 import { checkAndIncrementUsage } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
+import { classifyDrawingIntent } from '@/lib/ai/intent-classifier'
 import type { Region } from '@/types'
 
 export async function POST(request: Request) {
@@ -37,12 +38,13 @@ export async function POST(request: Request) {
 
     // --- Parse body ---
     const body = await request.json()
-    const { regions, prompt, globalTheme, provider, nvidiaModelId } = body as {
+    const { regions, prompt, globalTheme, provider, nvidiaModelId, imageData } = body as {
       regions?: Region[]
       prompt?: string
       globalTheme?: string
       provider?: 'gemini' | 'groq' | 'nvidia'
       nvidiaModelId?: string
+      imageData?: string
     }
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -59,12 +61,37 @@ export async function POST(request: Request) {
       )
     }
 
-    const validRegions = Array.isArray(regions) ? regions : []
+    let validRegions = Array.isArray(regions) ? regions : []
+    let finalPrompt = prompt.trim()
 
-    console.log(`[Generate] user=${userId} | ${validRegions.length} regions | prompt: "${prompt.substring(0, 100)}..."`)
+      // Phase 10: Intent Classification per Region
+      console.log(`[Generate] Running region intent classification for user=${userId}`)
+      
+      const { classifyRegionIntents } = await import('@/lib/ai/intent-classifier')
+      const regionTags = await classifyRegionIntents(validRegions, finalPrompt)
+      
+      validRegions = validRegions.map(r => ({
+        ...r,
+        classificationTag: regionTags[r.id] || 'exact-placement'
+      }))
+      
+      const tagsCounts = validRegions.reduce((acc, r) => {
+        acc[r.classificationTag!] = (acc[r.classificationTag!] || 0) + 1
+        return acc
+      }, {} as Record<string, number>)
+      
+      console.log(`[Generate] Region tags:`, tagsCounts)
+      
+      // If ALL regions are decorative, it's a pure style reference
+      if (validRegions.every(r => r.classificationTag === 'decorative')) {
+         console.log(`[Generate] Entire drawing classified as style reference.`)
+         finalPrompt += `\n\n(Note: The user provided a drawing as a style/pattern/background reference. Do not treat the strokes as literal layout boundaries, but rather as aesthetic inspiration.)`
+      }
+
+    console.log(`[Generate] user=${userId} | ${validRegions.length} regions | prompt: "${finalPrompt.substring(0, 100)}..."`)
 
     // --- Call AI ---
-    const result = await generateCode(validRegions, prompt.trim(), globalTheme, provider, nvidiaModelId)
+    const result = await generateCode(validRegions, finalPrompt, globalTheme, provider, nvidiaModelId)
 
     if (!result.success || !result.code) {
       return NextResponse.json(

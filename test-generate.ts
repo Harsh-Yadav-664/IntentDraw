@@ -35,7 +35,7 @@ async function run() {
   const result = await generateCode(regions, prompt, undefined, 'gemini');
   
   if (result.success) {
-    fs.writeFileSync('output.tsx', result.code);
+    fs.writeFileSync('output.tsx', result.code!);
     console.log("Code generated and saved to output.tsx!");
   } else {
     console.error("Failed to generate:", result.error);

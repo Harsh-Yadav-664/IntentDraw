@@ -88,7 +88,7 @@ export async function POST(request: Request) {
       regionNumber,
       prompt.trim(),
       existingCode,
-      validRegions,
+      regions,
       provider,
       nvidiaModelId
     )

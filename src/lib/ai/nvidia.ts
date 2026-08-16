@@ -1,7 +1,7 @@
 export async function nvidiaGenerate(
   systemPrompt: string,
   userPrompt: string,
-  modelId: string = 'meta/llama-3.1-70b-instruct'
+  modelId: string = 'meta/llama-3.1-70b-instruct' // Default, overridden by UI (e.g. deepseek-ai/deepseek-coder-6.7b-instruct)
 ): Promise<string> {
   const apiKey = process.env.NVIDIA_NIM_API_KEY
   if (!apiKey) {
@@ -28,7 +28,7 @@ export async function nvidiaGenerate(
       ],
       temperature: 0.2,
       top_p: 0.7,
-      max_tokens: 4096,
+      max_tokens: 8000,
     }),
   })
 

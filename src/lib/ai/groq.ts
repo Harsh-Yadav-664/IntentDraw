@@ -36,7 +36,7 @@ export async function groqGenerate(
     ],
     temperature: 0.2,
     top_p: 0.7,
-    max_tokens: 4096,
+    max_tokens: 8000,
   })
 
   return completion.choices[0]?.message?.content || ''

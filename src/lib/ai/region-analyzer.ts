@@ -29,18 +29,25 @@ interface LayoutColumn {
  * Within each row, regions are sorted left-to-right as "columns".
  */
 export function analyzeRegionLayout(regions: Region[]): LayoutGrid {
-  if (regions.length === 0) {
+  // Only include structural layout shapes in the rigid grid
+  const structuralRegions = regions.filter(r => 
+    !r.classificationTag || 
+    r.classificationTag === 'exact-placement' || 
+    r.classificationTag === 'approximate-area'
+  )
+
+  if (structuralRegions.length === 0) {
     return { rows: [], totalWidth: 800, totalHeight: 600 }
   }
 
-  // Find canvas bounds from regions
-  const allX = regions.flatMap(r => [r.geometry.x, r.geometry.x + r.geometry.width])
-  const allY = regions.flatMap(r => [r.geometry.y, r.geometry.y + r.geometry.height])
+  // Find canvas bounds from structural regions
+  const allX = structuralRegions.flatMap(r => [r.geometry.x, r.geometry.x + r.geometry.width])
+  const allY = structuralRegions.flatMap(r => [r.geometry.y, r.geometry.y + r.geometry.height])
   const totalWidth = Math.max(...allX)
   const totalHeight = Math.max(...allY)
 
   // Sort regions by Y position (top to bottom)
-  const sortedByY = [...regions].sort((a, b) => a.geometry.y - b.geometry.y)
+  const sortedByY = [...structuralRegions].sort((a, b) => a.geometry.y - b.geometry.y)
 
   // Group into rows based on Y overlap
   const rows: LayoutRow[] = []
@@ -145,21 +152,30 @@ export function describeLayout(regions: Region[]): string {
   lines.push(`\`\`\``)
   lines.push(``)
 
-  // Add special shapes description
-  const arrows = regions.filter(r => r.geometry.type === 'arrow')
-  const circles = regions.filter(r => r.geometry.type === 'circle')
-  const freeforms = regions.filter(r => r.geometry.type === 'freeform')
+  // Add special instructions for non-structural shapes
+  const decorative = regions.filter(r => r.classificationTag === 'decorative')
+  const relational = regions.filter(r => r.classificationTag === 'relational')
 
-  if (arrows.length > 0 || circles.length > 0 || freeforms.length > 0) {
+  if (decorative.length > 0 || relational.length > 0) {
     lines.push('SPECIAL SHAPES / FLOATING ELEMENTS:')
-    if (arrows.length > 0) {
-      lines.push(`  • ${arrows.length} arrow(s): Use as directional hints for gradients, animations, or content flow`)
+    lines.push('The user drew additional non-structural shapes. DO NOT place these in the grid. Render them as floating/absolute stylistic elements or background SVG elements instead.')
+    
+    if (decorative.length > 0) {
+      lines.push(`\nDECORATIVE ELEMENTS:`)
+      decorative.forEach(r => {
+        lines.push(`  • <Region${r.regionNumber} /> (Type: ${r.geometry.type}): Render as a stylistic decorative element.`)
+      })
     }
-    if (circles.length > 0) {
-      lines.push(`  • ${circles.length} circle(s): Could be decorative elements, icons, avatars, or rounded sections`)
-    }
-    if (freeforms.length > 0) {
-      lines.push(`  • ${freeforms.length} freeform shape(s): Interpret based on context (decorative, SVG waves, underlines, etc.)`)
+    
+    if (relational.length > 0) {
+      lines.push(`\nRELATIONAL ELEMENTS:`)
+      relational.forEach(r => {
+        let extra = ''
+        if (r.geometry.type === 'arrow') {
+           extra = ` points ${getArrowDirection(r)}.`
+        }
+        lines.push(`  • <Region${r.regionNumber} /> (Type: ${r.geometry.type}): Indicates a relationship or connection${extra}`)
+      })
     }
     lines.push('')
   }

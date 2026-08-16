@@ -22,6 +22,7 @@ export interface Region {
   regionNumber: number
   geometry: RegionGeometry
   intent: string
+  classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'
   lockState: RegionLockState
   generatedCode: string | null
   createdAt: string

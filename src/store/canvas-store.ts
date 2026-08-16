@@ -200,6 +200,31 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     exportToPng: () => {
       const stage = get()._stageInstance
       if (!stage) return null
+      
+      // Temporarily add a background rect so the image isn't transparent
+      // We use any type here to bypass strict Konva types since we just need the layer
+      const layer = (stage as any).getLayers()[0]
+      if (layer && typeof window !== 'undefined' && (window as any).Konva) {
+        const bgRect = new (window as any).Konva.Rect({
+          x: 0,
+          y: 0,
+          width: (stage as any).width(),
+          height: (stage as any).height(),
+          fill: '#0A0A0B',
+          listening: false,
+        })
+        layer.add(bgRect)
+        bgRect.moveToBottom()
+        layer.draw()
+        
+        const dataUrl = stage.toDataURL({ pixelRatio: 2 })
+        
+        bgRect.destroy()
+        layer.draw()
+        
+        return dataUrl
+      }
+      
       return stage.toDataURL({ pixelRatio: 2 })
     },
 

@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-08-16T20:24:30.862Z",
+  "userPrompt": "the region 1 to 5 are a rough context how the background very light theme should look like in design\ndesign a college erp platform dark thee minialistic but elegant",
+  "simplifiedRegions": [
+    {
+      "id": "10ba79f4-0cd5-4e10-be10-6498126567cc",
+      "regionNumber": 1,
+      "shapeType": "freeform",
+      "width": 155.2662721893491,
+      "height": 137.56112180946045
+    },
+    {
+      "id": "d63682ec-bfdc-48d7-9dc7-79377659db70",
+      "regionNumber": 2,
+      "shapeType": "freeform",
+      "width": 319.3688362919132,
+      "height": 299.10078778754246
+    },
+    {
+      "id": "ec424b8b-2220-4761-a2dd-79af07216e37",
+      "regionNumber": 3,
+      "shapeType": "freeform",
+      "width": 554.1617357001973,
+      "height": 600.6070133125831
+    },
+    {
+      "id": "467685e9-7659-4e6e-b450-33ded6dffac9",
+      "regionNumber": 4,
+      "shapeType": "freeform",
+      "width": 557.9487179487178,
+      "height": 618.5165296567209
+    },
+    {
+      "id": "cf8982dd-96da-4649-8bb5-bf939152da00",
+      "regionNumber": 5,
+      "shapeType": "freeform",
+      "width": 313.0571992110454,
+      "height": 593.1051889956366
+    }
+  ],
+  "parsedTags": {
+    "10ba79f4-0cd5-4e10-be10-6498126567cc": "decorative",
+    "d63682ec-bfdc-48d7-9dc7-79377659db70": "decorative",
+    "ec424b8b-2220-4761-a2dd-79af07216e37": "decorative",
+    "467685e9-7659-4e6e-b450-33ded6dffac9": "decorative",
+    "cf8982dd-96da-4649-8bb5-bf939152da00": "decorative"
+  }
+}
