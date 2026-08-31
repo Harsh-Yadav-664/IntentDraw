@@ -21,6 +21,10 @@ import type { Region, RegionGeometry, CanvasTool } from '@/types'
 
 const MIN_SHAPE_SIZE = 10
 
+// Skip freeform points closer than ~3px (logical) to the previous one — cuts
+// per-mousemove state updates and re-renders during a freehand stroke.
+const FREEFORM_MIN_DIST_SQ = 9
+
 const CURSOR_MAP: Record<CanvasTool, string> = {
   select: 'default',
   rectangle: 'crosshair',
@@ -57,6 +61,8 @@ export default function DrawingCanvas() {
   const toggleRegionSelection = useCanvasStore((s) => s.toggleRegionSelection)
   const setStageInstance = useCanvasStore((s) => s.setStageInstance)
   const previewCode = useWorkflowStore((s) => s.previewCode)
+  const previewSnapshot = useWorkflowStore((s) => s.previewSnapshot)
+  const setPreviewSnapshot = useWorkflowStore((s) => s.setPreviewSnapshot)
 
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number; active: boolean } | null>(null)
 
@@ -94,6 +100,9 @@ export default function DrawingCanvas() {
       if (e.data && e.data.type === 'IFRAME_HEIGHT' && typeof e.data.height === 'number') {
         setIframeHeight(e.data.height)
       }
+      if (e.data && e.data.type === 'IFRAME_SNAPSHOT' && typeof e.data.dataUrl === 'string') {
+        setPreviewSnapshot(e.data.dataUrl)
+      }
     }
     window.addEventListener('message', handleMessage)
 
@@ -101,7 +110,7 @@ export default function DrawingCanvas() {
       observer.disconnect()
       window.removeEventListener('message', handleMessage)
     }
-  }, [])
+  }, [setPreviewSnapshot])
 
   useEffect(() => {
     if (stageRef.current) setStageInstance(stageRef.current)
@@ -131,7 +140,9 @@ export default function DrawingCanvas() {
 
   const srcDoc = useMemo(() => {
     if (!previewCode) return null
-    return wrapReactForPreview(previewCode)
+    // captureSnapshot: this transient iframe screenshots itself once and posts
+    // the bitmap back; we then render that frozen image instead (no live frame).
+    return wrapReactForPreview(previewCode, { captureSnapshot: true })
   }, [previewCode])
 
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
@@ -177,16 +188,25 @@ export default function DrawingCanvas() {
     if (!drawing) return
 
     if (activeTool === 'freeform') {
-      setDrawing((prev) =>
-        prev
-          ? {
-              ...prev,
-              currentX: pos.x,
-              currentY: pos.y,
-              points: [...prev.points, pos.x - prev.startX, pos.y - prev.startY],
-            }
-          : null
-      )
+      setDrawing((prev) => {
+        if (!prev) return prev
+        const relX = pos.x - prev.startX
+        const relY = pos.y - prev.startY
+        const n = prev.points.length
+        if (n >= 2) {
+          const dx = relX - prev.points[n - 2]
+          const dy = relY - prev.points[n - 1]
+          // Too close to the last point — bail out unchanged so React skips
+          // the re-render entirely (the freeform preview only reads `points`).
+          if (dx * dx + dy * dy < FREEFORM_MIN_DIST_SQ) return prev
+        }
+        return {
+          ...prev,
+          currentX: pos.x,
+          currentY: pos.y,
+          points: [...prev.points, relX, relY],
+        }
+      })
     } else {
       setDrawing((prev) => (prev ? { ...prev, currentX: pos.x, currentY: pos.y } : null))
     }
@@ -262,16 +282,20 @@ export default function DrawingCanvas() {
           const ys: number[] = []
           for (let i = 0; i < points.length; i += 2) xs.push(points[i])
           for (let i = 1; i < points.length; i += 2) ys.push(points[i])
-          const path = []
+          const minX = Math.min(...xs)
+          const minY = Math.min(...ys)
+          const path: Array<{ x: number; y: number }> = []
           for (let i = 0; i < points.length; i += 2) {
-            path.push({ x: points[i], y: points[i + 1] })
+            path.push({ x: points[i] - minX, y: points[i + 1] - minY })
           }
           geometry = {
             type: 'freeform',
-            x: startX,
-            y: startY,
-            width: Math.max(1, Math.max(...xs) - Math.min(...xs)),
-            height: Math.max(1, Math.max(...ys) - Math.min(...ys)),
+            // x/y is the bounding-box top-left (not the stroke start),
+            // so layout/intent code can treat it like any other region.
+            x: startX + minX,
+            y: startY + minY,
+            width: Math.max(1, Math.max(...xs) - minX),
+            height: Math.max(1, Math.max(...ys) - minY),
             path,
           }
         }
@@ -281,15 +305,18 @@ export default function DrawingCanvas() {
         const dx = currentX - startX
         const dy = currentY - startY
         if (Math.sqrt(dx * dx + dy * dy) >= MIN_SHAPE_SIZE) {
+          const minX = Math.min(startX, currentX)
+          const minY = Math.min(startY, currentY)
           geometry = {
             type: 'arrow',
-            x: startX,
-            y: startY,
+            // x/y is the bounding-box top-left; path is relative to it.
+            x: minX,
+            y: minY,
             width: Math.max(1, Math.abs(dx)),
             height: Math.max(1, Math.abs(dy)),
             path: [
-              { x: 0, y: 0 },
-              { x: dx, y: dy },
+              { x: startX - minX, y: startY - minY },
+              { x: currentX - minX, y: currentY - minY },
             ],
           }
         }
@@ -602,11 +629,25 @@ export default function DrawingCanvas() {
         }}
       >
         {previewCode ? (
-          <iframe
-            srcDoc={srcDoc || ''}
-            sandbox="allow-scripts"
-            className="w-full h-full border-0 bg-white"
-          />
+          previewSnapshot ? (
+            // Frozen backdrop — a static bitmap of the generated site, so there
+            // is no live compiling iframe running behind the drawing surface.
+            // eslint-disable-next-line @next/next/no-img-element -- data-URL snapshot; next/image can't optimize this
+            <img
+              src={previewSnapshot}
+              alt="Generated preview"
+              draggable={false}
+              className="w-full block select-none pointer-events-none bg-white"
+            />
+          ) : (
+            // Transient live frame: renders once, screenshots itself, and is
+            // then swapped out for the <img> above once the snapshot arrives.
+            <iframe
+              srcDoc={srcDoc || ''}
+              sandbox="allow-scripts"
+              className="w-full h-full border-0 bg-white"
+            />
+          )
         ) : regions.length === 0 ? (
           <div className="w-full h-full flex flex-col items-center justify-center border border-white/5 border-dashed">
             <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 shadow-xl">

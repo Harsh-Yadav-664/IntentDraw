@@ -1,19 +1,22 @@
 import { useState, useCallback } from 'react'
 import { useCanvasStore } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
-import type { Region, AnalysisResponse } from '@/types'
 
 /**
- * Hook for AI operations: analyze drawing and generate code.
+ * Hook for AI operations: generate code and regenerate regions.
  * Handles loading states, errors, and store updates.
+ *
+ * Note: shape geometry comes directly from the Konva canvas store
+ * (exact, since the user drew it) — no separate vision "analyze" step.
+ * The drawing image is sent along with generation so the AI can read
+ * the visual character of decorative strokes.
  */
 export function useAI() {
-  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [isGenerating, setIsGenerating] = useState(false)
 
   const regions = useCanvasStore((s) => s.regions)
   const exportToPng = useCanvasStore((s) => s.exportToPng)
-  
+
   const prompt = useWorkflowStore((s) => s.prompt)
   const globalTheme = useWorkflowStore((s) => s.globalTheme)
   const setStatus = useWorkflowStore((s) => s.setStatus)
@@ -23,52 +26,7 @@ export function useAI() {
   const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
 
   /**
-   * Analyzes the canvas drawing using Gemini Vision.
-   * Returns detected regions from AI, or falls back to local region data.
-   */
-  const analyzeDrawing = useCallback(async (): Promise<AnalysisResponse['regions'] | null> => {
-    setIsAnalyzing(true)
-    setStatus('analyzing')
-
-    try {
-      const imageData = exportToPng()
-      
-      if (!imageData) {
-        // No canvas data — use local regions directly
-        console.log('[useAI] No canvas image, using local regions')
-        setStatus('regions_ready')
-        return null
-      }
-
-      const response = await fetch('/api/analyze-drawing', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ imageData }),
-      })
-
-      const result = await response.json()
-
-      if (!result.success) {
-        // AI analysis failed — fall back to local regions
-        console.warn('[useAI] Vision analysis failed, using local regions:', result.error)
-        setStatus('regions_ready')
-        return null
-      }
-
-      setStatus('regions_ready')
-      return result.data?.regions || null
-    } catch (error) {
-      console.error('[useAI] Analysis error:', error)
-      // Don't show error to user — just use local regions
-      setStatus('regions_ready')
-      return null
-    } finally {
-      setIsAnalyzing(false)
-    }
-  }, [exportToPng, setStatus])
-
-  /**
-   * Generates HTML/CSS from regions and user prompt.
+   * Generates React TSX from regions and user prompt.
    */
   const generateCode = useCallback(async (): Promise<boolean> => {
     if (!prompt.trim()) {
@@ -80,13 +38,14 @@ export function useAI() {
     setStatus('generating')
 
     try {
-      const imageData = exportToPng() // Capture canvas drawing
+      // Only capture/send the canvas image when something was drawn
+      const imageData = regions.length > 0 ? exportToPng() : null
       const response = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           regions,
-          imageData, // Send to backend for pre-generation intent classification
+          imageData, // Drawing image — visual reference for decorative strokes
           prompt: prompt.trim(),
           globalTheme: globalTheme.trim() || undefined,
           provider: aiProvider,
@@ -111,7 +70,7 @@ export function useAI() {
     } finally {
       setIsGenerating(false)
     }
-  }, [regions, prompt, globalTheme, aiProvider, nvidiaModelId, setStatus, setError, setPreviewCode])
+  }, [regions, prompt, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode])
 
   /**
    * Regenerates a single region while keeping others intact.
@@ -162,9 +121,7 @@ export function useAI() {
   }, [regions, aiProvider, nvidiaModelId, setStatus, setError, setPreviewCode])
 
   return {
-    isAnalyzing,
     isGenerating,
-    analyzeDrawing,
     generateCode,
     regenerateRegion,
   }

@@ -1,7 +1,6 @@
 import { NextResponse } from 'next/server'
 import { regenerateRegion } from '@/lib/ai/provider'
-import { sanitizeHtml } from '@/lib/utils/sanitize'
-import { checkAndIncrementUsage } from '@/lib/middleware/rate-limit'
+import { checkRateLimit, incrementUsage, getUsageStats } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
 import type { Region } from '@/types'
 
@@ -20,8 +19,8 @@ export async function POST(request: Request) {
 
     const userId = user.id
 
-    // --- Rate limiting: atomic check + increment ---
-    const rateLimit = await checkAndIncrementUsage(userId)
+    // --- Rate limiting: check first, increment only on success ---
+    const rateLimit = await checkRateLimit(userId)
     if (!rateLimit.allowed) {
       return NextResponse.json(
         {
@@ -100,18 +99,22 @@ export async function POST(request: Request) {
       )
     }
 
-    const sanitizedCode = sanitizeHtml(result.code)
+    // --- Regeneration succeeded: now consume the quota slot ---
+    await incrementUsage(userId)
+    const usage = await getUsageStats(userId)
 
+    // NOTE: no sanitizeHtml() — see generate/route.ts. It corrupts JSX and the
+    // preview iframe (sandboxed, allow-scripts only) is the security boundary.
     return NextResponse.json({
       success: true,
       data: {
-        code: sanitizedCode,
+        code: result.code,
         provider: result.provider,
         usage: {
-          remaining: rateLimit.remaining,
-          used: rateLimit.used,
-          limit: rateLimit.limit,
-          resetAt: rateLimit.resetAt,
+          remaining: usage.remaining,
+          used: usage.used,
+          limit: usage.limit,
+          resetAt: usage.resetAt,
         },
       },
     })

@@ -55,13 +55,56 @@ export const PRESETS: Record<string, DesignTokenSet> = {
 }
 
 /**
- * Resolves concrete design tokens based on the user's prompt using a fast LLM call.
- * This correctly weights explicit stylistic requests over incidental layout keywords.
- * If classification fails or no strong stylistic intent is found, it randomly falls back.
+ * Deterministic keyword pre-pass. If the prompt contains strong, unambiguous
+ * stylistic cues, resolve the preset WITHOUT spending a model call.
+ * Returns null when the signal is weak or conflicting — the LLM decides then.
+ */
+function resolveByKeywords(prompt: string): DesignTokenSet | null {
+  const p = prompt.toLowerCase()
+
+  const scores: Record<string, number> = { neosleek: 0, playful_pop: 0, elegant_serif: 0, glassmorphism: 0 }
+
+  const cues: Record<string, string[]> = {
+    neosleek: ['brutalist', 'brutalism', 'stark', 'sharp corners', 'high contrast', 'bold and raw', 'neo-brutal'],
+    playful_pop: ['playful', 'fun ', 'bubbly', 'bouncy', 'pastel', 'colorful', 'cartoon', 'kid', 'cheerful'],
+    elegant_serif: ['elegant', 'editorial', 'serif', 'magazine', 'luxurious', 'luxury', 'premium', 'sophisticated', 'classic', 'refined'],
+    glassmorphism: ['glassmorphism', 'glass', 'futuristic', 'gradient', 'glow', 'neon', 'translucent', 'blur', 'modern saas', 'tech'],
+  }
+
+  for (const [preset, words] of Object.entries(cues)) {
+    for (const w of words) {
+      if (p.includes(w)) scores[preset]++
+    }
+  }
+
+  const sorted = Object.entries(scores).sort((a, b) => b[1] - a[1])
+  const [bestKey, bestScore] = sorted[0]
+  const runnerUpScore = sorted[1][1]
+
+  // Only trust the keyword pass when there is a clear, unopposed signal
+  if (bestScore >= 1 && bestScore > runnerUpScore) {
+    return PRESETS[bestKey]
+  }
+  return null
+}
+
+/**
+ * Resolves concrete design tokens based on the user's prompt.
+ * Fast path: deterministic keyword matching (no model call).
+ * Slow path: a small LLM classification call when keywords are ambiguous.
+ * Fallback: random preset rotation so output never defaults to generic.
  */
 export async function resolveDesignTokens(prompt: string): Promise<DesignTokenSet> {
   const keys = Object.keys(PRESETS)
-  
+
+  // 1. Deterministic keyword resolution — free and instant
+  const byKeyword = resolveByKeywords(prompt)
+  if (byKeyword) {
+    console.log(`[AI Classify] Design tokens resolved by keywords: ${byKeyword.id}`)
+    return byKeyword
+  }
+
+  // 2. Ambiguous prompt — ask a cheap model call
   try {
     const model = getProModel()
     const systemPrompt = `You are a design intent classifier.
@@ -82,10 +125,13 @@ RULES:
     const result = await model.generateContent([
       { text: systemPrompt },
       { text: `User Prompt: "${prompt}"` }
-    ])
-    
+    ], {
+      // Cheap classification; if it stalls, fall through to the random preset.
+      signal: AbortSignal.timeout(20000),
+    })
+
     const responseText = result.response.text().trim().toLowerCase()
-    
+
     if (keys.includes(responseText)) {
       return PRESETS[responseText]
     }
@@ -93,7 +139,7 @@ RULES:
     console.warn('[AI Classify] Token resolution failed. Falling back to random preset.', err)
   }
 
-  // Fallback: Pick randomly across the 4 presets
+  // 3. Fallback: Pick randomly across the 4 presets
   // This ensures variety and guarantees NO generic default
   const randomKey = keys[Math.floor(Math.random() * keys.length)]
   return PRESETS[randomKey]

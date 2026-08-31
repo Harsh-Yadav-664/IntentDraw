@@ -1,5 +1,9 @@
+// NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
+// legitimately contain them, and the preview iframe is sandboxed
+// (allow-scripts only, no allow-same-origin), so submissions cannot reach
+// anywhere. Embedding tags are still removed as defense in depth.
 const DANGEROUS_TAGS = [
-  'iframe', 'object', 'embed', 'form', 'input',
+  'iframe', 'object', 'embed',
 ]
 
 const DANGEROUS_ATTRIBUTES = [
@@ -38,8 +42,14 @@ export function sanitizeHtml(html: string): string {
 
 /**
  * Wraps React TSX code for preview rendering using Babel standalone.
+ *
+ * When `options.captureSnapshot` is set, the iframe screenshots itself once
+ * (via html2canvas) after it finishes rendering and posts the PNG data URL to
+ * the parent as `{ type: 'IFRAME_SNAPSHOT', dataUrl }`. The parent uses that
+ * frozen bitmap as the Design-canvas backdrop instead of keeping a live,
+ * continuously-compiling iframe behind the drawing surface.
  */
-export function wrapReactForPreview(tsxCode: string): string {
+export function wrapReactForPreview(tsxCode: string, options?: { captureSnapshot?: boolean }): string {
   // Remove markdown formatting if somehow it slipped through
   let code = tsxCode;
   if (code.startsWith('```')) {
@@ -75,6 +85,32 @@ export function wrapReactForPreview(tsxCode: string): string {
       observeBody();
     }
   `;
+
+  // Optional one-time self-screenshot. Runs only when captureSnapshot is set
+  // (the Design-canvas backdrop). Output-mode / download previews skip it, so
+  // they don't pay for html2canvas. Guarded + retried in case the CDN script
+  // hasn't loaded yet; failures are swallowed (parent just keeps the live frame).
+  const captureScriptTag = options?.captureSnapshot
+    ? '<script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>'
+    : '';
+  const snapshotScript = options?.captureSnapshot
+    ? `
+    function __captureSnapshot() {
+      if (window.__snapshotDone) return;
+      if (typeof html2canvas === 'undefined') { setTimeout(__captureSnapshot, 300); return; }
+      window.__snapshotDone = true;
+      try {
+        html2canvas(document.body, { backgroundColor: '#ffffff', scale: 1, logging: false, useCORS: true })
+          .then(function(canvas){
+            try { window.parent.postMessage({ type: 'IFRAME_SNAPSHOT', dataUrl: canvas.toDataURL('image/png') }, '*'); } catch (e) {}
+          })
+          .catch(function(){});
+      } catch (e) {}
+    }
+    // Wait a beat after load so Tailwind's JIT styles and lucide icons settle.
+    window.addEventListener('load', function(){ setTimeout(__captureSnapshot, 900); });
+  `
+    : '';
 
   // We rewrite lucide-react imports to use the global window.lucide
   const babelScript = `
@@ -140,8 +176,21 @@ export function wrapReactForPreview(tsxCode: string): string {
       };
     });
 
+    // React UMD only exposes the \`React\` and \`ReactDOM\` globals. Our transform
+    // strips the \`import { useState, ... } from 'react'\` line, so bare hook
+    // references in the generated code (useState, useEffect, useRef, ...) would
+    // be undefined at runtime ("useState is not defined"). Re-expose every React
+    // export as a window global so those bare references resolve during eval.
+    [
+      'useState','useEffect','useRef','useMemo','useCallback','useReducer',
+      'useContext','useLayoutEffect','useImperativeHandle','useId','useTransition',
+      'useDeferredValue','useSyncExternalStore','useInsertionEffect','useDebugValue',
+      'forwardRef','memo','createContext','Fragment','Suspense','StrictMode',
+      'cloneElement','createElement','isValidElement','Children','lazy','startTransition'
+    ].forEach(function(k){ if (React && React[k] !== undefined) window[k] = React[k]; });
+
     try {
-      let compiled = Babel.transform(originalCode, { 
+      let compiled = Babel.transform(originalCode, {
         presets: [['react', { runtime: 'classic' }], 'typescript'],
         plugins: ['intentdraw-transform']
       }).code;
@@ -196,12 +245,13 @@ if (typeof window.__RenderComponent !== "undefined") {
   
   <!-- Use Lucide UMD -->
   <script src="https://unpkg.com/lucide@latest"></script>
-  
+  ${captureScriptTag}
+
   <style>
     body { margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     #root { min-height: 100vh; }
   </style>
-  <script>${systemScript}</script>
+  <script>${systemScript}${snapshotScript}</script>
 </head>
 <body>
   <div id="root"></div>
@@ -210,13 +260,13 @@ if (typeof window.__RenderComponent !== "undefined") {
     window.lucide = new Proxy({}, {
       get: function(target, prop) {
         return function(props) {
-          // A tiny React component that renders the lucide SVG
-          const iconNode = window.lucideIcons ? window.lucideIcons[prop] : null;
-          return React.createElement('i', { 
-            'data-lucide': prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase()).replace(/^-/, ''),
+          // A tiny React component that renders the lucide SVG via data-lucide
+          props = props || {};
+          return React.createElement('i', {
+            'data-lucide': String(prop).replace(/[A-Z]/g, m => '-' + m.toLowerCase()).replace(/^-/, ''),
             className: props.className,
-            style: { width: props.size || 24, height: props.size || 24, color: props.color || 'currentColor' },
-            ref: (node) => { if (node) lucide.createIcons({ root: node.parentNode }) }
+            style: { width: props.size || 24, height: props.size || 24, color: props.color || 'currentColor', display: 'inline-block' },
+            ref: (node) => { if (node && window.lucideIcons && lucide.createIcons) lucide.createIcons({ root: node.parentNode }) }
           });
         };
       }

@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server'
 import { generateCode } from '@/lib/ai/provider'
-import { sanitizeHtml } from '@/lib/utils/sanitize'
-import { checkAndIncrementUsage } from '@/lib/middleware/rate-limit'
+import { checkRateLimit, incrementUsage, getUsageStats } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
-import { classifyDrawingIntent } from '@/lib/ai/intent-classifier'
 import type { Region } from '@/types'
 
 export async function POST(request: Request) {
@@ -21,9 +19,9 @@ export async function POST(request: Request) {
 
     const userId = user.id
 
-    // --- Rate limiting: atomic check + increment ---
-    // Uses checkAndIncrementUsage so we reserve the slot before calling AI
-    const rateLimit = await checkAndIncrementUsage(userId)
+    // --- Rate limiting: check first, increment only after a successful
+    // generation so failed attempts don't burn the user's daily quota ---
+    const rateLimit = await checkRateLimit(userId)
     if (!rateLimit.allowed) {
       return NextResponse.json(
         {
@@ -64,34 +62,38 @@ export async function POST(request: Request) {
     let validRegions = Array.isArray(regions) ? regions : []
     let finalPrompt = prompt.trim()
 
-      // Phase 10: Intent Classification per Region
-      console.log(`[Generate] Running region intent classification for user=${userId}`)
-      
+    // --- Intent classification (only when there is a drawing to classify) ---
+    // Text-only generation skips this entirely: no extra model call.
+    if (validRegions.length > 0) {
+      console.log(`[Generate] Running region intent classification for user=${userId} (${validRegions.length} regions)`)
+
       const { classifyRegionIntents } = await import('@/lib/ai/intent-classifier')
-      const regionTags = await classifyRegionIntents(validRegions, finalPrompt)
-      
+      const { tags, backgroundScopes } = await classifyRegionIntents(validRegions, finalPrompt, imageData)
+
       validRegions = validRegions.map(r => ({
         ...r,
-        classificationTag: regionTags[r.id] || 'exact-placement'
+        classificationTag: tags[r.id] || 'exact-placement',
+        backgroundScope: backgroundScopes[r.id] ?? undefined,
       }))
-      
+
       const tagsCounts = validRegions.reduce((acc, r) => {
         acc[r.classificationTag!] = (acc[r.classificationTag!] || 0) + 1
         return acc
       }, {} as Record<string, number>)
-      
+
       console.log(`[Generate] Region tags:`, tagsCounts)
-      
-      // If ALL regions are decorative, it's a pure style reference
+
+      // If ALL regions are decorative, the drawing is a pure style reference
       if (validRegions.every(r => r.classificationTag === 'decorative')) {
-         console.log(`[Generate] Entire drawing classified as style reference.`)
-         finalPrompt += `\n\n(Note: The user provided a drawing as a style/pattern/background reference. Do not treat the strokes as literal layout boundaries, but rather as aesthetic inspiration.)`
+        console.log(`[Generate] Entire drawing classified as style reference.`)
+        finalPrompt += `\n\n(Note: The user provided a drawing as a style/pattern/background reference. Do not treat the strokes as literal layout boundaries — use them as aesthetic inspiration, respecting each element's described scope.)`
       }
+    }
 
     console.log(`[Generate] user=${userId} | ${validRegions.length} regions | prompt: "${finalPrompt.substring(0, 100)}..."`)
 
     // --- Call AI ---
-    const result = await generateCode(validRegions, finalPrompt, globalTheme, provider, nvidiaModelId)
+    const result = await generateCode(validRegions, finalPrompt, globalTheme, provider, nvidiaModelId, imageData)
 
     if (!result.success || !result.code) {
       return NextResponse.json(
@@ -100,19 +102,26 @@ export async function POST(request: Request) {
       )
     }
 
-    const sanitizedCode = sanitizeHtml(result.code)
+    // --- Generation succeeded: now consume the quota slot ---
+    await incrementUsage(userId)
+    const usage = await getUsageStats(userId)
 
+    // NOTE: we intentionally do NOT run sanitizeHtml() over the generated code.
+    // The output is React/TSX source, and the HTML attribute stripper corrupts
+    // valid JSX event handlers (e.g. `onClick={() => ...}` → syntax error).
+    // The preview always renders inside a sandboxed iframe (allow-scripts only,
+    // no allow-same-origin), which is the real security boundary.
     return NextResponse.json({
       success: true,
       data: {
-        code: sanitizedCode,
+        code: result.code,
         provider: result.provider,
         // Return usage info so UI can show remaining count
         usage: {
-          remaining: rateLimit.remaining,
-          used: rateLimit.used,
-          limit: rateLimit.limit,
-          resetAt: rateLimit.resetAt,
+          remaining: usage.remaining,
+          used: usage.used,
+          limit: usage.limit,
+          resetAt: usage.resetAt,
         },
       },
     })

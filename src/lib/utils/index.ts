@@ -24,6 +24,31 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
+/**
+ * Races a promise against a timeout. If `promise` doesn't settle within `ms`,
+ * this rejects with a timeout error so callers can fail over / fail open fast
+ * instead of hanging on a dead/slow upstream (a provider API or a paused DB).
+ *
+ * Note: this does NOT cancel the underlying work — pair it with an
+ * AbortSignal at the fetch layer where possible for true cancellation.
+ * Promise.race keeps a handler attached to `promise`, so a late rejection
+ * after the timeout won't surface as an unhandled rejection.
+ */
+export function withTimeout<T>(
+  promise: PromiseLike<T>,
+  ms: number,
+  label = 'operation'
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(
+      () => reject(new Error(`${label} timed out after ${ms}ms`)),
+      ms
+    )
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 export function formatDate(date: string | Date): string {
   const d = typeof date === 'string' ? new Date(date) : date
   return d.toLocaleDateString('en-US', {

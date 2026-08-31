@@ -10,6 +10,7 @@
 // =============================================================================
 
 import { createAdminClient } from '@/lib/supabase/server'
+import { withTimeout } from '@/lib/utils'
 
 // =============================================================================
 // Configuration
@@ -20,6 +21,11 @@ const MAX_GENERATIONS = parseInt(
   process.env.RATE_LIMIT_MAX_GENERATIONS || String(DEFAULT_MAX_GENERATIONS),
   10
 )
+
+// Fail-fast cap on every DB round-trip. If Supabase is paused/unreachable, these
+// calls must give up in seconds and fail open — never stall the generation
+// request for minutes on a dead connection.
+const DB_TIMEOUT_MS = 4000
 
 // =============================================================================
 // Types
@@ -92,12 +98,16 @@ export async function checkRateLimit(userId: string): Promise<RateLimitResult> {
     const supabase = createAdminClient()
     const today = getTodayUTC()
 
-    const { data: usage, error } = await supabase
-      .from('usage')
-      .select('generation_count')
-      .eq('user_id', userId)
-      .eq('date', today)
-      .single()
+    const { data: usage, error } = await withTimeout(
+      supabase
+        .from('usage')
+        .select('generation_count')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .single(),
+      DB_TIMEOUT_MS,
+      'usage read'
+    )
 
     if (error && error.code !== 'PGRST116') {
       console.error('[RateLimit] Database error:', error)
@@ -154,10 +164,14 @@ export async function incrementUsage(userId: string): Promise<UsageStats | null>
     const supabase = createAdminClient()
     const today = getTodayUTC()
 
-    const { data, error } = await supabase.rpc('increment_usage', {
-      p_user_id: userId,
-      p_max_generations: MAX_GENERATIONS,
-    })
+    const { data, error } = await withTimeout(
+      supabase.rpc('increment_usage', {
+        p_user_id: userId,
+        p_max_generations: MAX_GENERATIONS,
+      }),
+      DB_TIMEOUT_MS,
+      'usage increment (rpc)'
+    )
 
     if (error) {
       console.error('[RateLimit] RPC error, falling back to manual upsert:', error)
@@ -190,22 +204,30 @@ async function manualIncrementUsage(userId: string, today: string): Promise<Usag
   try {
     const supabase = createAdminClient()
 
-    const { data: existing } = await supabase
-      .from('usage')
-      .select('id, generation_count')
-      .eq('user_id', userId)
-      .eq('date', today)
-      .single()
+    const { data: existing } = await withTimeout(
+      supabase
+        .from('usage')
+        .select('id, generation_count')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .single(),
+      DB_TIMEOUT_MS,
+      'usage read (manual)'
+    )
 
     if (existing) {
       const newCount = existing.generation_count + 1
-      const { error: updateError } = await supabase
-        .from('usage')
-        .update({
-          generation_count: newCount,
-          updated_at: new Date().toISOString(),
-        })
-        .eq('id', existing.id)
+      const { error: updateError } = await withTimeout(
+        supabase
+          .from('usage')
+          .update({
+            generation_count: newCount,
+            updated_at: new Date().toISOString(),
+          })
+          .eq('id', existing.id),
+        DB_TIMEOUT_MS,
+        'usage update (manual)'
+      )
 
       if (updateError) {
         console.error('[RateLimit] Update error:', updateError)
@@ -219,13 +241,17 @@ async function manualIncrementUsage(userId: string, today: string): Promise<Usag
         resetAt: getResetTime(),
       }
     } else {
-      const { error: insertError } = await supabase
-        .from('usage')
-        .insert({
-          user_id: userId,
-          date: today,
-          generation_count: 1,
-        })
+      const { error: insertError } = await withTimeout(
+        supabase
+          .from('usage')
+          .insert({
+            user_id: userId,
+            date: today,
+            generation_count: 1,
+          }),
+        DB_TIMEOUT_MS,
+        'usage insert (manual)'
+      )
 
       if (insertError) {
         if (insertError.code === '23505') {
@@ -275,12 +301,16 @@ export async function getUsageStats(userId: string): Promise<UsageStats> {
     const supabase = createAdminClient()
     const today = getTodayUTC()
 
-    const { data: usage, error } = await supabase
-      .from('usage')
-      .select('generation_count')
-      .eq('user_id', userId)
-      .eq('date', today)
-      .single()
+    const { data: usage, error } = await withTimeout(
+      supabase
+        .from('usage')
+        .select('generation_count')
+        .eq('user_id', userId)
+        .eq('date', today)
+        .single(),
+      DB_TIMEOUT_MS,
+      'usage read'
+    )
 
     if (error && error.code !== 'PGRST116') {
       console.error('[RateLimit] Error fetching usage stats:', error)
@@ -297,64 +327,5 @@ export async function getUsageStats(userId: string): Promise<UsageStats> {
   } catch (error) {
     console.error('[RateLimit] Unexpected error in getUsageStats:', error)
     return defaultStats
-  }
-}
-
-// =============================================================================
-// Check and Increment (Atomic Operation)
-// =============================================================================
-
-/**
- * Atomically checks rate limit AND increments usage in one operation.
- * Use this when you want to reserve a generation slot.
- *
- * @param userId - The authenticated user's ID
- * @returns Result with allowed status - if allowed, usage is already incremented
- */
-export async function checkAndIncrementUsage(userId: string): Promise<RateLimitResult> {
-  if (!userId || userId === 'anonymous') {
-    return {
-      allowed: true,
-      remaining: MAX_GENERATIONS,
-      used: 0,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
-  }
-
-  try {
-    const supabase = createAdminClient()
-
-    const { data, error } = await supabase.rpc('increment_usage', {
-      p_user_id: userId,
-      p_max_generations: MAX_GENERATIONS,
-    })
-
-    if (error) {
-      console.error('[RateLimit] RPC error in checkAndIncrement:', error)
-      return await checkRateLimit(userId)
-    }
-
-    const result = data?.[0]
-    if (!result) {
-      return await checkRateLimit(userId)
-    }
-
-    return {
-      allowed: result.success,
-      remaining: result.remaining,
-      used: result.current_count,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
-  } catch (error) {
-    console.error('[RateLimit] Unexpected error in checkAndIncrement:', error)
-    return {
-      allowed: true,
-      remaining: MAX_GENERATIONS,
-      used: 0,
-      limit: MAX_GENERATIONS,
-      resetAt: getResetTime(),
-    }
   }
 }

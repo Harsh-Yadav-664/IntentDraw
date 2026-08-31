@@ -1,148 +1,153 @@
 import { getVisionModel } from './gemini'
 import { extractJson } from '@/lib/utils'
+import type { Region } from '@/types'
 
-const INTENT_CLASSIFICATION_SYSTEM_PROMPT = `You are a design intent classifier.
-You will be provided with an image of a user's rough wireframe drawing, along with their text prompt.
-Your job is to determine how the drawing should be interpreted.
+export type RegionIntentTag = 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'
+export type BackgroundScope = 'region' | 'full' | null
 
-There are two possibilities:
-1. LITERAL PLACEMENT: The user drew distinct boxes or shapes to represent where specific content sections (like a header, sidebar, cards, or hero section) should be placed.
-2. STYLE/PATTERN REFERENCE: The user drew freeform squiggly lines, abstract shapes, or decorative strokes intended as a stylistic input (e.g., "I want a wavy animated background" or "use this as a pattern reference"), and NOT as distinct structural HTML layout blocks. IMPORTANT: Even if the user mentions the word "region" in their prompt (e.g., "region 1 to 7 are a reference for the background"), if the context implies it's for styling/background/aesthetics rather than literal layout boxes, you MUST classify it as a style reference.
-
-Analyze the image and the prompt. Respond ONLY with a valid JSON object matching this schema:
-{
-  "isStyleReference": boolean,
-  "reasoning": "string explaining your decision"
+export interface RegionIntentResult {
+  tags: Record<string, RegionIntentTag>
+  backgroundScopes: Record<string, BackgroundScope>
 }
-`
 
-export async function classifyDrawingIntent(
-  imageBase64: string,
-  userPrompt: string
-): Promise<{ isStyleReference: boolean }> {
+const VALID_TAGS: RegionIntentTag[] = ['exact-placement', 'approximate-area', 'decorative', 'relational']
+
+/**
+ * Classifies the intent of each drawn region using the drawing image,
+ * full spatial data (position + size + canvas dimensions) and the user prompt.
+ *
+ * Returns per-region tags AND a background scope:
+ *   - "region": the decorative element stays confined to where it was drawn
+ *     (or behind the structural region it overlaps)
+ *   - "full":   only when the shape spans ~the whole canvas or the prompt
+ *     explicitly asks for a full-page background
+ */
+export async function classifyRegionIntents(
+  regions: Region[],
+  userPrompt: string,
+  imageBase64?: string
+): Promise<RegionIntentResult> {
+  const fallbackTags: Record<string, RegionIntentTag> = {}
+  regions.forEach(r => { fallbackTags[r.id] = 'exact-placement' })
+  const fallback: RegionIntentResult = { tags: fallbackTags, backgroundScopes: {} }
+
+  if (regions.length === 0) return fallback
+
   try {
     const model = getVisionModel()
-    const base64Data = imageBase64.replace(/^data:image\/\w+;base64,/, '')
-    
-    const promptMessage = `User's prompt: "${userPrompt}"\n\nAnalyze the attached drawing and respond with JSON.`
 
-    const result = await model.generateContent([
-      { text: INTENT_CLASSIFICATION_SYSTEM_PROMPT },
+    // Canvas bounds derived from the regions themselves
+    const allX = regions.flatMap(r => [r.geometry.x, r.geometry.x + r.geometry.width])
+    const allY = regions.flatMap(r => [r.geometry.y, r.geometry.y + r.geometry.height])
+    const canvasWidth = Math.max(...allX, 1)
+    const canvasHeight = Math.max(...allY, 1)
+
+    const simplifiedRegions = regions.map(r => ({
+      id: r.id,
+      regionNumber: r.regionNumber,
+      shapeType: r.geometry.type,
+      x: Math.round(r.geometry.x),
+      y: Math.round(r.geometry.y),
+      width: Math.round(r.geometry.width),
+      height: Math.round(r.geometry.height),
+      // Per-region intent label written by the user in the UI, if any
+      userIntent: r.intent?.trim() || null,
+    }))
+
+    const systemPrompt = `You are a design intent classifier for shapes in a wireframe drawing.
+You receive: the user's text prompt, a JSON list of drawn regions with EXACT positions (x, y, width, height in canvas pixels, origin top-left), the canvas size, and (when available) an image of the drawing itself.
+
+Tag EACH region with exactly one of:
+- "exact-placement": a literal structural box (header, card, column, section) that should dictate exact grid layout.
+- "approximate-area": a general area for content; exact grid alignment can be fluid.
+- "decorative": a stylistic element (wave, blob, scribble, background wash) that must NOT become a structural DOM grid cell.
+- "relational": indicates a relationship (arrow connecting things, connecting line).
+
+For regions tagged "decorative", ALSO decide a backgroundScope:
+- "region": the element stays confined to where it was drawn. If it overlaps a structural region, it belongs behind that region only.
+- "full": the element is a background for the ENTIRE page.
+
+RULES:
+1. Arrows are almost always "relational" (unless the prompt describes one as an icon to render).
+2. Freeform shapes (squiggles, waves, scribbles) are almost always "decorative" — UNLESS the prompt says one encloses/represents content (e.g. "region 3 is the pricing table" and region 3 is that shape).
+3. A rectangle/circle is "decorative" ONLY when the prompt clearly says it is background/decoration/pattern, or it spans ~the entire canvas with no content assigned to it.
+4. The user's PROMPT WINS over shape heuristics: if the prompt assigns content to a region (by number or obvious position), that region is structural ("exact-placement" or "approximate-area") even if it is freeform.
+5. backgroundScope is "full" ONLY when the shape covers ~90%+ of the canvas, OR the prompt explicitly says full page/site/overall background. Otherwise it is "region" — a background drawn in one area stays in that area.
+6. A decorative shape overlapping a structural region is that region's local background, not a page background.
+7. If a region's userIntent field is set, weight it heavily — it is the user's own description of that shape.
+
+Respond ONLY with valid JSON, no markdown fences:
+{
+  "tags": { "<region id>": "exact-placement" | "approximate-area" | "decorative" | "relational" },
+  "backgroundScopes": { "<region id>": "region" | "full" }
+}
+Include backgroundScopes ONLY for regions tagged "decorative".`
+
+    const promptMessage = `User's prompt: "${userPrompt}"
+
+Canvas size: ${Math.round(canvasWidth)} x ${Math.round(canvasHeight)} px
+
+Regions (positions in canvas pixels):
+${JSON.stringify(simplifiedRegions, null, 2)}
+
+Analyze the attached drawing image together with the positions above, then respond with JSON.`
+
+    const contentParts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [
+      { text: systemPrompt },
       { text: promptMessage },
-      {
+    ]
+    if (imageBase64) {
+      contentParts.push({
         inlineData: {
           mimeType: 'image/png',
-          data: base64Data,
+          data: imageBase64.replace(/^data:image\/\w+;base64,/, ''),
         },
-      },
-    ])
+      })
+    }
 
+    const result = await model.generateContent(contentParts, {
+      // Fail fast: this is a cheap pre-pass; if it stalls we fall back to
+      // 'exact-placement' for every region rather than hanging generation.
+      signal: AbortSignal.timeout(45000),
+    })
     const responseText = result.response.text()
-    const jsonStr = extractJson(responseText)
-    const data = JSON.parse(jsonStr)
+    const data = JSON.parse(extractJson(responseText))
 
-    // Log the request and response for debugging
-    try {
-      const fs = require('fs')
-      const path = require('path')
-      const debugDir = path.join(process.cwd(), '.system_generated')
-      if (!fs.existsSync(debugDir)) {
-        fs.mkdirSync(debugDir, { recursive: true })
+    // Validate + normalize into the known id space
+    const tags: Record<string, RegionIntentTag> = {}
+    const backgroundScopes: Record<string, BackgroundScope> = {}
+    for (const r of regions) {
+      const rawTag = data?.tags?.[r.id]
+      tags[r.id] = VALID_TAGS.includes(rawTag) ? rawTag : 'exact-placement'
+      if (tags[r.id] === 'decorative') {
+        backgroundScopes[r.id] = data?.backgroundScopes?.[r.id] === 'full' ? 'full' : 'region'
       }
+    }
+
+    // Debug log (local only)
+    try {
+      const fs = await import('fs')
+      const path = await import('path')
+      const debugDir = path.join(process.cwd(), '.system_generated')
+      if (!fs.existsSync(debugDir)) fs.mkdirSync(debugDir, { recursive: true })
       fs.writeFileSync(
-        path.join(debugDir, 'intent-debug.json'),
+        path.join(debugDir, 'region-intent-debug.json'),
         JSON.stringify({
           timestamp: new Date().toISOString(),
           userPrompt,
-          rawResponse: responseText,
-          parsedData: data,
-          imageBase64: `data:image/png;base64,${base64Data}`
+          canvas: { width: Math.round(canvasWidth), height: Math.round(canvasHeight) },
+          simplifiedRegions,
+          parsedTags: tags,
+          backgroundScopes,
         }, null, 2)
       )
     } catch (logErr) {
       console.error('[Intent Classifier] Failed to write debug log:', logErr)
     }
 
-    return {
-      isStyleReference: Boolean(data.isStyleReference)
-    }
-  } catch (error) {
-    console.error('[Intent Classifier] Error classifying drawing intent:', error)
-    // Safe fallback: assume it's NOT a style reference, so it behaves as it did originally.
-  }
-}
-
-const REGION_INTENT_SYSTEM_PROMPT = `You are a design intent classifier for individual shapes in a wireframe drawing.
-You will be provided with a JSON array of regions (shapes drawn by the user) and the user's text prompt.
-Your job is to tag EACH region with one of the following exact strings:
-- "exact-placement": The shape is a literal structural box (like a column, header, card) that should dictate the exact grid layout.
-- "approximate-area": The shape indicates a general area for content, but the exact grid/flex alignment can be fluid.
-- "decorative": The shape is a stylistic element (e.g., a background wave, a decorative blob, a full-bleed background rectangle) that should NOT be forced into the structural DOM grid.
-- "relational": The shape indicates a relationship (e.g., an arrow pointing from one thing to another, or a connecting line).
-
-RULES:
-1. "arrow" shapes are almost ALWAYS "relational", unless explicitly described as an icon.
-2. "freeform" shapes (squiggles, waves) are almost ALWAYS "decorative", unless they clearly enclose content.
-3. If a "rectangle" spans the entire canvas and serves as a background, it is "decorative".
-4. Standard rectangles/circles for UI elements are "exact-placement" or "approximate-area".
-5. Respond ONLY with a valid JSON object mapping region IDs to their tag. Example: {"r1": "exact-placement", "r2": "decorative"}
-`
-
-export async function classifyRegionIntents(
-  regions: any[],
-  userPrompt: string
-): Promise<Record<string, 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'>> {
-  try {
-    const { getProModel } = await import('./gemini')
-    const model = getProModel()
-    
-    // Normalize regions to only include what the LLM needs
-    const simplifiedRegions = regions.map(r => ({
-      id: r.id,
-      regionNumber: r.regionNumber,
-      shapeType: r.geometry.type,
-      width: r.geometry.width,
-      height: r.geometry.height
-    }))
-
-    const promptMessage = `User's prompt: "${userPrompt}"\n\nRegions:\n${JSON.stringify(simplifiedRegions, null, 2)}\n\nRespond with JSON.`
-
-    const result = await model.generateContent([
-      { text: REGION_INTENT_SYSTEM_PROMPT },
-      { text: promptMessage }
-    ])
-
-    const responseText = result.response.text()
-    const jsonStr = extractJson(responseText)
-    const data = JSON.parse(jsonStr)
-
-    // Log the detailed region intent classification
-    try {
-      const fs = await import('fs')
-      const path = await import('path')
-      const debugDir = path.join(process.cwd(), '.system_generated')
-      if (!fs.existsSync(debugDir)) {
-        fs.mkdirSync(debugDir, { recursive: true })
-      }
-      fs.writeFileSync(
-        path.join(debugDir, 'region-intent-debug.json'),
-        JSON.stringify({
-          timestamp: new Date().toISOString(),
-          userPrompt,
-          simplifiedRegions,
-          parsedTags: data
-        }, null, 2)
-      )
-    } catch (logErr) {
-      console.error('[Intent Classifier] Failed to write detailed debug log:', logErr)
-    }
-
-    return data
+    return { tags, backgroundScopes }
   } catch (error) {
     console.error('[Intent Classifier] Error classifying region intents:', error)
-    // Fallback: treat all as exact-placement
-    const fallback: Record<string, any> = {}
-    regions.forEach(r => { fallback[r.id] = 'exact-placement' })
     return fallback
   }
 }
