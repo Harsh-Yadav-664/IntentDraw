@@ -33,6 +33,7 @@ export default function ControlsPanel() {
   const visibility = useCanvasStore((s) => s.visibility)
   const toggleVisibility = useCanvasStore((s) => s.toggleVisibility)
   const deleteRegions = useCanvasStore((s) => s.deleteRegions)
+  const updateRegionIntent = useCanvasStore((s) => s.updateRegionIntent)
 
   const prompt = useWorkflowStore((s) => s.prompt)
   const setPrompt = useWorkflowStore((s) => s.setPrompt)
@@ -64,9 +65,9 @@ export default function ControlsPanel() {
     }
   }, [aiProvider, availableModels.length, isLoadingModels])
 
-  const { isAnalyzing, isGenerating, generateCode } = useAI()
+  const { isGenerating, generateCode } = useAI()
 
-  const isLoading = isAnalyzing || isGenerating
+  const isLoading = isGenerating
   const canGenerate = prompt.trim().length > 0 && !isLoading
 
   const handleGenerate = async () => {
@@ -174,23 +175,35 @@ export default function ControlsPanel() {
           )}
         </div>
 
-        {/* Selected Region Info */}
-        {selectedRegionIds.length === 1 && (
-          <div 
-            className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
-          >
-            <p className="font-medium text-sm text-primary">
-              Region {regions.find(r => r.id === selectedRegionIds[0])?.regionNumber} selected
-            </p>
-            <p className="text-xs mt-1 text-muted-foreground">
-              {regions.find(r => r.id === selectedRegionIds[0])?.geometry.type} · {Math.round(regions.find(r => r.id === selectedRegionIds[0])?.geometry.width || 0)}×
-              {Math.round(regions.find(r => r.id === selectedRegionIds[0])?.geometry.height || 0)}px
-            </p>
-            <p className="text-xs mt-2 text-muted-foreground/70">
-              Tip: Reference as &quot;Region {regions.find(r => r.id === selectedRegionIds[0])?.regionNumber}&quot; in your prompt
-            </p>
-          </div>
-        )}
+        {/* Selected Region Info + Intent */}
+        {selectedRegionIds.length === 1 && (() => {
+          const selectedRegion = regions.find(r => r.id === selectedRegionIds[0])
+          if (!selectedRegion) return null
+          return (
+            <div
+              className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
+            >
+              <p className="font-medium text-sm text-primary">
+                Region {selectedRegion.regionNumber} selected
+              </p>
+              <p className="text-xs mt-1 text-muted-foreground">
+                {selectedRegion.geometry.type} · {Math.round(selectedRegion.geometry.width)}×
+                {Math.round(selectedRegion.geometry.height)}px
+              </p>
+              {/* Per-region intent: what this specific shape represents */}
+              <Textarea
+                value={selectedRegion.intent}
+                onChange={(e) => updateRegionIntent(selectedRegion.id, e.target.value)}
+                placeholder={`What is Region ${selectedRegion.regionNumber}? e.g. "hero section", "pricing table", "this is the background"`}
+                className="mt-2 min-h-[54px] resize-none text-xs bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+                disabled={isLoading}
+              />
+              <p className="text-xs mt-1.5 text-muted-foreground/70">
+                Tip: You can also reference &quot;Region {selectedRegion.regionNumber}&quot; in the main prompt below.
+              </p>
+            </div>
+          )
+        })()}
         {selectedRegionIds.length > 1 && (
           <div 
             className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
@@ -255,7 +268,7 @@ export default function ControlsPanel() {
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="gemini">Gemini Pro (Google)</SelectItem>
-              <SelectItem value="groq">Llama 3 (Groq)</SelectItem>
+              <SelectItem value="groq">Groq (GPT-OSS 120B)</SelectItem>
               <SelectItem value="nvidia">NIM Llama 3.1 (NVIDIA)</SelectItem>
             </SelectContent>
           </Select>
@@ -270,7 +283,7 @@ export default function ControlsPanel() {
               </SelectTrigger>
               <SelectContent className="max-h-60">
                 {availableModels.length === 0 ? (
-                  <SelectItem value="meta/llama-3.1-70b-instruct">meta/llama-3.1-70b-instruct</SelectItem>
+                  <SelectItem value="nvidia/nemotron-3.5-lightning-30b-a3b">nvidia/nemotron-3.5-lightning-30b-a3b</SelectItem>
                 ) : (
                   availableModels.map(model => (
                     <SelectItem key={model} value={model}>{model}</SelectItem>
@@ -297,11 +310,6 @@ export default function ControlsPanel() {
               <>
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                 Generating...
-              </>
-            ) : isAnalyzing ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Analyzing...
               </>
             ) : (
               <>

@@ -34,6 +34,10 @@ export interface WorkflowState {
   prompt: string
   globalTheme: string
   previewCode: string
+  // Frozen bitmap of the last generation, shown as the Design-canvas backdrop
+  // so we don't run a live compiling iframe behind the drawing surface.
+  // In-memory only — never persisted or sent to the save payload.
+  previewSnapshot: string | null
   aiProvider: 'gemini' | 'groq' | 'nvidia'
   nvidiaModelId: string
 
@@ -65,6 +69,7 @@ export interface WorkflowActions {
   setPrompt: (prompt: string) => void
   setGlobalTheme: (theme: string) => void
   setPreviewCode: (code: string) => void
+  setPreviewSnapshot: (snapshot: string | null) => void
   setAiProvider: (provider: 'gemini' | 'groq' | 'nvidia') => void
   setNvidiaModelId: (modelId: string) => void
 
@@ -89,8 +94,9 @@ const initialState: WorkflowState = {
   prompt: '',
   globalTheme: '',
   previewCode: '',
+  previewSnapshot: null,
   aiProvider: 'gemini',
-  nvidiaModelId: 'meta/llama-3.1-70b-instruct',
+  nvidiaModelId: 'nvidia/nemotron-3.5-lightning-30b-a3b',
   saveStatus: 'saved',
   lastSavedAt: null,
   _saveTimer: null,
@@ -144,6 +150,7 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
       projectName: project.name,
       prompt: project.prompt ?? '',
       previewCode: project.generated_code ?? '',
+      previewSnapshot: null,
       globalTheme: project.global_theme ?? '',
       saveStatus: 'saved',
       lastSavedAt: new Date(),
@@ -169,8 +176,12 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
   },
 
   setPreviewCode: (previewCode) => {
-    set({ previewCode, saveStatus: 'unsaved' })
+    // New code invalidates the cached backdrop snapshot — it gets recaptured
+    // the next time the Design canvas mounts the preview.
+    set({ previewCode, previewSnapshot: null, saveStatus: 'unsaved' })
   },
+
+  setPreviewSnapshot: (previewSnapshot) => set({ previewSnapshot }),
 
   setAiProvider: (aiProvider) => {
     set({ aiProvider })

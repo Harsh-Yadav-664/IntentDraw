@@ -7,11 +7,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import PreviewFrame from './preview-frame'
-import { 
-  Monitor, 
-  Tablet, 
-  Smartphone, 
-  Copy, 
+import { wrapReactForPreview } from '@/lib/utils/sanitize'
+import {
+  Monitor,
+  Tablet,
+  Smartphone,
+  Copy,
   Download,
   Code,
   Eye,
@@ -45,34 +46,10 @@ export default function PreviewPanel() {
   const handleDownload = () => {
   if (!previewCode) return
 
-  // The previewCode is now a complete HTML document
-  // Just ensure it's sanitized
-  const sanitized = previewCode.trim()
-  
-  // Check if it's already a complete document
-  const isComplete = sanitized.toLowerCase().startsWith('<!doctype') || 
-                     sanitized.toLowerCase().startsWith('<html')
-
-  let finalHtml: string
-
-  if (isComplete) {
-    // Already complete, just use as-is
-    finalHtml = sanitized
-  } else {
-    // Wrap fragment (fallback)
-    finalHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>IntentDraw Export</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body>
-${sanitized}
-</body>
-</html>`
-  }
+  // previewCode is React TSX — wrap it in the full preview document
+  // (React UMD + Babel Standalone + Tailwind) so the exported file
+  // actually renders in a browser.
+  const finalHtml = wrapReactForPreview(previewCode)
 
   const blob = new Blob([finalHtml], { type: 'text/html' })
   const url = URL.createObjectURL(blob)
@@ -89,19 +66,9 @@ ${sanitized}
 
   const handleOpenFullscreen = () => {
     if (!previewCode) return
-    
-    const fullHtml = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Preview - IntentDraw</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body>
-${previewCode}
-</body>
-</html>`
+
+    // Same wrapping as download — raw TSX would not render on its own
+    const fullHtml = wrapReactForPreview(previewCode)
 
     const blob = new Blob([fullHtml], { type: 'text/html' })
     const url = URL.createObjectURL(blob)

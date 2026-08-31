@@ -23,6 +23,9 @@ export interface Region {
   geometry: RegionGeometry
   intent: string
   classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'
+  // For decorative regions: 'region' = confined to where it was drawn /
+  // behind the region it overlaps; 'full' = whole-page background.
+  backgroundScope?: 'region' | 'full'
   lockState: RegionLockState
   generatedCode: string | null
   createdAt: string
@@ -97,17 +100,6 @@ export interface Usage {
   date: string
   generationCount: number
   maxGenerations: number
-}
-
-export interface AnalysisResponse {
-  success: boolean
-  regions?: Array<{
-    regionNumber: number
-    boundingBox: { x: number; y: number; width: number; height: number }
-    shapeType: 'rectangle' | 'circle' | 'freeform' | 'arrow'
-    suggestedPurpose: string
-  }>
-  error?: string
 }
 
 export interface GenerationResponse {

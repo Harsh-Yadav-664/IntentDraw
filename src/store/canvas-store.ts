@@ -78,6 +78,30 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
   const renumber = (regions: Region[]): Region[] =>
     regions.map((r, i) => ({ ...r, regionNumber: i + 1 }))
 
+  // Normalize a geometry so x/y is ALWAYS the top-left of the bounding box
+  // and width/height are the full bbox span. Freeform/arrow paths stay
+  // relative to that origin. This keeps every downstream consumer
+  // (layout analyzer, intent classifier, prompt builders) consistent.
+  const normalizeGeometry = (geometry: RegionGeometry): RegionGeometry => {
+    if ((geometry.type === 'freeform' || geometry.type === 'arrow') && geometry.path && geometry.path.length > 0) {
+      const xs = geometry.path.map(p => p.x)
+      const ys = geometry.path.map(p => p.y)
+      const minX = Math.min(...xs)
+      const minY = Math.min(...ys)
+      const maxX = Math.max(...xs)
+      const maxY = Math.max(...ys)
+      return {
+        ...geometry,
+        x: geometry.x + minX,
+        y: geometry.y + minY,
+        width: Math.max(1, maxX - minX),
+        height: Math.max(1, maxY - minY),
+        path: geometry.path.map(p => ({ x: p.x - minX, y: p.y - minY })),
+      }
+    }
+    return geometry
+  }
+
   return {
     regions: [],
     activeTool: 'select',
@@ -105,7 +129,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const newRegion: Region = {
         id: newId,
         regionNumber: regions.length + 1,
-        geometry,
+        geometry: normalizeGeometry(geometry),
         intent: '',
         lockState: { layout: false, style: false, animation: false },
         generatedCode: null,
@@ -123,7 +147,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       set((state) => ({
         regions: state.regions.map((r) =>
           r.id === id
-            ? { ...r, geometry: { ...r.geometry, ...updates }, updatedAt: new Date().toISOString() }
+            ? { ...r, geometry: normalizeGeometry({ ...r.geometry, ...updates }), updatedAt: new Date().toISOString() }
             : r
         ),
       }))
