@@ -16,11 +16,12 @@ import { withTimeout } from '@/lib/utils'
 // Configuration
 // =============================================================================
 
-const DEFAULT_MAX_GENERATIONS = 10
-const MAX_GENERATIONS = parseInt(
-  process.env.RATE_LIMIT_MAX_GENERATIONS || String(DEFAULT_MAX_GENERATIONS),
-  10
-)
+// A daily cap is a product decision for paying users, not something that should
+// ever stop the owner testing their own tool. Development is uncapped unless a
+// limit is set explicitly; production keeps a real default.
+const MAX_GENERATIONS = process.env.NODE_ENV === 'production'
+  ? parseInt(process.env.RATE_LIMIT_MAX_GENERATIONS || '10', 10)
+  : Number.MAX_SAFE_INTEGER
 
 // Fail-fast cap on every DB round-trip. If Supabase is paused/unreachable, these
 // calls must give up in seconds and fail open — never stall the generation

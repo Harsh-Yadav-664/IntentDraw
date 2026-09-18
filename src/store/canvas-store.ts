@@ -240,7 +240,15 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     setCanvasData: ({ regions, groups }) => {
       const visibility: Record<string, boolean> = {}
       regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, groups: dropEmptyGroups(regions, groups), visibility })
+      const nextGroups = dropEmptyGroups(regions, groups)
+      set({ regions, groups: nextGroups, visibility, selectedRegionIds: [] })
+
+      // History is module-level and survives navigation. Without this reset,
+      // loading a project and pressing undo restored the *previous* project's
+      // shapes onto this canvas — and auto-save then persisted them.
+      _history = [JSON.parse(JSON.stringify({ regions, groups: nextGroups })) as HistoryEntry]
+      _historyIndex = 0
+      syncHistoryFlags()
     },
 
     groupSelection: (name) => {

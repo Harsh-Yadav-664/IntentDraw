@@ -17,7 +17,7 @@ progress; it is all waiting on a decision or a go-ahead.
 
 ## Decisions needed from the owner (blocking)
 
-- **Better free models.** The owner chose "free tier, but add better free models" and this was never implemented. Candidates to wire into the provider chain: OpenRouter's free tier, Gemini 2.5 Pro's free quota. Evidence this matters: on identical input, Gemini produced clean working code while Groq (`gpt-oss-120b`) produced three broken generations in a row (duplicate declaration, missing import, malformed string literal). **Model tier is currently the main ceiling on output quality.**
+- ~~**Better free models.**~~ — **done.** OpenRouter is wired into the provider chain (`src/lib/ai/openrouter.ts`), with model IDs selected from the live catalogue rather than from memory. **Owner action required: add `OPENROUTER_API_KEY` to `.env.local`** (free key at https://openrouter.ai/keys, no card needed) — until then OpenRouter is skipped entirely and the chain behaves exactly as before.
 - **GSAP licensing.** The free Standard license prohibits "tools that allow users to build visual animations without code that compete with Webflow's visual animation building capabilities." IntentDraw generates code, so it probably falls outside — but confirm with Webflow before animation becomes a headline paid feature. Swapping engines later is contained to `wrapReactForPreview` + the prompt's allowed-library rule.
 - **Parser dependency.** Validating that generated code parses (see Reliability below) needs a parser such as `@babel/parser`. `AGENTS.md` requires asking before dependency-level changes.
 
@@ -25,16 +25,16 @@ progress; it is all waiting on a decision or a go-ahead.
 
 ## Reliability
 
-1. **Validate that generated code actually parses, then retry / fall through.** Today `provider.ts` only checks `code.length > 20` and `includes('export default')`, so syntactically invalid output is returned as `success: true` and the user sees a red error box. This is the single biggest gap against the owner's "no white screens, no console-fatal errors" bar in `AGENTS.md` §5.
-2. **Chunked assembly is raw string splicing** (`provider.ts`, `indexOf('export default')` + Set-based import dedup, no AST). Silent-corruption risk exactly where scaling to >12 regions is supposed to help.
+1. **Validate that generated code actually parses, then retry / fall through.** Still open, but narrower now: the staged path validates that a section declares what was asked for, and `assemble.ts` removes the two collision classes that caused most failures. What remains uncaught is genuinely malformed syntax from a weak model (observed from Groq: an unterminated string literal). Needs a parser — see the blocking decision above.
+2. ~~Chunked assembly is raw string splicing~~ — **done.** Replaced by `assemble.ts`, which merges imports per specifier and drops duplicate declarations, with unit tests.
 3. **Debug file writes on every request.** `intent-classifier.ts` writes `.system_generated/region-intent-debug.json` with no environment gate; it is committed to git and always dirty. Gate it to dev and gitignore it.
 4. **`tsconfig.tsbuildinfo` is tracked in git** — a build artifact that will conflict constantly. Needs `git rm --cached tsconfig.tsbuildinfo` plus a gitignore entry.
 5. **Pre-existing lint errors** (untouched code): `@typescript-eslint/no-explicit-any` ×5 in `canvas-store.ts` `exportToPng`, and `react-hooks/set-state-in-effect` in the `controls-panel.tsx` NVIDIA-models effect.
-6. **No test suite at all.** The diagnostic scripts in `scripts/` are the closest thing. Worth real tests around prompt assembly and geometry→skeleton, which are pure functions and cheap to cover.
+6. ~~No test suite at all~~ — **done.** vitest is installed with `pnpm test`; 21 tests cover import merging, duplicate-declaration dedupe and section derivation. Still uncovered and worth adding: `shape-path.ts` geometry and `region-analyzer.ts` skeleton output.
 
 ## Output quality — "must not look generic" (goal #2)
 
-1. **Replace the 4 random style presets with a curated reference corpus.** Feed the model real, high-quality exemplars rather than abstract token values plus adjectives. Models imitate what they are *shown* far more reliably than what they are *told*. This is the highest-leverage non-model lever.
+1. ~~**Replace the 4 random style presets with a curated reference corpus.**~~ — **done**, see `src/lib/ai/references.ts` and the CLAUDE.md section on it. Original structural sketches only, 1-2 selected per run with no API call, and the drawing's skeleton explicitly outranks the reference. Still open underneath it: Feed the model real, high-quality exemplars rather than abstract token values plus adjectives. Models imitate what they are *shown* far more reliably than what they are *told*. This is the highest-leverage non-model lever.
 
    **Owner's framing (2026-09-18), which is the correct one:** take *inspiration* from well-known free UI libraries — never paste their UI into the output. The reference supplies the structural idea; the resolved design tokens and the user's own theme/prompt supply every visual decision. Output must still be non-generic and theme-specific. Expected side benefits the owner called out: less time, better quality, and *fewer* tokens, because the model no longer has to infer from adjectives what the user means.
 
@@ -53,8 +53,7 @@ progress; it is all waiting on a decision or a go-ahead.
 The owner's words: the preview is "not that good and small as well," and it should
 show the site "exactly how we see when we visit that website."
 
-1. **Render the preview at a real desktop viewport, then scale to fit.** Today the iframe is sized to whatever space the panel has, so the generated site sees a narrow viewport and renders its *mobile* layout in a cramped box. The fix is what Figma and Webflow do: give the iframe a fixed logical width (e.g. 1440px), then CSS-`transform: scale()` it down to fit the pane. The site then lays out as a real desktop site and media queries behave correctly, while visually fitting the panel. The existing device toggle (desktop/tablet/mobile) becomes a real viewport switch rather than a resize.
-   **This is a prerequisite for judging output quality at all** — "does this look generic" cannot be assessed in a squashed, mis-scaled preview.
+1. ~~Render the preview at a real desktop viewport, then scale to fit~~ — **done.** The iframe renders at a 1280 logical width, is sized to the generated page's true height via the `IFRAME_HEIGHT` message (no more second inner scrollbar), and Output mode collapses the controls sidebar to reclaim the width. Remaining polish: 1280 was kept because it matches the drawing canvas's reference width — **changing one requires changing both**, or drawn coordinates stop matching the preview.
 2. **Page sections + a page-number rail.** Divide the canvas into standard viewport-sized sections (one "page" = one screenful at the chosen device size), draw the boundaries, and put clickable numbers down the side. Clicking `2` jumps to the second section. Scrolling stays continuous — the sections are guides for drawing precisely against a real fold, not hard boundaries. A sensible default number of sections is created up front so there is room to draw.
    This is `AGENTS.md` §4's "paginated/slide mode vs continuous mode", now with a concrete design.
 3. **Regions need a section index**, derived from `y` position (or explicit), so a drawing can say "this belongs on screen 3."
@@ -75,9 +74,10 @@ Owner's framing: a long wait is only acceptable if the output is exceptional, an
 it must never be a silent black box that fails after minutes. Their "loop logic"
 idea — spread calls out so quota replenishes — is the right instinct.
 
-1. **Make staged generation the primary path, not a >12-region fallback.** Generate the shell first and show it immediately, then fill sections one at a time. Each stage is independently retryable and resumable, so a single failed section doesn't discard minutes of work.
-2. **Stream real progress to the UI** — "Generating hero (2/6)…" with partial results rendering as they land. This is what converts a 2-minute wait from "is it broken?" into visible progress.
-3. **Quota-aware pacing.** Serial calls with backoff naturally let per-minute free-tier quota replenish between stages. Resume rather than restart on a rate limit.
+1. ~~Make staged generation the primary path~~ — **done.** `/api/generate/shell` + `/api/generate/section`, driven by `use-ai.ts`.
+2. ~~Stream real progress to the UI~~ — **done.** Labelled progress with a bar, and the preview repaints after every stage with placeholders for sections still building.
+3. ~~**Quota-aware pacing**~~ — **done.** A rate-limited section now waits and retries the chain (8s then 16s) instead of falling straight through, so a temporary 429 no longer becomes a permanently missing section.
+4. **Generation is non-deterministic across runs.** The same project classified its regions as decorative on one run and structural on the next, producing a completely different page. Worth deciding whether classification should be cached per drawing, or surfaced so the user can pin it.
 4. **Deployment constraint to verify before relying on long generations:** current generations take 25–140s. Vercel's serverless function duration is capped well below that on the free plan, so a single long request will time out in production even though it works locally. Staged generation also helps here, since each stage is short. Confirm the current limits for the plan in use before deploying.
 
 ## Intent layer / canvas
@@ -112,3 +112,15 @@ Runtime is in place (GSAP + MotionPathPlugin + ScrollTrigger, verified). What is
 - **Free tiers now, paid later.** Infrastructure is Vercel + Supabase, models are free-tier. Moving to a paid API (Claude or similar) is acceptable *once output quality justifies it* — so avoid decisions that lock the pipeline to one provider.
 - Owner wants suggestions proactively, and wants to be told when setup work is needed on their side (accounts, keys, config).
 - Deferred but real: subscription tiers, with section/page count as one lever.
+
+---
+
+## Done in the 2026-09-19 session (kept briefly so nothing is re-investigated)
+
+- **Lag.** Root causes were found with evidence, not guessed. The canvas sized itself from the height its own backdrop iframe reported (unbounded growth, Konva stage re-allocated each round); the backdrop's html2canvas snapshot could never succeed in an opaque-origin sandbox, so a live animating iframe stayed mounted forever; `/api/models` re-fetched in an unbounded loop whenever the NVIDIA key was absent; and three stacked `blur-[150px]` + `mix-blend-*` layers plus four `backdrop-filter` surfaces meant every paint re-rasterized a full-viewport blur. Measured after: canvas size stable, **zero long tasks at idle**, worst keystroke 37ms → 24ms.
+- **Generation cap in development.** `DEFAULT_MAX_GENERATIONS = 10` predated the session and blocked the owner's own testing. Development is now uncapped unconditionally; production keeps a real default.
+- **Project naming.** Rename from the dashboard card menu (optimistic, rolls back on failure) and click-to-edit in the editor header. `projectName` was added to the auto-save watcher — without it a rename marked the project unsaved and then never persisted.
+- **Unresponsive project cards.** There was no pending state and no `loading.tsx`, so opening a project — which compiles a route and loads the Konva bundle — looked like a dead button. Both added.
+- **Undo across projects.** `_history` is module-level and survived navigation, so undo after opening a second project restored the *first* project's shapes and auto-save then persisted them. `setCanvasData` now resets it.
+- **Dashboard.** Cards show a wireframe of the project's actual drawing, derived server-side from `canvas_data` (24 projects = 19.7 KB), plus shape count and a "Built" marker.
+- **Prompt panel.** The prompt textarea was `flex-1` inside a scrolling flex column and overflowed onto the provider selects. Extracted to `prompt-composer.tsx` with a debounced draft, so typing no longer re-renders the layer list.

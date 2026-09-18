@@ -2,6 +2,13 @@
 // Core Type Definitions
 // =============================================================================
 
+/**
+ * The AI backends the generator can call. Declared once here because this union
+ * used to be spelled out literally in eight places, and adding a provider meant
+ * finding all of them. `ProviderName` in `lib/ai/provider.ts` aliases this.
+ */
+export type AIProvider = 'gemini' | 'groq' | 'nvidia' | 'openrouter'
+
 export interface RegionLockState {
   layout: boolean
   style: boolean
@@ -81,7 +88,7 @@ export interface Generation {
   prompt: string
   generatedCode: string
   version: number
-  provider: 'gemini' | 'groq' | 'nvidia'
+  provider: AIProvider
   createdAt: string
 }
 
@@ -127,7 +134,7 @@ export interface Usage {
 export interface GenerationResponse {
   success: boolean
   code?: string
-  provider?: 'gemini' | 'groq' | 'nvidia'
+  provider?: AIProvider
   error?: string
 }
 

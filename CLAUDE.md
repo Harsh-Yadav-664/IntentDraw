@@ -51,7 +51,8 @@ This is a solo project. The owner's stated goals, in priority order:
 - `pnpm dev` — dev server (Next.js App Router, port 3000)
 - `pnpm build` / `pnpm start` — production build / run
 - `pnpm lint` — ESLint (flat config, `eslint-config-next`)
-- `npx tsc --noEmit` — typecheck. **No typecheck script exists**; run this manually after AI-pipeline changes.
+- `pnpm typecheck` — `tsc --noEmit`. Run after any AI-pipeline change.
+- `pnpm test` / `pnpm test:watch` — vitest. Covers the pure logic where a bug becomes a broken preview: import merging, duplicate-declaration dedupe, and section derivation. Add cases here rather than burning API quota to find regressions.
 - `npx tsx scripts/diagnose-prompt.ts curves|circles` — prints the EXACT prompt a given drawing scenario produces, with **zero API calls**. Use this before spending free-tier quota: most "the AI ignored my drawing" bugs are visible here as missing data in the prompt.
 - `npx tsx scripts/preview-harness.ts public/preview-harness.html` — renders a sample component through the real preview pipeline so the iframe runtime (Babel transform, import rewriting, GSAP, lucide) can be verified in a browser with no AI call. Serve it via `pnpm dev` at `/preview-harness.html` — a `file://` URL will not execute its scripts.
 - **No test suite exists** (no test script, no framework installed). Root-level `test-limits.js`, `test-supabase.js`, `check-users.js` are ad hoc manual debug scripts, not CI.
@@ -73,7 +74,42 @@ Request path — `POST src/app/api/generate/route.ts`:
 5. **Never call `sanitizeHtml()` on generated TSX.** It is an HTML attribute stripper and corrupts JSX handlers (`onClick={() => ...}` gets truncated → "Unexpected token" compile errors). The sandboxed iframe (`sandbox="allow-scripts"`, no `allow-same-origin`) is the real security boundary. `sanitizeHtml` / `isHtmlSafe` remain in `src/lib/utils/sanitize.ts` as dead code — do not reintroduce call sites.
 6. `incrementUsage()` / `getUsageStats()` (Supabase) → return code.
 
-Prompt engineering lives in `src/lib/ai/prompts.ts` (system prompt: banned generic-UI patterns, structural-variety rules) and `src/lib/ai/region-analyzer.ts` (`describeLayout()` converts drawn geometry into a literal TSX flex/grid skeleton the model must reuse rather than reinvent).
+Prompt engineering lives in `src/lib/ai/prompts.ts` (system prompt: banned generic-UI patterns, structural-variety rules), `src/lib/ai/region-analyzer.ts` (`describeLayout()` converts drawn geometry into a literal TSX flex/grid skeleton the model must reuse rather than reinvent), and `src/lib/ai/references.ts`.
+
+### Design references (`src/lib/ai/references.ts`)
+
+Models imitate what they are *shown* far more reliably than what they are *told*, and adjectives plus token values were not enough — output stayed generic. The corpus holds seven original **structural sketches** (agency/editorial, SaaS, portfolio, hospitality, e-commerce, app marketing, event launch), each describing section order, where visual weight sits, which element breaks full-bleed, how density alternates, and the one move that reads as designed. `selectReferences()` picks 1-2 by keyword score with zero API calls.
+
+Two rules that are load-bearing:
+- **Structure only, never markup.** Sketches are prose. Nothing is copied from any library or site — inspiration is safe, verbatim markup is a licensing risk. A test asserts no markup can leak into the corpus.
+- **The drawing outranks the reference.** Every injected sketch carries an explicit instruction that where it conflicts with the LAYOUT SKELETON, the skeleton wins — otherwise this would quietly degrade the drawing path, which is the whole product.
+
+`DESIGN_RULES` also carries a checkable vertical-rhythm block (padding ceiling of `py-24`, no spacer elements, real content on the first screen, no two consecutive sections sharing padding *and* layout). Those exist because a real run produced several screens of empty background before any content — the shell's own `space-y` stacking on top of each section's padding.
+
+### Staged generation (the primary path)
+
+`use-ai.ts` drives generation as several short calls instead of one long one:
+
+1. `POST /api/generate/shell` — classifies the drawing, resolves design tokens, and generates only the **page shell**: layout, full-page background layers, and a `/* SECTIONS: Hero, Features, … */` manifest naming the components a later pass must build. This call consumes the generation's single quota slot.
+2. `POST /api/generate/section` — builds one batch of named components. Deliberately does **not** touch the rate limiter; charging per section would penalise a design for having more sections.
+
+`sections.ts` derives the section list from the shell for free — the shell already declares its structure by referencing components it doesn't define (`resolveSections` prefers the manifest, falls back to inferring undefined JSX references). This works identically whether the structure came from a drawing or from the prompt alone, so **prompt-only generation is staged too**.
+
+Why it's built this way — all four matter, don't collapse it back into one call:
+- The user sees progress and a partially rendered page instead of a blank two-minute wait. `assembleProgressive()` fills not-yet-built sections with placeholder components so the page can render after every stage.
+- Each call is short enough to fit a serverless duration limit. A single 25–140s request will time out on Vercel.
+- Section calls run **serially**; a parallel burst is what trips free-tier rate limits, and spacing them lets per-minute quota recover.
+- A failed section leaves a placeholder and reports itself, rather than discarding every section that succeeded.
+
+The old single-call `generateCode()` and `POST /api/generate` still exist and still work; the staged path is what the UI uses.
+
+### Assembling generated pieces (`src/lib/ai/assemble.ts`)
+
+Independently generated blocks don't coordinate, so assembly is where their collisions get resolved. It is pure and client-safe (the browser assembles partial results).
+
+- **Imports merge per module and per specifier.** Deduping whole import *lines* is not enough: `import { Star }` and `import { Star, Moon }` are different lines that declare `Star` twice — fatal.
+- **Duplicate declarations are dropped, first definition wins**, seeded with the shell's own names. Models genuinely do redefine a component another batch already built; this has been the single most common fatal error.
+- `splitTopLevelChunks()` is a small brace-matching scanner that skips strings, template literals and comments. It only needs to survive the TSX these models emit — resist replacing it with a parser dependency unless something concrete demands one.
 
 ### Region groups (`Region.groupId` + `canvas-store.groups`)
 
@@ -101,6 +137,7 @@ A stroke is also a **motion path** — the same data drives drawn-curve animatio
 
 - **Gemini** (`gemini.ts`): `gemini-2.5-flash` everywhere. It is a *thinking* model — **never set `maxOutputTokens`**, since thinking tokens consume the cap before any real output (proven: 8192 cap → 7860 thinking → 328 output → truncated). Has real 429 handling: parses the server's `retryDelay` from the error and waits accordingly (capped 20s, `maxRetries=2`), exponential backoff when absent.
 - **Groq** (`groq.ts`): `openai/gpt-oss-120b`. The old `llama-3.1-70b-versatile` is decommissioned — do not reintroduce. `max_tokens=5000` is deliberate: the free tier's ~8k TPM counts `max_tokens` against the budget **up front**, so 8000 caused HTTP 413 "reduce your message size."
+- **OpenRouter** (`openrouter.ts`): raw `fetch`, OpenAI-compatible. Gives access to materially stronger *free* coding models than Groq or NVIDIA, which is the main lever on output quality. Model IDs were selected from the live catalogue (`GET https://openrouter.ai/api/v1/models`, keep entries where `pricing.prompt` and `pricing.completion` are both `"0"`) — **never edit those strings from memory**, that has broken this project twice. Needs `OPENROUTER_API_KEY`; it is appended to the fallback chain only when that key is set, so its absence doesn't pollute every error message. A `402` means the free daily allowance is spent, not a broken key.
 - **NVIDIA** (`nvidia.ts`): raw `fetch` to `integrate.api.nvidia.com`, no SDK. Default `nvidia/nemotron-3.5-lightning-30b-a3b`; the old `meta/llama-3.1-70b-instruct` hit EOL 2026-08-26. Slowest and least reliable of the three. `GET /api/models` lets the user pick any NIM model from a dropdown — note `controls-panel.tsx` still labels this option "NIM Llama 3.1" even though the wired default is nemotron (cosmetic bug).
 - `PROVIDER_TIMEOUT_MS` in `provider.ts`: `gemini: 120000, groq: 45000, nvidia: 75000`, each with an additional backstop wrapper. These were tuned against measured latency (Gemini vision alone runs 30–45s), not guessed.
 - **Call budget:** one "Generate" click can fire up to **3 Gemini calls** — intent classification (only when regions exist) + design-token resolution (only when no style keyword matches) + the generation call itself. The two auxiliary calls fail safe but still consume RPM. Reducing this count is the highest-leverage free-tier reliability lever.
@@ -110,7 +147,9 @@ A stroke is also a **motion path** — the same data drives drawn-curve animatio
 - `src/app/` — App Router. Route groups: `(auth)` (login / signup / forgot-password), `(dashboard)` (project list + `/project/[id]` editor). `p/[id]` is an empty directory — the public-share view is planned (DB has `is_public` + RLS for it) but has no `page.tsx`.
 - `src/store/canvas-store.ts` (zustand) — **`regions[]` is the real data model**, not raw Konva shapes. Each region: `geometry` (`rectangle | circle | freeform | arrow`), `intent` text, server-computed `classificationTag` / `backgroundScope` (backend-only — no UI surfaces them; don't assume they're user-editable), `lockState`, `generatedCode`. Also owns undo/redo (module-level history, capped at 50) and `exportToPng()` (feeds the AI call).
 - `src/store/workflow-store.ts` (zustand) — prompt, provider/model selection, `status` state machine, `previewSnapshot` (in-memory only, never persisted), and debounced (3s) autosave (`saveNow` / `performSave` → `PATCH /api/projects/[id]`).
-- `src/components/canvas/drawing-canvas.tsx` — React Konva `Stage`/`Layer`. Renders the generated preview as its own backdrop via a **one-shot `html2canvas` snapshot** (`IFRAME_SNAPSHOT` postMessage), not a continuously running iframe — that was a deliberate perf fix. If the canvas feels slow, check this snapshot path before assuming a live-render problem.
+- `src/components/canvas/drawing-canvas.tsx` — React Konva `Stage`/`Layer`. Renders the generated preview as its own backdrop in a **frozen live iframe** (`wrapReactForPreview(code, { freeze: true })`): it renders once, then every GSAP/WAAPI animation is finished and paused and CSS animation/transition is disabled, so it costs nothing per frame. The backdrop is skipped entirely while a generation is running — otherwise every staged batch triggered a fresh CDN + Babel run behind the canvas.
+  - **The old `html2canvas` snapshot could never have worked.** The iframe is `sandbox="allow-scripts"` with no `allow-same-origin`, so its origin is opaque; html2canvas renders into a nested iframe and must read that iframe's `document`, which is blocked as cross-origin every time. The snapshot never arrived, so the parent kept a live, fully animating iframe mounted behind the canvas *forever* — a large, permanent source of the lag this project had. Don't reintroduce it, and don't "fix" it by adding `allow-same-origin`: that grants model-written code the app's own origin.
+  - **The canvas height must never derive from the iframe's reported height.** `min-h-screen` inside the generated page resolves against the frame, so each measurement grows the page, which regrows the frame — an unbounded loop that re-allocates the Konva stage on every round. Height comes from the drawing (`max(1000, maxShapeY + 400)`).
 - `src/components/preview/preview-frame.tsx` — sandboxed iframe via `wrapReactForPreview` (`src/lib/utils/sanitize.ts`): Babel Standalone + React UMD, no bundler. Sandpack was tried and removed for React 19 incompatibility; don't re-add without confirming that's resolved upstream.
 
 ### Preview runtime (`wrapReactForPreview`) — hard-won details
@@ -123,7 +162,8 @@ The iframe is the whole rendering engine, and several things in it are load-bear
 - **Imports are rewritten, not resolved.** A `MODULE_GLOBALS` map converts allowed imports into destructures off `window`; anything else is stripped. So an unsupported library fails at runtime as "X is not defined", never as a compile error. Import maps are not an option — the code is `eval`'d as a classic script.
 - **Lucide icons** render as inline SVG built from the UMD's icon data. The proxy must capture the real `window.lucide` *before* shadowing it; an earlier version overwrote the global and called a non-existent `window.lucideIcons`, so no icon ever rendered.
 - **Animation: GSAP 3.15 + MotionPathPlugin + ScrollTrigger** are loaded as UMD globals and allowed in generated code. framer-motion / `motion` publishes **no UMD build of its React API** — it cannot work here, and the system prompt bans it explicitly.
-- **Snapshot vs. animation.** html2canvas screenshots a *clone* of the DOM, where CSS keyframes restart at t=0 — anything entering from `opacity:0` would capture blank. Before capture the snapshot script runs `gsap.globalTimeline.progress(1)` and finishes all WAAPI animations. GSAP writes inline styles on real nodes, so its output survives cloning; this is a concrete reason to prefer GSAP over CSS keyframes for entrance animation.
+- **Preview sizing.** The iframe renders at a fixed *logical* device width (1280 desktop) and is CSS-scaled to fit the panel, so generated sites lay out as real desktop sites rather than triggering their own mobile breakpoints in a narrow box. Its height is derived from the **panel**, making it a true fixed viewport that scrolls internally like a real browser window. It is emphatically **not** sized from the page's own `IFRAME_HEIGHT` report — that is the runaway loop described above, and it is what produced "I scrolled for ten seconds through empty purple background." `IFRAME_HEIGHT` is still posted once on load but nothing sizes itself from it. Output mode collapses the controls sidebar to reclaim width. 1280 also matches the drawing canvas's reference width — **keep those two in sync**, or drawn coordinates stop matching the preview.
+- **Freezing vs. animation.** The backdrop's freeze step runs `gsap.globalTimeline.progress(1)` then pauses it, kills every ScrollTrigger, finishes all WAAPI animations, and injects `animation-play-state: paused; transition: none`. GSAP writes inline styles on real nodes, so a frozen GSAP entrance still shows its end state — a concrete reason to prefer GSAP over CSS keyframes for entrance animation.
 
 > **Open licensing question (decide before monetizing):** GSAP's free Standard license prohibits use in "tools that allow users to build visual animations without code that compete with Webflow's visual animation building capabilities." IntentDraw generates code rather than being a no-code animation builder, which likely falls outside that — but it is close enough to the line that it should be confirmed with Webflow before animation becomes a headline paid feature. Swapping engines later is contained to `wrapReactForPreview` + the prompt's allowed-library rule.
 - Persistence is real: the Supabase `projects` table stores the entire `regions[]` array as one JSONB blob (`canvas_data`) plus prompt / theme / generated_code. The SQL migration also defines normalized `regions` and `generation_history` tables with full RLS — **no application code reads or writes them.** Don't assume they work or that `canvas_data` should be replaced by querying them.

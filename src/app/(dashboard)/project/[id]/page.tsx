@@ -13,6 +13,7 @@ import { useRouter } from 'next/navigation'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { useCanvasStore, parseCanvasData } from '@/store/canvas-store'
 import { SaveStatus } from '@/components/shared/save-status'
+import { ProjectTitle } from '@/components/shared/project-title'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
@@ -30,7 +31,6 @@ export default function ProjectPage({ params }: PageProps) {
 
   const loadProject = useWorkflowStore((s) => s.loadProject)
   const triggerAutoSave = useWorkflowStore((s) => s.triggerAutoSave)
-  const projectName = useWorkflowStore((s) => s.projectName)
   const setCanvasData = useCanvasStore((s) => s.setCanvasData)
   const viewMode = useCanvasStore((s) => s.viewMode)
   
@@ -87,14 +87,23 @@ export default function ProjectPage({ params }: PageProps) {
     let lastPrompt = useWorkflowStore.getState().prompt
     let lastCode = useWorkflowStore.getState().previewCode
     let lastTheme = useWorkflowStore.getState().globalTheme
+    let lastName = useWorkflowStore.getState().projectName
     let lastRegions = useCanvasStore.getState().regions
     let lastGroups = useCanvasStore.getState().groups
 
     const unsubWorkflow = useWorkflowStore.subscribe((state) => {
-      if (state.prompt !== lastPrompt || state.previewCode !== lastCode || state.globalTheme !== lastTheme) {
+      if (
+        state.prompt !== lastPrompt ||
+        state.previewCode !== lastCode ||
+        state.globalTheme !== lastTheme ||
+        // The name is saved too — without it, renaming from the header marked
+        // the project unsaved and then never actually persisted it.
+        state.projectName !== lastName
+      ) {
         lastPrompt = state.prompt
         lastCode = state.previewCode
         lastTheme = state.globalTheme
+        lastName = state.projectName
         triggerAutoSave(getCanvasData)
       }
     })
@@ -154,9 +163,7 @@ export default function ProjectPage({ params }: PageProps) {
           </Button>
           <div className="flex items-center gap-3">
             <div className="h-6 w-px bg-white/10" />
-            <span className="text-sm font-display font-medium truncate max-w-[200px] text-foreground/90">
-              {projectName}
-            </span>
+            <ProjectTitle />
           </div>
         </div>
 
@@ -180,10 +187,6 @@ export default function ProjectPage({ params }: PageProps) {
 
         <div className="flex items-center gap-4">
           <SaveStatus />
-          {/* Add a subtle decorative element */}
-          <div className="h-8 w-8 rounded-full bg-primary/10 border border-primary/20 flex items-center justify-center">
-             <div className="w-2 h-2 rounded-full bg-primary animate-pulse" />
-          </div>
         </div>
       </div>
 

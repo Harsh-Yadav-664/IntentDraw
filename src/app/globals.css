@@ -100,11 +100,13 @@
   --radius-xl: calc(var(--radius) + 4px);
 }
 
-/* Glassmorphism utilities */
+/* Panel surface.
+   A backdrop-filter was dropped here: it can never be cached, so every panel
+   using it re-rasterized a blur of everything behind it on each paint. At the
+   opacity this design uses the visual difference is imperceptible, and the app
+   stops dropping frames while typing. */
 .glass-panel {
   background: var(--glass-bg);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
   border: 1px solid var(--glass-border);
   box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
 }

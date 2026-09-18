@@ -4,10 +4,18 @@
 // =============================================================================
 
 import { create } from 'zustand'
+import type { AIProvider } from '@/types'
 
 // =============================================================================
 // Types
 // =============================================================================
+
+/** What the generator is doing right now, shown while a staged run is in flight. */
+export interface GenerationProgress {
+  label: string
+  done: number
+  total: number
+}
 
 export type WorkflowStatus =
   | 'idle'
@@ -28,6 +36,8 @@ export interface WorkflowState {
 
   // Workflow state
   status: WorkflowStatus
+  /** Live progress of a staged generation, so a long run never looks stalled. */
+  generationProgress: GenerationProgress | null
   error: string | null
 
   // Content
@@ -38,7 +48,7 @@ export interface WorkflowState {
   // so we don't run a live compiling iframe behind the drawing surface.
   // In-memory only — never persisted or sent to the save payload.
   previewSnapshot: string | null
-  aiProvider: 'gemini' | 'groq' | 'nvidia'
+  aiProvider: AIProvider
   nvidiaModelId: string
 
   // Save state
@@ -63,6 +73,7 @@ export interface WorkflowActions {
 
   // Workflow
   setStatus: (status: WorkflowStatus) => void
+  setGenerationProgress: (progress: GenerationProgress | null) => void
   setError: (error: string | null) => void
 
   // Content
@@ -70,7 +81,7 @@ export interface WorkflowActions {
   setGlobalTheme: (theme: string) => void
   setPreviewCode: (code: string) => void
   setPreviewSnapshot: (snapshot: string | null) => void
-  setAiProvider: (provider: 'gemini' | 'groq' | 'nvidia') => void
+  setAiProvider: (provider: AIProvider) => void
   setNvidiaModelId: (modelId: string) => void
 
   // Save
@@ -90,6 +101,7 @@ const initialState: WorkflowState = {
   projectId: null,
   projectName: 'Untitled Project',
   status: 'idle',
+  generationProgress: null,
   error: null,
   prompt: '',
   globalTheme: '',
@@ -155,6 +167,7 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
       saveStatus: 'saved',
       lastSavedAt: new Date(),
       status: 'idle',
+      generationProgress: null,
       error: null,
     })
   },
@@ -162,6 +175,8 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
   // ─── Workflow ─────────────────────────────────────────────────────────────
 
   setStatus: (status) => set({ status }),
+
+  setGenerationProgress: (generationProgress) => set({ generationProgress }),
 
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
 

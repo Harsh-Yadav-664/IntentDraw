@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { generateCode } from '@/lib/ai/provider'
 import { checkRateLimit, incrementUsage, getUsageStats } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
-import type { Region, RegionGroup } from '@/types'
+import type { AIProvider, Region, RegionGroup } from '@/types'
 
 export async function POST(request: Request) {
   try {
@@ -41,7 +41,7 @@ export async function POST(request: Request) {
       groups?: RegionGroup[]
       prompt?: string
       globalTheme?: string
-      provider?: 'gemini' | 'groq' | 'nvidia'
+      provider?: AIProvider
       nvidiaModelId?: string
       imageData?: string
     }

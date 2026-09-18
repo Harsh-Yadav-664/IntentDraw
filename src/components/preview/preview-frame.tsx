@@ -26,56 +26,39 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
   const containerRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [scale, setScale] = useState(1)
-  const [contentHeight, setContentHeight] = useState(0)
+  const [frameHeight, setFrameHeight] = useState(DEVICE_HEIGHTS[deviceSize])
 
   const targetWidth = DEVICE_WIDTHS[deviceSize]
-  const viewportHeight = DEVICE_HEIGHTS[deviceSize]
+  const minHeight = DEVICE_HEIGHTS[deviceSize]
 
-  // The iframe is as tall as the whole generated page, so the site renders at
-  // full length and the user scrolls this panel — the way you scroll a real
-  // site. A fixed-height iframe would instead trap a long page behind a second
-  // inner scrollbar. Short pages still fill one viewport.
-  const frameHeight = Math.max(viewportHeight, contentHeight)
-
-  // Calculate scale to fit in container width
+  // The iframe is a real browser viewport: fixed height, page scrolls inside it.
+  // Its height comes from the panel and NEVER from the page's own reported
+  // height — that creates a feedback loop, because `min-h-screen` inside the
+  // iframe resolves against whatever height we just set, so every measurement
+  // grows the page and the preview runs away into an empty void.
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    const updateScale = () => {
+    const measure = () => {
       const rect = container.getBoundingClientRect()
-
-      // Scale down to fit, but never scale up
-      // 32px padding for the container
-      const newScale = Math.min(1, (rect.width - 32) / targetWidth)
-      setScale(newScale)
+      const nextScale = Math.min(1, (rect.width - 32) / targetWidth)
+      setScale(nextScale)
+      // Fill the panel vertically at that scale, so a tall window shows more of
+      // the site instead of letterboxing a fixed 800px viewport.
+      setFrameHeight(Math.max(minHeight, Math.round((rect.height - 32) / (nextScale || 1))))
     }
 
-    updateScale()
-    const observer = new ResizeObserver(updateScale)
+    measure()
+    const observer = new ResizeObserver(measure)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [targetWidth])
-
-  // The preview runtime reports its own document height as it renders.
-  useEffect(() => {
-    const onMessage = (event: MessageEvent) => {
-      if (event.source !== frameRef.current?.contentWindow) return
-      if (event.data?.type !== 'IFRAME_HEIGHT') return
-      const height = Number(event.data.height)
-      if (Number.isFinite(height) && height > 0) setContentHeight(height)
-    }
-    window.addEventListener('message', onMessage)
-    return () => window.removeEventListener('message', onMessage)
-  }, [])
+  }, [targetWidth, minHeight])
 
   const srcDoc = useMemo(() => {
     if (!code) return null
     return wrapReactForPreview(code)
   }, [code])
-
-  // A new design is a different page — don't keep the old one's length.
-  useEffect(() => { setContentHeight(0) }, [srcDoc])
 
   if (!srcDoc) {
     return (
@@ -110,7 +93,6 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
             sandbox="allow-scripts"
             title="Design Preview"
             className="w-full h-full border-0"
-            scrolling="no"
           />
         </div>
       </div>

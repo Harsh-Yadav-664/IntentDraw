@@ -49,7 +49,6 @@ export default function DrawingCanvas() {
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 500 })
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
-  const [iframeHeight, setIframeHeight] = useState(1000)
 
   const regions = useCanvasStore((s) => s.regions)
   const activeTool = useCanvasStore((s) => s.activeTool)
@@ -61,8 +60,7 @@ export default function DrawingCanvas() {
   const toggleRegionSelection = useCanvasStore((s) => s.toggleRegionSelection)
   const setStageInstance = useCanvasStore((s) => s.setStageInstance)
   const previewCode = useWorkflowStore((s) => s.previewCode)
-  const previewSnapshot = useWorkflowStore((s) => s.previewSnapshot)
-  const setPreviewSnapshot = useWorkflowStore((s) => s.setPreviewSnapshot)
+  const isGenerating = useWorkflowStore((s) => s.status === 'generating' || s.status === 'analyzing')
 
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number; active: boolean } | null>(null)
 
@@ -96,12 +94,14 @@ export default function DrawingCanvas() {
     const observer = new ResizeObserver(updateSize)
     observer.observe(container)
 
+    // Deliberately ignores IFRAME_HEIGHT. Sizing this container from the height
+    // the iframe inside it reports is a runaway loop: `min-h-screen` in the
+    // generated page resolves against the frame, so every measurement grows the
+    // page, which regrows the frame — and each round re-allocates the Konva
+    // stage. The backdrop's height comes from the drawing instead.
     const handleMessage = (e: MessageEvent) => {
-      if (e.data && e.data.type === 'IFRAME_HEIGHT' && typeof e.data.height === 'number') {
-        setIframeHeight(e.data.height)
-      }
-      if (e.data && e.data.type === 'IFRAME_SNAPSHOT' && typeof e.data.dataUrl === 'string') {
-        setPreviewSnapshot(e.data.dataUrl)
+      if (e.data && e.data.type === 'IFRAME_ERROR') {
+        console.warn(`[preview backdrop] ${e.data.message}`)
       }
     }
     window.addEventListener('message', handleMessage)
@@ -110,7 +110,7 @@ export default function DrawingCanvas() {
       observer.disconnect()
       window.removeEventListener('message', handleMessage)
     }
-  }, [setPreviewSnapshot])
+  }, [])
 
   useEffect(() => {
     if (stageRef.current) setStageInstance(stageRef.current)
@@ -134,16 +134,21 @@ export default function DrawingCanvas() {
   const scale = stageSize.width > 0 ? stageSize.width / BASE_WIDTH : 1
   
   const maxShapeY = regions.reduce((max, r) => Math.max(max, r.geometry.y + r.geometry.height), 0)
-  // Base logical height of 1000, or the iframe's reported height. Grow as needed.
-  const logicalHeight = Math.max(Math.max(1000, iframeHeight), maxShapeY + 400)
+  // Height follows the drawing only — never the backdrop iframe (see above).
+  const logicalHeight = Math.max(1000, maxShapeY + 400)
   const physicalStageHeight = Math.max(stageSize.height, logicalHeight * scale)
 
   const srcDoc = useMemo(() => {
     if (!previewCode) return null
-    // captureSnapshot: this transient iframe screenshots itself once and posts
-    // the bitmap back; we then render that frozen image instead (no live frame).
-    return wrapReactForPreview(previewCode, { captureSnapshot: true })
-  }, [previewCode])
+    // Staged generation pushes new code after every batch. Rebuilding this
+    // backdrop each time meant a full CDN + Babel run per stage, on the same
+    // thread as the canvas — for something behind the drawing that nobody is
+    // looking at mid-run. Only the Output preview repaints live.
+    if (isGenerating) return null
+    // freeze: render once, then stop every animation so sitting behind the
+    // canvas costs nothing per frame.
+    return wrapReactForPreview(previewCode, { freeze: true })
+  }, [previewCode, isGenerating])
 
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
     const pos = stageRef.current?.getPointerPosition()
@@ -629,25 +634,19 @@ export default function DrawingCanvas() {
         }}
       >
         {previewCode ? (
-          previewSnapshot ? (
-            // Frozen backdrop — a static bitmap of the generated site, so there
-            // is no live compiling iframe running behind the drawing surface.
-            // eslint-disable-next-line @next/next/no-img-element -- data-URL snapshot; next/image can't optimize this
-            <img
-              src={previewSnapshot}
-              alt="Generated preview"
-              draggable={false}
-              className="w-full block select-none pointer-events-none bg-white"
-            />
-          ) : (
-            // Transient live frame: renders once, screenshots itself, and is
-            // then swapped out for the <img> above once the snapshot arrives.
-            <iframe
-              srcDoc={srcDoc || ''}
-              sandbox="allow-scripts"
-              className="w-full h-full border-0 bg-white"
-            />
-          )
+          // The generated site, rendered once and then frozen (see
+          // `wrapReactForPreview`'s `freeze`). It is a real frame rather than a
+          // bitmap because a sandboxed opaque-origin iframe cannot screenshot
+          // itself; freezing gets the same "costs nothing to sit there" result.
+          // `key` on the code keeps React from reusing the frame across changes.
+          <iframe
+            key={srcDoc ? 'backdrop' : 'none'}
+            srcDoc={srcDoc || ''}
+            sandbox="allow-scripts"
+            tabIndex={-1}
+            aria-hidden="true"
+            className="w-full h-full border-0 bg-white pointer-events-none"
+          />
         ) : regions.length === 0 ? (
           <div className="w-full h-full flex flex-col items-center justify-center border border-white/5 border-dashed">
             <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 shadow-xl">

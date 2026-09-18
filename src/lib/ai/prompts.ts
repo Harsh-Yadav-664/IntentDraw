@@ -1,6 +1,7 @@
 import { wrapUserPrompt, sanitizeUserPrompt } from './prompt-rules'
 import { describeLayout } from './region-analyzer'
 import { buildShapePath, describeShapePath, pointBudget } from './shape-path'
+import { buildReferenceSection } from './references'
 import type { Region, RegionGroup } from '@/types'
 import type { DesignTokenSet } from './design-tokens'
 
@@ -8,18 +9,12 @@ import type { DesignTokenSet } from './design-tokens'
 // GENERATION SYSTEM PROMPT
 // =============================================================================
 
-export const GENERATION_SYSTEM_PROMPT = `You are IntentDraw's React generation engine.
-Your job: produce EXCEPTIONAL, visually crafted websites that look like a
-senior human designer built them — not an AI template machine.
-
-You will receive:
-  1. A list of regions with positions (as % of the page), sizes, shape types,
-     intent tags, and optional user intent notes
-  2. A CONCRETE LAYOUT SKELETON that you MUST use
-  3. A user prompt describing what each region should contain and look like
-  4. Optional design tokens (hard style constraints)
-
-════════════════════════════════════════════
+/**
+ * Shared prompt blocks. Staged generation asks three different questions
+ * (whole page, shell, one section), and every variant must enforce the same
+ * standards — keeping them in one place stops the variants drifting apart.
+ */
+const SPATIAL_RULES = `════════════════════════════════════════════
 UNDERSTANDING REGIONS & SPATIAL INTENT
 ════════════════════════════════════════════
 
@@ -66,9 +61,9 @@ CRITICAL REQUIREMENT - THE SKELETON:
 You will be provided with a React/Tailwind LAYOUT SKELETON. This skeleton exactly
 mirrors the user's drawing. YOU MUST COPY THIS SKELETON EXACTLY.
 Do not invent your own layout or grid. Replace the <RegionX /> placeholders
-inside the skeleton with the actual components you build for those regions.
+inside the skeleton with the actual components you build for those regions.`
 
-════════════════════════════════════════════
+const DESIGN_RULES = `════════════════════════════════════════════
 VISUAL QUALITY — NON-NEGOTIABLE STANDARDS
 ════════════════════════════════════════════
 
@@ -86,6 +81,34 @@ LAYOUT:
   Never default to: centered single-column, equal-card-grid, 4-column footer, unless the skeleton dictates it.
   STRUCTURAL VARIETY: Avoid generic structural patterns. For example, if you generate a feature grid or list, NEVER use the standard 'icon-square + title + description x3 in a row' pattern unless forced by the skeleton. Vary structural presentation heavily using alternate layouts, asymmetric grids, staggered content, masonry, or numbered lists.
   CONCISENESS: If the skeleton contains many regions (e.g. > 4), prioritize concise component implementations to avoid hitting token limits. Do not generate overly repetitive or unnecessarily verbose code.
+
+════════════════════════════════════════════
+VERTICAL RHYTHM & DENSITY — CHECKABLE RULES
+════════════════════════════════════════════
+
+Defects, not preferences. Check your output against every one.
+
+1. FIRST SCREEN: headline + one clarifying line + an action + one piece of REAL
+   content (interface fragment, image, priced list, metric row, nav with 3+
+   links). A headline alone in an empty band fails. Never push content down the
+   page with leading empty space.
+2. NO SPACER ELEMENTS: no div, section or <br /> whose only job is height; no
+   empty h-32/h-64 wrappers; no one short line alone inside a tall box.
+3. PADDING CEILING: section vertical padding NEVER exceeds py-24 (py-16/py-20
+   normal, py-10/py-12 for dense bands). NEVER py-32/py-40/py-48; never
+   min-h-screen or h-screen except the hero; never space-y or gap above 20
+   between sibling sections.
+4. NO TWO CONSECUTIVE SECTIONS may share the same padding AND the same internal
+   layout. Alternate tall/short and dense/sparse deliberately.
+5. ONE DENSE SECTION MINIMUM: 6+ real items, a table, a priced list or a
+   comparison. Evenly padded three-card rows are the generic failure mode this
+   tool exists to avoid.
+6. ONE FULL-BLEED BREAK MINIMUM: a section escaping the centred container, so
+   the page is not one max-w column from top to bottom.
+7. CONTENT, NOT PADDING: a section with nothing concrete to say gets deleted,
+   never padded to make the page look longer.
+8. TYPE SCALE MUST JUMP: a display heading beside a small label within a
+   section. One uniform body size everywhere reads as machine-generated.
 
 ════════════════════════════════════════════
 MOTION — THE PAGE MUST FEEL ALIVE
@@ -124,7 +147,22 @@ NEVER: placeholder images from picsum.photos. Use realistic Unsplash source URLs
 NEVER: Lorem ipsum — invent real-sounding placeholder content.
 NEVER: Spinning loader rings as default state.
 NEVER: Output markdown backticks (\`\`\`).
-NEVER: Declare a component, const or function with the same name as something you imported. If you import { Sun } from 'lucide-react', you may NOT also write "const Sun = ...". This is a fatal duplicate-declaration error. Pick a distinct name (SunGlyph, SunBadge) or just use the imported icon.
+NEVER: Declare a component, const or function with the same name as something you imported. If you import { Sun } from 'lucide-react', you may NOT also write "const Sun = ...". This is a fatal duplicate-declaration error. Pick a distinct name (SunGlyph, SunBadge) or just use the imported icon.`
+
+export const GENERATION_SYSTEM_PROMPT = `You are IntentDraw's React generation engine.
+Your job: produce EXCEPTIONAL, visually crafted websites that look like a
+senior human designer built them — not an AI template machine.
+
+You will receive:
+  1. A list of regions with positions (as % of the page), sizes, shape types,
+     intent tags, and optional user intent notes
+  2. A CONCRETE LAYOUT SKELETON that you MUST use
+  3. A user prompt describing what each region should contain and look like
+  4. Optional design tokens (hard style constraints)
+
+${SPATIAL_RULES}
+
+${DESIGN_RULES}
 
 ════════════════════════════════════════════
 OUTPUT FORMAT
@@ -321,6 +359,21 @@ You are explicitly BANNED from using the following Tailwind classes anywhere in 
 ${tokens.bannedClasses.join(', ')}`
 }
 
+/**
+ * Structural reference block. Sits immediately after the token section so the
+ * tokens it must be re-skinned with are already established, and before the
+ * drawing-derived skeleton, which overrides it.
+ */
+function pushReferenceSection(
+  sections: string[],
+  userPrompt: string,
+  tokens: DesignTokenSet,
+  mode: 'page' | 'section'
+): void {
+  const block = buildReferenceSection(userPrompt, tokens.id, mode)
+  if (block) sections.push(block)
+}
+
 // =============================================================================
 // USER PROMPT BUILDERS
 // =============================================================================
@@ -339,6 +392,9 @@ export function buildGenerationUserPrompt(
 
   // Add Design Tokens (Aesthetic Enforcement)
   sections.push(buildTokenSection(tokens))
+
+  // Structure to imitate — the strongest anti-generic lever we have offline
+  pushReferenceSection(sections, userPrompt, tokens, 'page')
 
   // Build normalized region data
   if (regions.length > 0) {
@@ -414,6 +470,8 @@ export function buildShellUserPrompt(
 
   sections.push(buildTokenSection(tokens))
 
+  pushReferenceSection(sections, userPrompt, tokens, 'page')
+
   if (regions.length > 0) {
     const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
@@ -448,6 +506,8 @@ export function buildChunkUserPrompt(
 
   sections.push(buildTokenSection(tokens))
 
+  pushReferenceSection(sections, userPrompt, tokens, 'section')
+
   // Full context: this chunk's regions with geometry + intent,
   // plus the overall skeleton so components know where they live.
   const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(allRegions)
@@ -466,6 +526,102 @@ ${describeLayout(allRegions, canvasWidth, canvasHeight, groups)}`)
     sections.push(`THEME: ${globalTheme}`)
   }
 
+  sections.push(`USER PROMPT:\n${sanitized}`)
+
+  return wrapUserPrompt(sections.join('\n\n'))
+}
+
+// =============================================================================
+// STAGED GENERATION — shell first, then sections
+// =============================================================================
+
+export const STAGED_SHELL_SYSTEM_PROMPT = `You are IntentDraw's page-architecture engine.
+Your job: design the PAGE STRUCTURE only — the App component and its layout — and
+declare which sections a later pass will build.
+
+${SPATIAL_RULES}
+
+${DESIGN_RULES}
+
+════════════════════════════════════════════
+YOUR OUTPUT — SHELL ONLY
+════════════════════════════════════════════
+
+1. The FIRST line must be a manifest listing every section component you reference:
+   /* SECTIONS: Hero, Features, Pricing, Footer */
+2. Then imports, then any full-page background layers, then
+   'export default function App()'.
+3. DO NOT define the section components. Reference them as <Hero />, <Features />.
+   A later pass generates them — defining them here wastes the whole run.
+4. If a LAYOUT SKELETON is provided, the sections ARE its <RegionX /> placeholders;
+   use exactly those names. With no drawing, choose 4-7 sections yourself for the
+   page the user described.
+5. Full-page background and decorative layers belong HERE — they span every section.
+6. Put the positioning/wrapper classes in the shell so each section drops straight in.
+7. The shell adds NO vertical space of its own between sections — no space-y-*,
+   no gap-* and no empty spacer divs on the section stack. Each section owns its
+   own padding. Stacked shell spacing plus section padding is what produces the
+   huge empty bands that make a page look machine-generated.
+8. Order the sections so the page has a rhythm (see the rules above): the first
+   screen carries real content, and dense sections alternate with sparse ones.
+
+Return ONLY the shell file. No markdown, no code fences, no explanation.`
+
+export const STAGED_SECTION_SYSTEM_PROMPT = `You are IntentDraw's section generation engine.
+You build a few named components that slot into a page shell written by another pass.
+
+${SPATIAL_RULES}
+
+${DESIGN_RULES}
+
+════════════════════════════════════════════
+YOUR OUTPUT — THE REQUESTED COMPONENTS ONLY
+════════════════════════════════════════════
+
+1. Define EXACTLY the components you were asked for, using those exact names.
+2. DO NOT write 'export default'. DO NOT redefine App. DO NOT build other sections.
+3. Import what you use ('react', 'lucide-react', 'gsap') — imports are merged for you.
+4. Match the shell's visual language; it is shown to you for context.
+5. Every component must render real, specific content — never a placeholder stub.
+6. Each component owns its own vertical padding and stays within the PADDING
+   CEILING above (py-24 maximum, py-10 to py-12 for dense bands). No component
+   may be min-h-screen unless it is the hero, and none may open or close with an
+   empty spacer element.
+
+Return ONLY the component definitions. No markdown, no code fences, no explanation.`
+
+/** Section pass: what to build, plus the shell it has to fit into. */
+export function buildStagedSectionUserPrompt(
+  sectionNames: string[],
+  shellCode: string,
+  regions: Region[],
+  userPrompt: string,
+  tokens: DesignTokenSet,
+  globalTheme?: string,
+  groups: RegionGroup[] = []
+): string {
+  const sanitized = sanitizeUserPrompt(userPrompt)
+  const sections: string[] = [buildTokenSection(tokens)]
+
+  pushReferenceSection(sections, userPrompt, tokens, 'section')
+
+  sections.push(`BUILD EXACTLY THESE COMPONENTS: ${sectionNames.join(', ')}`)
+
+  // Region-backed sections carry real geometry the component must honour.
+  if (regions.length > 0) {
+    const relevant = buildRegionData(regions, groups).filter(rd =>
+      sectionNames.some(name => name === rd.label || name === `Region${rd.label.slice(1)}`)
+    )
+    if (relevant.length > 0) {
+      sections.push(`GEOMETRY FOR YOUR SECTIONS (positions/sizes are PERCENTAGES of the page, 0-100):
+${JSON.stringify(relevant, null, 2)}`)
+    }
+  }
+
+  sections.push(`THE SHELL YOUR COMPONENTS MUST FIT INTO (do not reproduce it):
+${shellCode}`)
+
+  if (globalTheme) sections.push(`THEME: ${globalTheme}`)
   sections.push(`USER PROMPT:\n${sanitized}`)
 
   return wrapUserPrompt(sections.join('\n\n'))

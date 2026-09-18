@@ -43,13 +43,22 @@ export function sanitizeHtml(html: string): string {
 /**
  * Wraps React TSX code for preview rendering using Babel standalone.
  *
- * When `options.captureSnapshot` is set, the iframe screenshots itself once
- * (via html2canvas) after it finishes rendering and posts the PNG data URL to
- * the parent as `{ type: 'IFRAME_SNAPSHOT', dataUrl }`. The parent uses that
- * frozen bitmap as the Design-canvas backdrop instead of keeping a live,
- * continuously-compiling iframe behind the drawing surface.
+ * `options.freeze` renders the page once and then stops it moving: every GSAP
+ * and WAAPI animation is jumped to its end state and paused, and CSS animations
+ * and transitions are disabled. It exists for the Design-canvas backdrop, which
+ * must show the generated site behind the drawing surface without spending the
+ * main thread on animation the user isn't looking at.
+ *
+ * This replaced an html2canvas self-screenshot that could never have worked: the
+ * preview iframe is `sandbox="allow-scripts"` with no `allow-same-origin`, so its
+ * origin is opaque, and html2canvas renders into a nested iframe whose document
+ * it must then read — blocked as cross-origin every single time. The snapshot
+ * therefore never arrived, and the "frozen bitmap" backdrop the parent waited for
+ * left a live, fully animating iframe mounted behind the canvas forever.
+ * Granting `allow-same-origin` would fix html2canvas and destroy the sandbox that
+ * makes running model-written code safe, so freezing in place is the right trade.
  */
-export function wrapReactForPreview(tsxCode: string, options?: { captureSnapshot?: boolean }): string {
+export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolean }): string {
   // Remove markdown formatting if somehow it slipped through
   let code = tsxCode;
   if (code.startsWith('```')) {
@@ -74,50 +83,48 @@ export function wrapReactForPreview(tsxCode: string, options?: { captureSnapshot
         window.parent.postMessage({ type: 'IFRAME_HEIGHT', height: document.documentElement.scrollHeight }, '*');
       }
     }
+    // Reported once on load only. A ResizeObserver here used to re-post on every
+    // body resize, which — combined with a parent that sized the frame from this
+    // number — grew the page without bound and pegged the main thread. No parent
+    // resizes itself from this any more; it is informational.
     window.addEventListener('load', reportHeight);
-    if (typeof ResizeObserver !== 'undefined') {
-      // Wait for body to be available
-      const ro = new ResizeObserver(reportHeight);
-      const observeBody = () => {
-        if (document.body) ro.observe(document.body);
-        else setTimeout(observeBody, 50);
-      };
-      observeBody();
-    }
   `;
 
-  // Optional one-time self-screenshot. Runs only when captureSnapshot is set
-  // (the Design-canvas backdrop). Output-mode / download previews skip it, so
-  // they don't pay for html2canvas. Guarded + retried in case the CDN script
-  // hasn't loaded yet; failures are swallowed (parent just keeps the live frame).
-  const captureScriptTag = options?.captureSnapshot
-    ? '<script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>'
-    : '';
-  const snapshotScript = options?.captureSnapshot
+  // Freezing the backdrop: finish and pause everything that would keep painting.
+  // No CDN script is needed, and nothing is read back across the sandbox boundary.
+  const captureScriptTag = '';
+  const snapshotScript = options?.freeze
     ? `
-    function __captureSnapshot() {
-      if (window.__snapshotDone) return;
-      if (typeof html2canvas === 'undefined') { setTimeout(__captureSnapshot, 300); return; }
-      window.__snapshotDone = true;
-      // html2canvas clones the DOM to screenshot it, and the clone restarts
-      // animations at t=0 — so anything entering from opacity:0 would capture
-      // blank. Jump every animation to its end state first.
-      try { if (window.gsap) window.gsap.globalTimeline.progress(1); } catch (e) {}
+    function __freeze() {
+      try { if (window.gsap) { window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.pause(); } } catch (e) {}
+      try {
+        if (window.ScrollTrigger && window.ScrollTrigger.getAll) {
+          window.ScrollTrigger.getAll().forEach(function(t){ try { t.kill(); } catch (e) {} });
+        }
+      } catch (e) {}
       try {
         if (document.getAnimations) {
           document.getAnimations().forEach(function(a){ try { a.finish(); } catch (e) {} });
         }
       } catch (e) {}
+      // CSS animations and transitions have no JS handle, so stop them in CSS.
       try {
-        html2canvas(document.body, { backgroundColor: '#ffffff', scale: 1, logging: false, useCORS: true })
-          .then(function(canvas){
-            try { window.parent.postMessage({ type: 'IFRAME_SNAPSHOT', dataUrl: canvas.toDataURL('image/png') }, '*'); } catch (e) {}
-          })
-          .catch(function(){});
+        var style = document.createElement('style');
+        style.textContent = '*,*::before,*::after{animation-play-state:paused !important;transition:none !important;}';
+        document.head.appendChild(style);
       } catch (e) {}
+      try { window.parent.postMessage({ type: 'IFRAME_FROZEN' }, '*'); } catch (e) {}
     }
-    // Wait a beat after load so Tailwind's JIT styles and lucide icons settle.
-    window.addEventListener('load', function(){ setTimeout(__captureSnapshot, 900); });
+    // After load, plus a beat for Tailwind's JIT styles and entrance animations.
+    window.addEventListener('load', function(){ setTimeout(__freeze, 1200); });
+    window.addEventListener('error', function(e){
+      try {
+        window.parent.postMessage({
+          type: 'IFRAME_ERROR',
+          message: (e && e.message) || 'unknown error',
+        }, '*');
+      } catch (err) {}
+    });
   `
     : '';
 
