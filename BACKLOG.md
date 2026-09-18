@@ -106,7 +106,9 @@ Runtime is in place (GSAP + MotionPathPlugin + ScrollTrigger, verified). What is
 6. `viewMode: 'split'` is unreachable — no UI sets it, no render branch exists.
 7. Stale UI label: `controls-panel.tsx` shows "NIM Llama 3.1" for a provider whose wired default is `nemotron-3.5-lightning`.
 
-## Owner's own additions
+## Owner's standing intent (context for prioritising)
 
-The owner said on 2026-09-18 that they have further requirements to add before
-work resumes. Capture them here when they arrive, then pick a starting item.
+- The tool should be a **full-fledged, genuinely advanced web-dev tool**, not a demo — something the owner is proud of, not a résumé project. Willing to change stack, structure or architecture wherever that is the right call.
+- **Free tiers now, paid later.** Infrastructure is Vercel + Supabase, models are free-tier. Moving to a paid API (Claude or similar) is acceptable *once output quality justifies it* — so avoid decisions that lock the pipeline to one provider.
+- Owner wants suggestions proactively, and wants to be told when setup work is needed on their side (accounts, keys, config).
+- Deferred but real: subscription tiers, with section/page count as one lever.
