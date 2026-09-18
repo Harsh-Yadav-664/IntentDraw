@@ -15,7 +15,8 @@ import {
   buildChunkUserPrompt,
 } from './prompts'
 import { resolveDesignTokens } from './design-tokens'
-import type { Region } from '@/types'
+import { repairGeneratedCode } from './repair'
+import type { Region, RegionGroup } from '@/types'
 
 // Per-provider hard cap for a single generation call. Above this we give up on
 // that provider and let the fallback chain try the next one, so a slow or dead
@@ -77,7 +78,8 @@ export async function generateCode(
   globalTheme?: string,
   provider: 'gemini' | 'groq' | 'nvidia' = 'gemini',
   nvidiaModelId: string = DEFAULT_NVIDIA_MODEL,
-  imageBase64?: string
+  imageBase64?: string,
+  groups: RegionGroup[] = []
 ): Promise<GenerationResponse> {
   const tokens = await resolveDesignTokens(userPrompt)
 
@@ -133,13 +135,13 @@ export async function generateCode(
   // only fall back to it for genuinely large layouts.
   // -------------------------------------------------------------------------
   if (regions.length <= 12) {
-    const userMessage = buildGenerationUserPrompt(regions, userPrompt, tokens, globalTheme, hasDrawingImage)
+    const userMessage = buildGenerationUserPrompt(regions, userPrompt, tokens, globalTheme, hasDrawingImage, groups)
     const errors: Record<string, string> = {}
 
     for (const currentProvider of fallbacks) {
       try {
         const responseText = await runProvider(currentProvider, GENERATION_SYSTEM_PROMPT, userMessage, hasDrawingImage)
-        const code = extractReact(responseText)
+        const code = repairGeneratedCode(extractReact(responseText))
 
         if (!code || code.length < 20) throw new Error(`${currentProvider} returned empty response`)
         if (!code.includes('export default')) throw new Error('Generation truncated — output incomplete')
@@ -169,13 +171,13 @@ export async function generateCode(
 
   // Phase 1: Shell (gets the drawing image so full-page backgrounds
   // and decorative placement can echo the actual strokes)
-  const shellMessage = buildShellUserPrompt(regions, userPrompt, tokens, globalTheme)
+  const shellMessage = buildShellUserPrompt(regions, userPrompt, tokens, globalTheme, groups)
   let shellSuccess = false
 
   for (const currentProvider of fallbacks) {
     try {
       const responseText = await runProvider(currentProvider, CHUNKED_SHELL_SYSTEM_PROMPT, shellMessage, hasDrawingImage)
-      shellCode = extractReact(responseText)
+      shellCode = repairGeneratedCode(extractReact(responseText))
       if (!shellCode || shellCode.length < 20) throw new Error('Shell empty')
       if (!shellCode.includes('export default')) throw new Error('Shell truncated')
       activeProvider = currentProvider
@@ -217,7 +219,7 @@ export async function generateCode(
 
   for (let index = 0; index < chunks.length; index++) {
     const chunk = chunks[index]
-    const chunkMessage = buildChunkUserPrompt(chunk, regions, userPrompt, tokens, globalTheme)
+    const chunkMessage = buildChunkUserPrompt(chunk, regions, userPrompt, tokens, globalTheme, groups)
 
     for (const currentProvider of chunkFallbacks) {
       try {
@@ -267,7 +269,9 @@ export async function generateCode(
     generatedComponents.filter(Boolean).join('\n\n') + '\n\n' +
     shellBody.substring(exportIndex)
 
-  return { success: true, code: assembledCode, provider: activeProvider }
+  // Chunks are generated independently, so their merged imports can collide
+  // with names another chunk declared.
+  return { success: true, code: repairGeneratedCode(assembledCode), provider: activeProvider }
 }
 
 // =============================================================================

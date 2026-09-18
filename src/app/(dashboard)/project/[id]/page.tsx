@@ -11,7 +11,7 @@
 import { useEffect, useState, useCallback, use } from 'react'
 import { useRouter } from 'next/navigation'
 import { useWorkflowStore } from '@/store/workflow-store'
-import { useCanvasStore } from '@/store/canvas-store'
+import { useCanvasStore, parseCanvasData } from '@/store/canvas-store'
 import { SaveStatus } from '@/components/shared/save-status'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
@@ -31,7 +31,7 @@ export default function ProjectPage({ params }: PageProps) {
   const loadProject = useWorkflowStore((s) => s.loadProject)
   const triggerAutoSave = useWorkflowStore((s) => s.triggerAutoSave)
   const projectName = useWorkflowStore((s) => s.projectName)
-  const setRegions = useCanvasStore((s) => s.setRegions)
+  const setCanvasData = useCanvasStore((s) => s.setCanvasData)
   const viewMode = useCanvasStore((s) => s.viewMode)
   
   const [loading, setLoading] = useState(true)
@@ -54,8 +54,8 @@ export default function ProjectPage({ params }: PageProps) {
         const project = json.data.project
 
         // Restore canvas state from saved canvas_data
-        if (project.canvas_data && Array.isArray(project.canvas_data)) {
-          setRegions(project.canvas_data)
+        if (project.canvas_data) {
+          setCanvasData(parseCanvasData(project.canvas_data))
         }
 
         // Restore workflow state
@@ -70,13 +70,14 @@ export default function ProjectPage({ params }: PageProps) {
     }
 
     fetchProject()
-  }, [id, loadProject, setRegions])
+  }, [id, loadProject, setCanvasData])
 
   // ─── Auto-save when canvas or workflow changes ────────────────────────────
 
   // getCanvasData: called by auto-save to capture current canvas state
   const getCanvasData = useCallback(() => {
-    return useCanvasStore.getState().regions
+    const { regions, groups } = useCanvasStore.getState()
+    return { regions, groups }
   }, [])
 
   // Trigger auto-save without causing re-renders using store subscriptions
@@ -87,6 +88,7 @@ export default function ProjectPage({ params }: PageProps) {
     let lastCode = useWorkflowStore.getState().previewCode
     let lastTheme = useWorkflowStore.getState().globalTheme
     let lastRegions = useCanvasStore.getState().regions
+    let lastGroups = useCanvasStore.getState().groups
 
     const unsubWorkflow = useWorkflowStore.subscribe((state) => {
       if (state.prompt !== lastPrompt || state.previewCode !== lastCode || state.globalTheme !== lastTheme) {
@@ -98,8 +100,9 @@ export default function ProjectPage({ params }: PageProps) {
     })
 
     const unsubCanvas = useCanvasStore.subscribe((state) => {
-      if (state.regions !== lastRegions) {
+      if (state.regions !== lastRegions || state.groups !== lastGroups) {
         lastRegions = state.regions
+        lastGroups = state.groups
         triggerAutoSave(getCanvasData)
       }
     })

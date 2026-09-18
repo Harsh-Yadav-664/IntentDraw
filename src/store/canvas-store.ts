@@ -1,16 +1,22 @@
 import { create } from 'zustand'
-import type { Region, RegionGeometry, CanvasTool } from '@/types'
+import type { Region, RegionGeometry, RegionGroup, CanvasData, CanvasTool } from '@/types'
 import { generateUUID } from '@/lib/utils'
 
 interface StageExporter {
   toDataURL(config?: { pixelRatio?: number }): string
 }
 
-let _history: Region[][] = [[]]
+interface HistoryEntry {
+  regions: Region[]
+  groups: RegionGroup[]
+}
+
+let _history: HistoryEntry[] = [{ regions: [], groups: [] }]
 let _historyIndex = 0
 
 interface CanvasStore {
   regions: Region[]
+  groups: RegionGroup[]
   activeTool: CanvasTool
   selectedRegionIds: string[]
   canUndo: boolean
@@ -35,7 +41,14 @@ interface CanvasStore {
   deleteRegions: (ids: string[]) => void
   clearRegions: () => void
   setRegions: (regions: Region[]) => void
-  
+  setCanvasData: (data: CanvasData) => void
+
+  // Groups
+  groupSelection: (name?: string) => string | null
+  ungroup: (groupId: string) => void
+  updateGroupIntent: (groupId: string, intent: string) => void
+  renameGroup: (groupId: string, name: string) => void
+
   // Visibility actions
   toggleVisibility: (id: string) => void
   setVisibility: (id: string, visible: boolean) => void
@@ -46,6 +59,26 @@ interface CanvasStore {
   exportToPng: () => string | null
   exportAsJson: () => string
   importFromJson: (json: string) => void
+}
+
+/**
+ * Reads persisted canvas state. Projects saved before groups existed hold a
+ * bare `Region[]`, so both shapes have to keep working.
+ */
+export function parseCanvasData(raw: unknown): CanvasData {
+  if (Array.isArray(raw)) return { regions: raw as Region[], groups: [] }
+  if (raw && typeof raw === 'object') {
+    const data = raw as Partial<CanvasData>
+    if (Array.isArray(data.regions)) {
+      return { regions: data.regions, groups: Array.isArray(data.groups) ? data.groups : [] }
+    }
+  }
+  return { regions: [], groups: [] }
+}
+
+/** The members of a group, in region order. */
+export function regionsInGroup(regions: Region[], groupId: string): Region[] {
+  return regions.filter(r => r.groupId === groupId)
 }
 
 // Region colors - Professional wireframe palette
@@ -67,13 +100,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
   }
 
   const pushHistory = () => {
-    const { regions } = get()
+    const { regions, groups } = get()
     _history = _history.slice(0, _historyIndex + 1)
-    _history.push(JSON.parse(JSON.stringify(regions)) as Region[])
+    _history.push(JSON.parse(JSON.stringify({ regions, groups })) as HistoryEntry)
     if (_history.length > 50) _history = _history.slice(-50)
     _historyIndex = _history.length - 1
     syncHistoryFlags()
   }
+
+  /** Restores a history entry, rebuilding the derived visibility map. */
+  const restore = (entry: HistoryEntry) => {
+    const { regions, groups } = JSON.parse(JSON.stringify(entry)) as HistoryEntry
+    const visibility: Record<string, boolean> = {}
+    regions.forEach(r => { visibility[r.id] = true })
+    set({ regions, groups, selectedRegionIds: [], visibility })
+    syncHistoryFlags()
+  }
+
+  /** Groups with no remaining members are noise in the UI and the prompt. */
+  const dropEmptyGroups = (regions: Region[], groups: RegionGroup[]): RegionGroup[] =>
+    groups.filter(g => regions.some(r => r.groupId === g.id))
 
   const renumber = (regions: Region[]): Region[] =>
     regions.map((r, i) => ({ ...r, regionNumber: i + 1 }))
@@ -104,6 +150,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
 
   return {
     regions: [],
+    groups: [],
     activeTool: 'select',
     selectedRegionIds: [],
     canUndo: false,
@@ -166,17 +213,21 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const { selectedRegionIds, visibility } = get()
       const newVisibility = { ...visibility }
       ids.forEach(id => delete newVisibility[id])
-      
-      set((state) => ({
-        regions: renumber(state.regions.filter((r) => !ids.includes(r.id))),
-        selectedRegionIds: selectedRegionIds.filter(id => !ids.includes(id)),
-        visibility: newVisibility,
-      }))
+
+      set((state) => {
+        const regions = renumber(state.regions.filter((r) => !ids.includes(r.id)))
+        return {
+          regions,
+          groups: dropEmptyGroups(regions, state.groups),
+          selectedRegionIds: selectedRegionIds.filter(id => !ids.includes(id)),
+          visibility: newVisibility,
+        }
+      })
       pushHistory()
     },
 
     clearRegions: () => {
-      set({ regions: [], selectedRegionIds: [], visibility: {} })
+      set({ regions: [], groups: [], selectedRegionIds: [], visibility: {} })
       pushHistory()
     },
 
@@ -184,6 +235,61 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const visibility: Record<string, boolean> = {}
       regions.forEach(r => { visibility[r.id] = true })
       set({ regions, visibility })
+    },
+
+    setCanvasData: ({ regions, groups }) => {
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      set({ regions, groups: dropEmptyGroups(regions, groups), visibility })
+    },
+
+    groupSelection: (name) => {
+      const { selectedRegionIds, regions, groups } = get()
+      if (selectedRegionIds.length < 2) return null
+
+      const now = new Date().toISOString()
+      const group: RegionGroup = {
+        id: generateUUID(),
+        name: name?.trim() || `Group ${groups.length + 1}`,
+        intent: '',
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      const nextRegions = regions.map(r =>
+        selectedRegionIds.includes(r.id) ? { ...r, groupId: group.id, updatedAt: now } : r
+      )
+      set({
+        regions: nextRegions,
+        // A region belongs to one group, so re-grouping can empty its old one.
+        groups: dropEmptyGroups(nextRegions, [...groups, group]),
+      })
+      pushHistory()
+      return group.id
+    },
+
+    ungroup: (groupId) => {
+      set((state) => ({
+        regions: state.regions.map(r => (r.groupId === groupId ? { ...r, groupId: null } : r)),
+        groups: state.groups.filter(g => g.id !== groupId),
+      }))
+      pushHistory()
+    },
+
+    updateGroupIntent: (groupId, intent) => {
+      set((state) => ({
+        groups: state.groups.map(g =>
+          g.id === groupId ? { ...g, intent, updatedAt: new Date().toISOString() } : g
+        ),
+      }))
+    },
+
+    renameGroup: (groupId, name) => {
+      set((state) => ({
+        groups: state.groups.map(g =>
+          g.id === groupId ? { ...g, name, updatedAt: new Date().toISOString() } : g
+        ),
+      }))
     },
     
     toggleVisibility: (id) => {
@@ -204,21 +310,13 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     undo: () => {
       if (_historyIndex <= 0) return
       _historyIndex--
-      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
-      const visibility: Record<string, boolean> = {}
-      regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, selectedRegionIds: [], visibility })
-      syncHistoryFlags()
+      restore(_history[_historyIndex])
     },
 
     redo: () => {
       if (_historyIndex >= _history.length - 1) return
       _historyIndex++
-      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
-      const visibility: Record<string, boolean> = {}
-      regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, selectedRegionIds: [], visibility })
-      syncHistoryFlags()
+      restore(_history[_historyIndex])
     },
 
     exportToPng: () => {
@@ -252,14 +350,14 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       return stage.toDataURL({ pixelRatio: 2 })
     },
 
-    exportAsJson: () => JSON.stringify(get().regions),
+    exportAsJson: () => JSON.stringify({ regions: get().regions, groups: get().groups }),
 
     importFromJson: (json) => {
       try {
-        const regions = JSON.parse(json) as Region[]
+        const { regions, groups } = parseCanvasData(JSON.parse(json))
         const visibility: Record<string, boolean> = {}
         regions.forEach(r => { visibility[r.id] = true })
-        set({ regions, selectedRegionIds: [], visibility })
+        set({ regions, groups, selectedRegionIds: [], visibility })
         pushHistory()
       } catch (e) {
         console.error('Failed to import canvas JSON:', e)

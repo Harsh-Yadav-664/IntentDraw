@@ -99,6 +99,15 @@ export function wrapReactForPreview(tsxCode: string, options?: { captureSnapshot
       if (window.__snapshotDone) return;
       if (typeof html2canvas === 'undefined') { setTimeout(__captureSnapshot, 300); return; }
       window.__snapshotDone = true;
+      // html2canvas clones the DOM to screenshot it, and the clone restarts
+      // animations at t=0 — so anything entering from opacity:0 would capture
+      // blank. Jump every animation to its end state first.
+      try { if (window.gsap) window.gsap.globalTimeline.progress(1); } catch (e) {}
+      try {
+        if (document.getAnimations) {
+          document.getAnimations().forEach(function(a){ try { a.finish(); } catch (e) {} });
+        }
+      } catch (e) {}
       try {
         html2canvas(document.body, { backgroundColor: '#ffffff', scale: 1, logging: false, useCORS: true })
           .then(function(canvas){
@@ -112,36 +121,59 @@ export function wrapReactForPreview(tsxCode: string, options?: { captureSnapshot
   `
     : '';
 
-  // We rewrite lucide-react imports to use the global window.lucide
+  // Imports are rewritten to the UMD globals loaded above. Anything not in this
+  // map is stripped, which is why an unsupported library fails as
+  // "X is not defined" at runtime rather than as a compile error.
   const babelScript = `
     const originalCode = \`${code.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
-    
+
+    // Module specifier -> the window property holding its exports.
+    // null means the exports sit directly on window (GSAP's UMD builds).
+    const MODULE_GLOBALS = {
+      'lucide-react': 'lucide',
+      'gsap': null,
+      'gsap/all': null,
+      'gsap/MotionPathPlugin': null,
+      'gsap/ScrollTrigger': null
+    };
+
     // Register custom Babel plugin to handle imports/exports robustly via AST
     Babel.registerPlugin('intentdraw-transform', function(babel) {
       const t = babel.types;
       return {
         visitor: {
           ImportDeclaration(path) {
-            if (path.node.source.value === 'lucide-react') {
-              // Convert import { X } from 'lucide-react' to const { X } = window.lucide
-              const specifiers = path.node.specifiers.filter(spec => t.isImportSpecifier(spec)).map(spec => {
+            const source = path.node.source.value;
+            if (!(source in MODULE_GLOBALS)) { path.remove(); return; }
+
+            const globalName = MODULE_GLOBALS[source];
+            const namespace = globalName
+              ? t.memberExpression(t.identifier('window'), t.identifier(globalName))
+              : t.identifier('window');
+
+            const named = [];
+            const declarators = [];
+
+            path.node.specifiers.forEach(function(spec) {
+              if (t.isImportSpecifier(spec)) {
                 const importedName = spec.imported.type === 'StringLiteral' ? spec.imported.value : spec.imported.name;
-                return t.objectProperty(t.identifier(importedName), t.identifier(spec.local.name), false, importedName === spec.local.name);
-              });
-              if (specifiers.length > 0) {
-                path.replaceWith(
-                  t.variableDeclaration('const', [
-                    t.variableDeclarator(
-                      t.objectPattern(specifiers),
-                      t.memberExpression(t.identifier('window'), t.identifier('lucide'))
-                    )
-                  ])
-                );
-              } else {
-                path.remove();
+                named.push(t.objectProperty(t.identifier(importedName), t.identifier(spec.local.name), false, importedName === spec.local.name));
+              } else if (t.isImportDefaultSpecifier(spec) || t.isImportNamespaceSpecifier(spec)) {
+                // import gsap from 'gsap' -> const gsap = window.gsap
+                declarators.push(t.variableDeclarator(
+                  t.identifier(spec.local.name),
+                  globalName ? namespace : t.memberExpression(t.identifier('window'), t.identifier(spec.local.name))
+                ));
               }
+            });
+
+            if (named.length > 0) {
+              declarators.unshift(t.variableDeclarator(t.objectPattern(named), namespace));
+            }
+
+            if (declarators.length > 0) {
+              path.replaceWith(t.variableDeclaration('const', declarators));
             } else {
-              // Strip all other imports
               path.remove();
             }
           },
@@ -191,6 +223,9 @@ export function wrapReactForPreview(tsxCode: string, options?: { captureSnapshot
 
     try {
       let compiled = Babel.transform(originalCode, {
+        // The TypeScript preset refuses to run without a filename when Babel is
+        // called directly (it needs the extension to pick its syntax mode).
+        filename: 'generated.tsx',
         presets: [['react', { runtime: 'classic' }], 'typescript'],
         plugins: ['intentdraw-transform']
       }).code;
@@ -241,8 +276,17 @@ if (typeof window.__RenderComponent !== "undefined") {
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  
+  <!-- Pinned: an unpinned @babel/standalone silently broke every preview once
+       when the TypeScript preset started demanding a filename. -->
+  <script src="https://unpkg.com/@babel/standalone@7.29.9/babel.min.js"></script>
+
+  <!-- Animation runtime. Plugins self-register and must load after gsap core.
+       GSAP writes inline styles on real nodes, so unlike CSS keyframes its
+       output survives the html2canvas snapshot used by the Design canvas. -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/MotionPathPlugin.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/ScrollTrigger.min.js"></script>
+
   <!-- Use Lucide UMD -->
   <script src="https://unpkg.com/lucide@latest"></script>
   ${captureScriptTag}
@@ -255,22 +299,67 @@ if (typeof window.__RenderComponent !== "undefined") {
 </head>
 <body>
   <div id="root"></div>
-  <!-- Lucide React wrapper (mock) to map window.lucide primitives to React components -->
+  <!-- Maps lucide-react imports to React components backed by the lucide UMD's
+       icon data. The UMD exposes each icon as an array of [tag, attrs] SVG
+       children, which we render inline — so icons participate in React
+       reconciliation instead of needing a post-mount createIcons() pass. -->
   <script>
-    window.lucide = new Proxy({}, {
-      get: function(target, prop) {
-        return function(props) {
-          // A tiny React component that renders the lucide SVG via data-lucide
-          props = props || {};
-          return React.createElement('i', {
-            'data-lucide': String(prop).replace(/[A-Z]/g, m => '-' + m.toLowerCase()).replace(/^-/, ''),
-            className: props.className,
-            style: { width: props.size || 24, height: props.size || 24, color: props.color || 'currentColor', display: 'inline-block' },
-            ref: (node) => { if (node && window.lucideIcons && lucide.createIcons) lucide.createIcons({ root: node.parentNode }) }
-          });
-        };
+    (function () {
+      // Capture the real library before shadowing the global with the proxy.
+      var lib = window.lucide || {};
+      var iconData = lib.icons || lib;
+
+      // Icon data uses SVG attribute names; React needs the camelCase form.
+      function toReactAttrs(attrs) {
+        var out = {};
+        for (var key in attrs) {
+          var reactKey = key.replace(/-([a-z])/g, function (_, c) { return c.toUpperCase(); });
+          out[reactKey] = attrs[key];
+        }
+        return out;
       }
-    });
+
+      window.lucide = new Proxy({}, {
+        get: function (target, prop) {
+          var children = iconData[String(prop)];
+          return function LucideIcon(props) {
+            props = props || {};
+            if (!children) return null;
+            var size = props.size || 24;
+            var rest = Object.assign({}, props);
+            delete rest.size; delete rest.color; delete rest.strokeWidth;
+            return React.createElement(
+              'svg',
+              Object.assign({
+                xmlns: 'http://www.w3.org/2000/svg',
+                width: size,
+                height: size,
+                viewBox: '0 0 24 24',
+                fill: 'none',
+                stroke: props.color || 'currentColor',
+                strokeWidth: props.strokeWidth || 2,
+                strokeLinecap: 'round',
+                strokeLinejoin: 'round'
+              }, rest),
+              children.map(function (child, i) {
+                return React.createElement(child[0], Object.assign({ key: i }, toReactAttrs(child[1])));
+              })
+            );
+          };
+        }
+      });
+
+      // Models frequently use an icon without importing it, which would crash
+      // the whole preview with "X is not defined". Every icon is already here,
+      // so expose them as globals — the same trick used for React's hooks.
+      // Never shadow an existing global (Image, Menu, History, ...): a local
+      // const in the generated code still takes precedence over these.
+      try {
+        Object.keys(iconData).forEach(function (name) {
+          if (window[name] === undefined) window[name] = window.lucide[name];
+        });
+      } catch (e) {}
+    })();
   </script>
   <script type="text/javascript">${babelScript}</script>
 </body>

@@ -15,6 +15,7 @@ export function useAI() {
   const [isGenerating, setIsGenerating] = useState(false)
 
   const regions = useCanvasStore((s) => s.regions)
+  const groups = useCanvasStore((s) => s.groups)
   const exportToPng = useCanvasStore((s) => s.exportToPng)
 
   const prompt = useWorkflowStore((s) => s.prompt)
@@ -45,6 +46,7 @@ export function useAI() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           regions,
+          groups,
           imageData, // Drawing image — visual reference for decorative strokes
           prompt: prompt.trim(),
           globalTheme: globalTheme.trim() || undefined,
@@ -70,7 +72,7 @@ export function useAI() {
     } finally {
       setIsGenerating(false)
     }
-  }, [regions, prompt, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode])
+  }, [regions, groups, prompt, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode])
 
   /**
    * Regenerates a single region while keeping others intact.

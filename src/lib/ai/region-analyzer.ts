@@ -1,4 +1,5 @@
-import type { Region } from '@/types'
+import type { Region, RegionGroup } from '@/types'
+import { buildShapePath, describeShapePath, pointBudget } from './shape-path'
 
 interface LayoutGrid {
   rows: LayoutRow[]
@@ -116,7 +117,12 @@ export function analyzeRegionLayout(regions: Region[]): LayoutGrid {
  * canvasWidth/canvasHeight are the true drawing bounds, used to position
  * decorative/relational elements in percentages.
  */
-export function describeLayout(regions: Region[], canvasWidth?: number, canvasHeight?: number): string {
+export function describeLayout(
+  regions: Region[],
+  canvasWidth?: number,
+  canvasHeight?: number,
+  groups: RegionGroup[] = []
+): string {
   const grid = analyzeRegionLayout(regions)
 
   // True canvas bounds: prefer explicit values, fall back to all-region bounds
@@ -136,8 +142,14 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
   )
   const decorative = regions.filter(r => r.classificationTag === 'decorative')
   const relational = regions.filter(r => r.classificationTag === 'relational')
+  const budget = pointBudget(regions)
 
   const lines: string[] = []
+
+  // Groups come first: they are the user's own account of what the shapes mean,
+  // which should frame everything the model reads afterwards.
+  const groupLines = describeGroups(regions, groups, cw, ch)
+  if (groupLines.length > 0) lines.push(...groupLines, '')
 
   if (structural.length > 0) {
     lines.push(`LAYOUT SKELETON:`)
@@ -151,6 +163,8 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
         const col = row.columns[0]
         lines.push(`  {/* ROW ${row.rowIndex + 1}: Full width */}`)
         lines.push(`  <div className="w-full">`)
+        const note = shapeNote(col.region)
+        if (note) lines.push(`    {/* ${note} */}`)
         lines.push(`    <Region${col.regionNumber} />`)
         lines.push(`  </div>`)
       } else {
@@ -158,6 +172,8 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
         lines.push(`  <div className="w-full flex flex-col md:flex-row gap-6">`)
         for (const col of row.columns) {
           lines.push(`    <div style={{ flexBasis: '${col.widthPercent}%' }} className="flex-grow">`)
+          const note = shapeNote(col.region)
+          if (note) lines.push(`      {/* ${note} */}`)
           lines.push(`      <Region${col.regionNumber} />`)
           lines.push(`    </div>`)
         }
@@ -181,10 +197,27 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
 
     if (decorative.length > 0) {
       lines.push(`\nDECORATIVE ELEMENTS:`)
+
+      // Several strokes sweeping across the page are one composed background,
+      // not N isolated decorations. Confining each to its own box is the exact
+      // opposite of what the user drew.
+      const composed =
+        decorative.length > 1 &&
+        (sharesOneGroup(decorative) || spansCanvas(decorative, cw, ch))
+
+      if (composed) {
+        lines.push(`  These ${decorative.length} strokes together form ONE composite background layer — the user drew them as a single flowing backdrop, not as separate confined decorations.`)
+        lines.push(`  Render them together inside ONE full-page <svg viewBox="0 0 100 100" preserveAspectRatio="none"> positioned fixed/absolute behind ALL content (lowest z-index), using each stroke's page-space path below.`)
+        lines.push(`  Style them as one coherent system (shared palette, gradient, blur or glow as the prompt describes). Do NOT emit them as <RegionX /> content blocks.`)
+      }
+
       for (const r of decorative) {
         const pos = describePosition(r, cw, ch)
         const scope = r.backgroundScope === 'full' ? 'full' : 'region'
-        if (scope === 'full') {
+
+        if (composed) {
+          lines.push(`  • Stroke from <Region${r.regionNumber} /> (${r.geometry.type}) spanning ${pos}`)
+        } else if (scope === 'full') {
           lines.push(`  • <Region${r.regionNumber} /> (Type: ${r.geometry.type}): FULL-PAGE BACKGROUND. The user wants this as the background of the entire page. Render it as a fixed/absolute layer behind ALL content (lowest z-index), spanning the full page. Echo its visual character (colors, curves, texture).`)
         } else {
           const overlap = findStructuralOverlap(r, structural)
@@ -194,6 +227,12 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
             lines.push(`  • <Region${r.regionNumber} /> (Type: ${r.geometry.type}): LOCAL DECORATION at ${pos}. Render it as an absolutely-positioned decorative element confined to that area only — NOT a page-wide background. It should exist only where the user drew it.`)
           }
         }
+
+        const stroke = composed
+          ? describeStroke(r, budget, cw, ch)
+          : strokePointer(r, budget)
+        if (stroke) lines.push(stroke)
+
         if (r.intent?.trim()) {
           lines.push(`    User's note for this shape: "${r.intent.trim()}"`)
         }
@@ -211,6 +250,8 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
         const overlap = findStructuralOverlap(r, structural)
         const relTo = overlap ? ` It connects to / points at <Region${overlap.regionNumber} />.` : ''
         lines.push(`  • <Region${r.regionNumber} /> (Type: ${r.geometry.type}) at ${pos}: indicates a relationship or directional flow.${extra}${relTo} Express it as a subtle directional cue, connector, or animated hint — not a content block.`)
+        const stroke = strokePointer(r, budget)
+        if (stroke) lines.push(stroke)
         if (r.intent?.trim()) {
           lines.push(`    User's note for this shape: "${r.intent.trim()}"`)
         }
@@ -220,6 +261,111 @@ export function describeLayout(regions: Region[], canvasWidth?: number, canvasHe
   }
 
   return lines.join('\n')
+}
+
+/**
+ * Renders the user's groups. A group is the user saying "these shapes are one
+ * thing" — without it the model sees N unrelated boxes and builds N components.
+ */
+function describeGroups(
+  regions: Region[],
+  groups: RegionGroup[],
+  canvasWidth: number,
+  canvasHeight: number
+): string[] {
+  const populated = groups
+    .map(group => ({ group, members: regions.filter(r => r.groupId === group.id) }))
+    .filter(entry => entry.members.length > 0)
+
+  if (populated.length === 0) return []
+
+  const lines = ['REGION GROUPS:']
+  lines.push(
+    'The user grouped these shapes and described each group as a whole. Build each group as ONE cohesive design element composed of its member shapes — NOT as separate unrelated blocks. The group description below overrides any per-shape assumption.'
+  )
+
+  for (const { group, members } of populated) {
+    const numbers = members.map(m => `R${m.regionNumber}`).join(', ')
+    const bounds = describeBounds(members, canvasWidth, canvasHeight)
+    lines.push(`  • "${group.name}" — ${numbers} — occupying ${bounds}`)
+    lines.push(
+      group.intent.trim()
+        ? `    User's description: "${group.intent.trim()}"`
+        : `    (no description given — infer this group's purpose from the main prompt)`
+    )
+  }
+
+  return lines
+}
+
+/** Combined extent of several regions, as page percentages. */
+function describeBounds(regions: Region[], canvasWidth: number, canvasHeight: number): string {
+  const minX = Math.min(...regions.map(r => r.geometry.x))
+  const maxX = Math.max(...regions.map(r => r.geometry.x + r.geometry.width))
+  const minY = Math.min(...regions.map(r => r.geometry.y))
+  const maxY = Math.max(...regions.map(r => r.geometry.y + r.geometry.height))
+  const pct = (value: number, total: number) => Math.round((value / total) * 100)
+  return `left ~${pct(minX, canvasWidth)}%, top ~${pct(minY, canvasHeight)}%, ~${pct(maxX - minX, canvasWidth)}% wide, ~${pct(maxY - minY, canvasHeight)}% tall`
+}
+
+/**
+ * The grid skeleton turns every region into a rectangular flex child, which
+ * silently discards what the user actually drew. A circle became a plain card.
+ */
+function shapeNote(region: Region): string | null {
+  switch (region.geometry.type) {
+    case 'circle':
+      return 'the user drew this region as a CIRCLE — give it a circular container (aspect-square rounded-full overflow-hidden) rather than flattening it into a rectangular card'
+    case 'freeform':
+      return "the user drew this region as a FREEFORM shape — use its svgPath (see region data) to clip or outline it instead of a plain rectangle"
+    default:
+      return null
+  }
+}
+
+/** True when every one of these regions belongs to the same group. */
+function sharesOneGroup(regions: Region[]): boolean {
+  const groupId = regions[0]?.groupId
+  return !!groupId && regions.every(r => r.groupId === groupId)
+}
+
+/**
+ * True when a set of strokes collectively covers most of the canvas. Users draw
+ * a "flowing background" as several separate strokes, so judging each one alone
+ * against its own bounding box always concludes "small local decoration."
+ */
+function spansCanvas(regions: Region[], canvasWidth: number, canvasHeight: number): boolean {
+  const minX = Math.min(...regions.map(r => r.geometry.x))
+  const maxX = Math.max(...regions.map(r => r.geometry.x + r.geometry.width))
+  const minY = Math.min(...regions.map(r => r.geometry.y))
+  const maxY = Math.max(...regions.map(r => r.geometry.y + r.geometry.height))
+  return maxX - minX > canvasWidth * 0.6 && maxY - minY > canvasHeight * 0.6
+}
+
+/**
+ * Emits the literal drawn stroke as an SVG path. Without this the model only
+ * ever sees a bounding box, so every freeform shape looks like a rectangle.
+ * Passing canvas dimensions switches the path to whole-page coordinates.
+ */
+function describeStroke(
+  region: Region,
+  maxPoints: number,
+  canvasWidth: number,
+  canvasHeight: number
+): string | null {
+  const shape = buildShapePath(region, maxPoints, { canvasWidth, canvasHeight })
+  if (!shape) return null
+  return `    Exact stroke (${describeShapePath(shape)}) in PAGE coordinates — use directly inside the shared full-page svg: d="${shape.d}"`
+}
+
+/**
+ * The region data block already carries every stroke's `svgPath`, so point at it
+ * rather than paying for the same path twice in one prompt.
+ */
+function strokePointer(region: Region, maxPoints: number): string | null {
+  const shape = buildShapePath(region, maxPoints)
+  if (!shape) return null
+  return `    Render its exact "svgPath" from the region data above — ${describeShapePath(shape)}. Do not substitute a generic shape.`
 }
 
 /** Human-readable position of a region as percentages of the canvas. */

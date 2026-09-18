@@ -11,7 +11,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2, Square, Circle, PenTool, Navigation } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2, Square, Circle, PenTool, Navigation, Group, Ungroup } from 'lucide-react'
 
 // Helper to get shape icon
 const getShapeIcon = (type: string, color: string) => {
@@ -34,6 +35,25 @@ export default function ControlsPanel() {
   const toggleVisibility = useCanvasStore((s) => s.toggleVisibility)
   const deleteRegions = useCanvasStore((s) => s.deleteRegions)
   const updateRegionIntent = useCanvasStore((s) => s.updateRegionIntent)
+  const groups = useCanvasStore((s) => s.groups)
+  const groupSelection = useCanvasStore((s) => s.groupSelection)
+  const ungroup = useCanvasStore((s) => s.ungroup)
+  const updateGroupIntent = useCanvasStore((s) => s.updateGroupIntent)
+  const renameGroup = useCanvasStore((s) => s.renameGroup)
+
+  const groupMembers = (groupId: string) => regions.filter((r) => r.groupId === groupId)
+
+  // A group is "active" when the whole selection sits inside it, so clicking a
+  // group chip (or marquee-selecting its shapes) opens that group's editor.
+  const activeGroup = (() => {
+    if (selectedRegionIds.length === 0) return null
+    const selected = regions.filter((r) => selectedRegionIds.includes(r.id))
+    const groupId = selected[0]?.groupId
+    if (!groupId || !selected.every((r) => r.groupId === groupId)) return null
+    return groups.find((g) => g.id === groupId) ?? null
+  })()
+
+  const ungroupedRegions = regions.filter((r) => !r.groupId)
 
   const prompt = useWorkflowStore((s) => s.prompt)
   const setPrompt = useWorkflowStore((s) => s.setPrompt)
@@ -205,23 +225,72 @@ export default function ControlsPanel() {
           )
         })()}
         {selectedRegionIds.length > 1 && (
-          <div 
+          <div
             className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
           >
             <p className="font-medium text-sm text-primary">
               {selectedRegionIds.length} regions selected
             </p>
             <p className="text-xs mt-1 text-muted-foreground">
-              Multiple shapes selected
+              {activeGroup
+                ? `All in "${activeGroup.name}"`
+                : 'Group them to describe all of them with one prompt'}
             </p>
-            <Button 
-              variant="outline" 
+            {!activeGroup && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2 w-full text-xs h-7 border-primary/30 hover:bg-primary/10 text-primary/90"
+                onClick={() => groupSelection()}
+                disabled={isLoading}
+              >
+                <Group className="h-3 w-3 mr-1.5" />
+                Group {selectedRegionIds.length} shapes
+              </Button>
+            )}
+            <Button
+              variant="outline"
               size="sm"
               className="mt-2 w-full text-xs h-7 border-destructive/30 hover:bg-destructive/10 hover:text-destructive text-destructive/80"
               onClick={() => deleteRegions(selectedRegionIds)}
             >
               <Trash2 className="h-3 w-3 mr-1.5" />
               Delete {selectedRegionIds.length} regions
+            </Button>
+          </div>
+        )}
+
+        {/* Group editor — one description for every shape in the group */}
+        {activeGroup && (
+          <div className="flex-shrink-0 p-3 rounded-xl border border-primary/20 bg-primary/5">
+            <div className="flex items-center gap-2">
+              <Group className="h-4 w-4 text-primary flex-shrink-0" />
+              <Input
+                value={activeGroup.name}
+                onChange={(e) => renameGroup(activeGroup.id, e.target.value)}
+                className="h-7 text-sm bg-black/20 border-white/10 focus:border-primary/50"
+                disabled={isLoading}
+              />
+            </div>
+            <p className="text-xs mt-1.5 text-muted-foreground">
+              {groupMembers(activeGroup.id).map(r => `R${r.regionNumber}`).join(', ')}
+            </p>
+            <Textarea
+              value={activeGroup.intent}
+              onChange={(e) => updateGroupIntent(activeGroup.id, e.target.value)}
+              placeholder={`What is this group? Describe all ${groupMembers(activeGroup.id).length} shapes at once — e.g. "an animated neon background", "the pricing table"`}
+              className="mt-2 min-h-[64px] resize-none text-xs bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+              disabled={isLoading}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 w-full text-xs h-7 text-muted-foreground hover:text-foreground"
+              onClick={() => ungroup(activeGroup.id)}
+              disabled={isLoading}
+            >
+              <Ungroup className="h-3 w-3 mr-1.5" />
+              Ungroup
             </Button>
           </div>
         )}
@@ -243,6 +312,61 @@ export default function ControlsPanel() {
         )}
 
         <Separator className="bg-white/5" />
+
+        {/* Chips: click a group or region to describe it on its own, instead of
+            writing "region 3 is ..." into the main prompt. */}
+        {regions.length > 0 && (
+          <div className="flex-shrink-0">
+            <h4 className="text-sm font-medium mb-2 text-foreground/90">
+              Describe a part
+            </h4>
+            <div className="flex flex-wrap gap-1.5">
+              {groups.map((group) => {
+                const members = groupMembers(group.id)
+                if (members.length === 0) return null
+                const isActive = activeGroup?.id === group.id
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => selectRegions(members.map((r) => r.id))}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                      isActive
+                        ? 'border-primary/50 bg-primary/15 text-primary'
+                        : 'border-white/10 bg-black/20 text-foreground/70 hover:bg-white/5'
+                    }`}
+                  >
+                    <Group className="h-3 w-3" />
+                    {group.name}
+                    <span className="opacity-60">{members.length}</span>
+                    {group.intent.trim() && <span className="text-primary">•</span>}
+                  </button>
+                )
+              })}
+
+              {ungroupedRegions.map((region) => {
+                const isActive =
+                  selectedRegionIds.length === 1 && selectedRegionIds[0] === region.id
+                return (
+                  <button
+                    key={region.id}
+                    onClick={() => selectRegions([region.id])}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                      isActive
+                        ? 'border-primary/50 bg-primary/15 text-primary'
+                        : 'border-white/10 bg-black/20 text-foreground/70 hover:bg-white/5'
+                    }`}
+                  >
+                    R{region.regionNumber}
+                    {region.intent.trim() && <span className="text-primary">•</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs mt-1.5 text-muted-foreground/70">
+              Select several shapes on the canvas to group them and describe them together.
+            </p>
+          </div>
+        )}
 
         {/* Prompt Input */}
         <div className="flex-1 flex flex-col min-h-0">

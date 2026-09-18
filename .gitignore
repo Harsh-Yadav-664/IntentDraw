@@ -32,3 +32,6 @@ security.md
 
 # custom work suggestion
 AGENTS.md
+
+# local preview-runtime check written by scripts/preview-harness.ts
+public/preview-harness.html

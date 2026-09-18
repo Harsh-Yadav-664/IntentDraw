@@ -1,6 +1,7 @@
 import { wrapUserPrompt, sanitizeUserPrompt } from './prompt-rules'
 import { describeLayout } from './region-analyzer'
-import type { Region } from '@/types'
+import { buildShapePath, describeShapePath, pointBudget } from './shape-path'
+import type { Region, RegionGroup } from '@/types'
 import type { DesignTokenSet } from './design-tokens'
 
 // =============================================================================
@@ -39,6 +40,28 @@ Each region carries a classificationTag:
   - "relational": an arrow/connection. Express it as a directional cue,
     connector line, or animated hint — not a content block.
 
+DRAWN STROKES — freeform shapes and arrows:
+These regions carry an "svgPath" field: the EXACT stroke the user drew, as an
+SVG path in a "0 0 100 100" viewBox. This is real geometry, not a hint.
+  - RENDER THE PATH. Never substitute your own generic wave, blob or divider.
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+      <path d="<the svgPath value>" fill="none" stroke="currentColor" />
+    </svg>
+  - The geometry is the user's; the STYLING is yours — stroke weight, gradients,
+    glow/blur filters, fill vs stroke, opacity layering. Make it beautiful.
+  - A stroke is also a MOTION PATH. When the prompt implies movement, animate it:
+    stroke-dashoffset draw-on, a gradient sweeping along the path, slow drift, or
+    an element travelling the path via CSS offset-path.
+  - Several strokes described as one composite background must share a SINGLE
+    full-page svg layer, styled as one coherent system.
+  - LAYERING (this is the #1 way background layers silently fail): NEVER put a
+    full-page background behind an opaque parent using a negative z-index — the
+    parent's own background paints over it and the strokes become invisible.
+    Correct pattern: the page wrapper carries NO background colour, the
+    background sits in <svg className="absolute inset-0 w-full h-full z-0
+    pointer-events-none">, and ALL content goes in a sibling with "relative z-10".
+    Put the page's background colour on <body> or on the svg layer itself.
+
 CRITICAL REQUIREMENT - THE SKELETON:
 You will be provided with a React/Tailwind LAYOUT SKELETON. This skeleton exactly
 mirrors the user's drawing. YOU MUST COPY THIS SKELETON EXACTLY.
@@ -65,15 +88,43 @@ LAYOUT:
   CONCISENESS: If the skeleton contains many regions (e.g. > 4), prioritize concise component implementations to avoid hitting token limits. Do not generate overly repetitive or unnecessarily verbose code.
 
 ════════════════════════════════════════════
+MOTION — THE PAGE MUST FEEL ALIVE
+════════════════════════════════════════════
+
+A completely static page reads as unfinished. Animate deliberately.
+Available: GSAP 3 (global \`gsap\`), MotionPathPlugin, ScrollTrigger, CSS transitions.
+Drive GSAP from useEffect — never during render — and always clean up:
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.hero-line', { y: 40, opacity: 0, stagger: 0.08, duration: 0.8, ease: 'power3.out' })
+    })
+    return () => ctx.revert()
+  }, [])
+
+USE MOTION FOR:
+  - Entrance: stagger headline lines and cards in. Never animate everything at once.
+  - Scroll: ScrollTrigger reveals, parallax depth, pinned sections.
+  - Drawn strokes: animate the user's svgPath — stroke-dashoffset draw-on, a gradient
+    travelling the path, or an element following it with MotionPathPlugin.
+  - Hover and state changes: transforms and colour shifts on a real easing curve.
+
+RULES:
+  - Ease everything (power2/power3/expo). Linear and default easing look cheap.
+  - Motion must serve hierarchy — guide the eye, never decorate for its own sake.
+  - Honour prefers-reduced-motion.
+
+════════════════════════════════════════════
 BANNED PATTERNS — NEVER PRODUCE THESE
 ════════════════════════════════════════════
 
-NEVER: Import or use ANY external libraries (e.g., framer-motion, next/image, next/link, react-router). You ONLY have access to 'react' and 'lucide-react'. If you need an image, use a standard <img> tag.
+NEVER: Import libraries outside the allowed set. You have EXACTLY: 'react', 'lucide-react', and 'gsap' (plus MotionPathPlugin and ScrollTrigger). framer-motion / 'motion' is NOT available and will crash the preview — never import it. No next/image, next/link, react-router. If you need an image, use a standard <img> tag.
 NEVER: Bootstrap-style generic cards with heavy drop shadows.
 NEVER: placeholder images from picsum.photos. Use realistic Unsplash source URLs if an image is absolutely required, or better, use CSS gradients/Lucide icons.
 NEVER: Lorem ipsum — invent real-sounding placeholder content.
 NEVER: Spinning loader rings as default state.
 NEVER: Output markdown backticks (\`\`\`).
+NEVER: Declare a component, const or function with the same name as something you imported. If you import { Sun } from 'lucide-react', you may NOT also write "const Sun = ...". This is a fatal duplicate-declaration error. Pick a distinct name (SunGlyph, SunBadge) or just use the imported icon.
 
 ════════════════════════════════════════════
 OUTPUT FORMAT
@@ -205,7 +256,10 @@ function getCanvasBounds(regions: Region[]): { width: number; height: number } {
 }
 
 /** Normalized region data with explicit percentage units and intent notes. */
-function buildRegionData(regions: Region[]) {
+function buildRegionData(regions: Region[], groups: RegionGroup[] = []) {
+  const groupName = (id?: string | null) =>
+    (id && groups.find(g => g.id === id)?.name) || null
+
   const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
   // A region is floating if it overlaps another region by >40% of its area
@@ -223,35 +277,34 @@ function buildRegionData(regions: Region[]) {
     return false
   }
 
-  const getDirection = (region: Region): string | null => {
-    if (region.geometry.type !== 'arrow' || !region.geometry.path || region.geometry.path.length < 2) {
-      return null
-    }
-    const start = region.geometry.path[0]
-    const end = region.geometry.path[region.geometry.path.length - 1]
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left'
-    return dy > 0 ? 'down' : 'up'
-  }
+  const budget = pointBudget(regions)
 
-  return regions.map((r, i) => ({
-    id: `r${i + 1}`,
-    label: `R${r.regionNumber}`,
-    // All positions are PERCENTAGES of the page (0-100)
-    leftPercent: Math.round((r.geometry.x / canvasWidth) * 100),
-    topPercent: Math.round((r.geometry.y / canvasHeight) * 100),
-    widthPercent: Math.round((r.geometry.width / canvasWidth) * 100),
-    heightPercent: Math.round((r.geometry.height / canvasHeight) * 100),
-    shapeType: r.geometry.type === 'rectangle' ? 'rect' : r.geometry.type,
-    isFloating: isFloating(r),
-    directionVector: getDirection(r),
-    locked: r.lockState.layout || r.lockState.style || r.lockState.animation,
-    // The user's own description of this specific region, if provided
-    intent: r.intent?.trim() || null,
-    classificationTag: r.classificationTag || 'exact-placement',
-    backgroundScope: r.classificationTag === 'decorative' ? (r.backgroundScope || 'region') : undefined,
-  }))
+  return regions.map((r, i) => {
+    const shape = buildShapePath(r, budget)
+    return {
+      id: `r${i + 1}`,
+      label: `R${r.regionNumber}`,
+      // All positions are PERCENTAGES of the page (0-100)
+      leftPercent: Math.round((r.geometry.x / canvasWidth) * 100),
+      topPercent: Math.round((r.geometry.y / canvasHeight) * 100),
+      widthPercent: Math.round((r.geometry.width / canvasWidth) * 100),
+      heightPercent: Math.round((r.geometry.height / canvasHeight) * 100),
+      shapeType: r.geometry.type === 'rectangle' ? 'rect' : r.geometry.type,
+      isFloating: isFloating(r),
+      // The literal stroke the user drew, as an SVG `d` in a "0 0 100 100"
+      // viewBox. Without this a wave and a straight line look identical.
+      svgPath: shape?.d ?? null,
+      strokeCharacter: shape ? describeShapePath(shape) : null,
+      directionVector: shape?.direction ?? null,
+      locked: r.lockState.layout || r.lockState.style || r.lockState.animation,
+      // The user's own description of this specific region, if provided
+      intent: r.intent?.trim() || null,
+      // Set when the user grouped this shape with others — see REGION GROUPS.
+      group: groupName(r.groupId),
+      classificationTag: r.classificationTag || 'exact-placement',
+      backgroundScope: r.classificationTag === 'decorative' ? (r.backgroundScope || 'region') : undefined,
+    }
+  })
 }
 
 function buildTokenSection(tokens: DesignTokenSet): string {
@@ -277,7 +330,8 @@ export function buildGenerationUserPrompt(
   userPrompt: string,
   tokens: DesignTokenSet,
   globalTheme?: string,
-  hasDrawingImage?: boolean
+  hasDrawingImage?: boolean,
+  groups: RegionGroup[] = []
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
@@ -291,10 +345,10 @@ export function buildGenerationUserPrompt(
     const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
     sections.push(`REGIONS (all positions/sizes are PERCENTAGES of the page, 0-100):
-${JSON.stringify(buildRegionData(regions), null, 2)}`)
+${JSON.stringify(buildRegionData(regions, groups), null, 2)}`)
 
     // Add layout description (skeleton + positioned decorative/relational instructions)
-    sections.push(describeLayout(regions, canvasWidth, canvasHeight))
+    sections.push(describeLayout(regions, canvasWidth, canvasHeight, groups))
   } else {
     sections.push('NO REGIONS DRAWN — Create a complete website based only on the prompt.')
   }
@@ -351,7 +405,8 @@ export function buildShellUserPrompt(
   regions: Region[],
   userPrompt: string,
   tokens: DesignTokenSet,
-  globalTheme?: string
+  globalTheme?: string,
+  groups: RegionGroup[] = []
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
@@ -363,9 +418,9 @@ export function buildShellUserPrompt(
     const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
     sections.push(`REGIONS (all positions/sizes are PERCENTAGES of the page, 0-100):
-${JSON.stringify(buildRegionData(regions), null, 2)}`)
+${JSON.stringify(buildRegionData(regions, groups), null, 2)}`)
 
-    sections.push(describeLayout(regions, canvasWidth, canvasHeight))
+    sections.push(describeLayout(regions, canvasWidth, canvasHeight, groups))
   } else {
     sections.push('NO REGIONS DRAWN — Create a complete website based only on the prompt.')
   }
@@ -384,7 +439,8 @@ export function buildChunkUserPrompt(
   allRegions: Region[],
   userPrompt: string,
   tokens: DesignTokenSet,
-  globalTheme?: string
+  globalTheme?: string,
+  groups: RegionGroup[] = []
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
@@ -396,7 +452,7 @@ export function buildChunkUserPrompt(
   // plus the overall skeleton so components know where they live.
   const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(allRegions)
 
-  const chunkData = buildRegionData(allRegions).filter(rd =>
+  const chunkData = buildRegionData(allRegions, groups).filter(rd =>
     regions.some(r => `R${r.regionNumber}` === rd.label)
   )
 
@@ -404,7 +460,7 @@ export function buildChunkUserPrompt(
 ${JSON.stringify(chunkData, null, 2)}`)
 
   sections.push(`OVERALL LAYOUT (for context — build ONLY your regions above):
-${describeLayout(allRegions, canvasWidth, canvasHeight)}`)
+${describeLayout(allRegions, canvasWidth, canvasHeight, groups)}`)
 
   if (globalTheme) {
     sections.push(`THEME: ${globalTheme}`)

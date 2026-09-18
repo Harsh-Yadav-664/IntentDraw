@@ -17,11 +17,33 @@ export interface RegionGeometry {
   path?: Array<{ x: number; y: number }>
 }
 
+/**
+ * A named set of regions sharing one description. Users draw a feature as many
+ * shapes, then want to explain it once ("these 20 shapes are the pricing table")
+ * instead of repeating themselves per shape.
+ * Membership lives on `Region.groupId`, so deleting a region can't leave a
+ * dangling reference behind.
+ */
+export interface RegionGroup {
+  id: string
+  name: string
+  intent: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** What gets persisted to `projects.canvas_data`. */
+export interface CanvasData {
+  regions: Region[]
+  groups: RegionGroup[]
+}
+
 export interface Region {
   id: string
   regionNumber: number
   geometry: RegionGeometry
   intent: string
+  groupId?: string | null
   classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'
   // For decorative regions: 'region' = confined to where it was drawn /
   // behind the region it overlaps; 'full' = whole-page background.
