@@ -49,6 +49,9 @@ export default function DrawingCanvas() {
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 500 })
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
+  // Backdrop only — see the IFRAME_HEIGHT note in the message handler.
+  const [backdropHeight, setBackdropHeight] = useState<number | null>(null)
+  const acceptedHeight = useRef(false)
 
   const regions = useCanvasStore((s) => s.regions)
   const activeTool = useCanvasStore((s) => s.activeTool)
@@ -94,12 +97,23 @@ export default function DrawingCanvas() {
     const observer = new ResizeObserver(updateSize)
     observer.observe(container)
 
-    // Deliberately ignores IFRAME_HEIGHT. Sizing this container from the height
-    // the iframe inside it reports is a runaway loop: `min-h-screen` in the
-    // generated page resolves against the frame, so every measurement grows the
-    // page, which regrows the frame — and each round re-allocates the Konva
-    // stage. The backdrop's height comes from the drawing instead.
     const handleMessage = (e: MessageEvent) => {
+      // The FIRST height report per backdrop, and only to trim the backdrop —
+      // never the Konva stage, whose height comes from the drawing alone.
+      //
+      // This is the loop that produced "I scrolled for ten seconds through empty
+      // background": `min-h-screen` inside the generated page resolves against
+      // the frame, so sizing the frame from the page's own height grows the page,
+      // which regrows the frame, forever. It is safe here only because the
+      // runtime posts the height once on load (the ResizeObserver that re-posted
+      // on every body resize is gone) and because `acceptedHeight` latches.
+      if (e.data?.type === 'IFRAME_HEIGHT' && typeof e.data.height === 'number') {
+        if (!acceptedHeight.current) {
+          acceptedHeight.current = true
+          setBackdropHeight(Math.max(400, Math.round(e.data.height)))
+        }
+        return
+      }
       if (e.data && e.data.type === 'IFRAME_ERROR') {
         console.warn(`[preview backdrop] ${e.data.message}`)
       }
@@ -149,6 +163,11 @@ export default function DrawingCanvas() {
     // canvas costs nothing per frame.
     return wrapReactForPreview(previewCode, { freeze: true })
   }, [previewCode, isGenerating])
+
+  // A new backdrop gets to report its height once.
+  useEffect(() => {
+    acceptedHeight.current = false
+  }, [srcDoc])
 
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
     const pos = stageRef.current?.getPointerPosition()
@@ -645,7 +664,8 @@ export default function DrawingCanvas() {
             sandbox="allow-scripts"
             tabIndex={-1}
             aria-hidden="true"
-            className="w-full h-full border-0 bg-white pointer-events-none"
+            style={{ height: backdropHeight ?? '100%' }}
+            className="w-full border-0 bg-transparent pointer-events-none"
           />
         ) : regions.length === 0 ? (
           <div className="w-full h-full flex flex-col items-center justify-center border border-white/5 border-dashed">

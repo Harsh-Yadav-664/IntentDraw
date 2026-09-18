@@ -6,7 +6,7 @@ import { useAI } from '@/hooks/use-ai'
 import { PromptComposer } from './prompt-composer'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
 import { Input } from '@/components/ui/input'
@@ -63,15 +63,10 @@ export default function ControlsPanel() {
 
   return (
     <Card className="h-full flex flex-col glass-panel border-white/10 bg-card/40">
-      <CardHeader className="pb-3 border-b border-white/5">
-        <CardTitle className="text-lg flex items-center gap-2 font-display">
-          <Wand2 className="h-5 w-5 text-primary" />
-          Controls
-        </CardTitle>
-        <CardDescription>Layers & prompt</CardDescription>
-      </CardHeader>
-
-      <CardContent className="flex-1 flex flex-col space-y-4 overflow-y-auto overflow-x-hidden pt-4 pb-6">
+      {/* The header used to read "Controls / Layers & prompt" — two lines that
+          named the panel you were already looking at. The vertical space is
+          better spent on the layer list. */}
+      <CardContent className="flex-1 flex flex-col space-y-4 overflow-y-auto overflow-x-hidden pt-5 pb-6">
         {/* Layer Panel */}
         <div className="flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
@@ -85,10 +80,12 @@ export default function ControlsPanel() {
           </div>
 
           {regions.length === 0 ? (
-            <div className="border-2 border-dashed border-white/10 rounded-xl p-4 text-center text-muted-foreground text-sm bg-black/20">
-              Draw shapes on the canvas to create layers.
-              <br />
-              <span className="text-xs mt-1 block opacity-70">Or just write a prompt!</span>
+            <div className="rounded-xl border border-dashed border-white/10 bg-black/20 px-4 py-5 text-center">
+              <Wand2 className="mx-auto mb-2 h-5 w-5 text-primary/40" />
+              <p className="text-sm text-muted-foreground">Draw shapes to place things precisely.</p>
+              <p className="mt-1 text-xs text-muted-foreground/60">
+                Optional — a prompt alone works too.
+              </p>
             </div>
           ) : (
             <div className="border border-white/10 rounded-xl overflow-hidden bg-black/20">
