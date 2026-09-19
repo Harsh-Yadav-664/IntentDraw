@@ -181,7 +181,9 @@ export async function generateShellStage(
 export async function generateSectionStage(
   context: StageContext,
   sectionNames: string[],
-  shellCode: string
+  shellCode: string,
+  /** The user's instruction when rebuilding a single section. */
+  note?: string
 ): Promise<SectionStageResult> {
   const { regions, groups, prompt, tokens, globalTheme, provider, nvidiaModelId, brief } = context
 
@@ -193,7 +195,8 @@ export async function generateSectionStage(
     tokens,
     globalTheme,
     groups,
-    brief
+    brief,
+    note
   )
 
   const fallbacks = buildFallbackChain(provider)

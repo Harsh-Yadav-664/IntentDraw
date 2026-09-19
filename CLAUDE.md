@@ -127,6 +127,13 @@ Why it's built this way — all four matter, don't collapse it back into one cal
 
 The old single-call `generateCode()` and `POST /api/generate` still exist and still work; the staged path is what the UI uses.
 
+### Rebuilding one section (`src/lib/ai/page-parts.ts`, `<SectionList />`)
+
+A full run is understand + shell + one call per batch; when one section is weak or failed, `useAI().rebuildSection(name, note?)` rebuilds just that one with a **single** `POST /api/generate/section` call (optional `note` → a labelled, sanitized, 300-char-capped `USER INSTRUCTION FOR <name>` block in `buildStagedSectionUserPrompt`).
+- The run's parts (`PageParts`: shell, scene, tokenId, brief, classified regions, resolved prompt, section blocks, failed list) live in `workflow-store.pageParts`, and are saved inside `canvas_data.pageParts` (no migration). `parseSavedParts()` restores them only if reassembling them reproduces the saved `generated_code` exactly — older projects, or parts that no longer match the page, simply have no section list.
+- `replaceSection()` is pure: the new block goes ahead of older blocks, the old definition is removed (a single-section block is dropped whole, helpers included), and any *other* section or `IntentScene` the new block redefines is stripped first. `assembleParts()` always puts the scene block first, and `IntentScene` is never listed as a section — nothing can replace the user's drawing.
+- Replaced the unwired `POST /api/regenerate-region` path, which predated the staged pipeline, the brief and the scene.
+
 ### Assembling generated pieces (`src/lib/ai/assemble.ts`)
 
 Independently generated blocks don't coordinate, so assembly is where their collisions get resolved. It is pure and client-safe (the browser assembles partial results).
@@ -200,7 +207,6 @@ The iframe is the whole rendering engine, and several things in it are load-bear
 
 These are incomplete features, not bugs. Don't "fix" them as defects without asking.
 
-- `POST /api/regenerate-region` + `useAI().regenerateRegion()` — fully implemented end to end, but **no UI calls it.** Likely a quick win, since full regeneration is the expensive failure mode this avoids.
 - `viewMode: 'split'` exists in `canvas-store.ts`, but nothing sets it and `canvas-editor.tsx` has no render branch for it.
 - `components/regions/` and `components/export/` are empty directories.
 - `globalTheme` in `workflow-store.ts` is stored and persisted but rendered by no control — currently a dead input.

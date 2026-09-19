@@ -1,11 +1,12 @@
-import { useState, useCallback } from 'react'
+import { useCallback } from 'react'
 import { useCanvasStore } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { assembleProgressive } from '@/lib/ai/assemble'
+import { assembleParts, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
 import type { DesignBrief } from '@/lib/ai/brief'
 
 /**
- * Hook for AI operations: generate code and regenerate regions.
+ * Hook for AI operations: generate a page, and rebuild one of its sections.
  * Handles loading states, errors, and store updates.
  *
  * Note: shape geometry comes directly from the Konva canvas store
@@ -14,7 +15,11 @@ import type { DesignBrief } from '@/lib/ai/brief'
  * the visual character of decorative strokes.
  */
 export function useAI() {
-  const [isGenerating, setIsGenerating] = useState(false)
+  // From the shared store, not local state: several components call useAI(),
+  // and a local flag only knew about generations started through that same
+  // component — the controls panel never saw one started from the prompt box,
+  // so layers stayed editable mid-run.
+  const isGenerating = useWorkflowStore((s) => s.status === 'generating')
 
   const regions = useCanvasStore((s) => s.regions)
   const groups = useCanvasStore((s) => s.groups)
@@ -26,6 +31,8 @@ export function useAI() {
   const setPreviewCode = useWorkflowStore((s) => s.setPreviewCode)
   const setGenerationProgress = useWorkflowStore((s) => s.setGenerationProgress)
   const setBrief = useWorkflowStore((s) => s.setBrief)
+  const setPageParts = useWorkflowStore((s) => s.setPageParts)
+  const setRebuild = useWorkflowStore((s) => s.setRebuild)
   const aiProvider = useWorkflowStore((s) => s.aiProvider)
   const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
 
@@ -42,9 +49,11 @@ export function useAI() {
       return false
     }
 
-    setIsGenerating(true)
     setStatus('generating')
     setBrief(null)
+    // The previous page's parts no longer describe what will be on screen.
+    setPageParts(null)
+    setRebuild(null)
     setGenerationProgress({
       label: regions.length > 0 ? 'Reading your drawing and prompt' : 'Understanding your idea',
       done: 0,
@@ -118,6 +127,8 @@ export function useAI() {
       setGenerationProgress({ label: 'Building sections', done: 2, total: totalStages })
 
       const failed: string[] = []
+      // Kept so a single section can be rebuilt later without a full run.
+      const blocks: SectionBlock[] = []
 
       // Serial on purpose: a burst of parallel calls is what trips free-tier
       // rate limits, and spacing them lets per-minute quota recover.
@@ -147,6 +158,7 @@ export function useAI() {
 
           if (sectionResult.success && sectionResult.data?.code) {
             completed.push(sectionResult.data.code)
+            blocks.push({ sections: sectionNames, code: sectionResult.data.code })
             pending = pending.filter(name => !sectionNames.includes(name))
           } else {
             failed.push(...sectionNames)
@@ -160,12 +172,32 @@ export function useAI() {
         if (pass.code) setPreviewCode(pass.code)
       }
 
+      const parts: PageParts = {
+        shellCode,
+        sceneCode: sceneCode ?? null,
+        tokenId,
+        brief,
+        regions: classifiedRegions ?? regions,
+        groups,
+        prompt: resolvedPrompt ?? shared.prompt,
+        sections: batches.flat().filter(name => name !== SCENE_NAME),
+        blocks,
+        failed,
+      }
+      // Assembled from the parts themselves, so the saved page and the saved
+      // parts always agree — that is what lets a reload restore them.
+      const finalPass = assembleParts(parts)
+      if (finalPass.code) {
+        setPageParts(parts)
+        setPreviewCode(finalPass.code)
+      }
+
       setStatus('preview_ready')
 
       // A partial page still renders; say which pieces didn't make it rather
       // than throwing away everything that did.
       if (failed.length > 0) {
-        setError(`Generated, but these sections failed and are placeholders: ${failed.join(', ')}. Try regenerating.`)
+        setError(`Generated, but these sections failed and are placeholders: ${failed.join(', ')}. Rebuild them from the Sections list.`)
       }
       return true
     } catch (error) {
@@ -173,62 +205,75 @@ export function useAI() {
       setError('Network error. Please check your connection and try again.')
       return false
     } finally {
-      setIsGenerating(false)
+      // Every exit leaves "generating" — an early return without an error
+      // would otherwise lock the UI in a run that already ended.
+      if (useWorkflowStore.getState().status === 'generating') setStatus('idle')
       setGenerationProgress(null)
     }
-  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBrief])
+  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBrief, setPageParts, setRebuild])
 
   /**
-   * Regenerates a single region while keeping others intact.
+   * Rebuilds ONE section of the last generated page — a single model call
+   * instead of a full run. The rest of the page, and the user's drawing, stay
+   * exactly as they are; on failure the old section is kept.
    */
-  const regenerateRegion = useCallback(async (
-    regionNumber: number,
-    regionPrompt: string,
-    existingCode: string
-  ): Promise<boolean> => {
-    if (!regionPrompt.trim()) {
-      setError('Please enter a prompt for this region.')
-      return false
-    }
+  const rebuildSection = useCallback(async (name: string, note?: string): Promise<boolean> => {
+    const { pageParts: parts, rebuildingSection, status } = useWorkflowStore.getState()
+    if (!parts || rebuildingSection || status === 'generating') return false
 
-    setIsGenerating(true)
-    setStatus('generating')
-
+    setRebuild(name, null)
     try {
-      const response = await fetch('/api/regenerate-region', {
+      const res = await fetch('/api/generate/section', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          regionNumber,
-          prompt: regionPrompt.trim(),
-          existingCode,
-          regions,
+          regions: parts.regions,
+          groups: parts.groups,
+          prompt: parts.prompt,
+          globalTheme: globalTheme.trim() || undefined,
           provider: aiProvider,
           nvidiaModelId,
+          sectionNames: [name],
+          shellCode: parts.shellCode,
+          tokenId: parts.tokenId,
+          brief: parts.brief ?? undefined,
+          note: note?.trim() || undefined,
         }),
       })
-
-      const result = await response.json()
-
-      if (!result.success) {
-        setError(result.error || 'Regeneration failed. Please try again.')
+      const result = await res.json().catch(() => null)
+      if (!result?.success || !result.data?.code) {
+        setRebuild(null, { section: name, message: result?.error || `Could not rebuild ${name}. The old version is kept.` })
         return false
       }
 
-      setPreviewCode(result.data.code)
+      // Re-read: the parts are only swapped if they are still the ones shown.
+      const current = useWorkflowStore.getState().pageParts
+      if (current !== parts) {
+        setRebuild(null)
+        return false
+      }
+      const next = replaceSection(parts, name, result.data.code)
+      const assembled = assembleParts(next)
+      if (!assembled.code) {
+        setRebuild(null, { section: name, message: assembled.error ?? `Could not assemble ${name}.` })
+        return false
+      }
+      setPageParts(next)
+      setPreviewCode(assembled.code)
+      setRebuild(null)
+      // The "these sections failed" banner is stale once none are left failing.
+      if (next.failed.length === 0 && useWorkflowStore.getState().error?.startsWith('Generated, but')) setError(null)
       return true
     } catch (error) {
-      console.error('[useAI] Regeneration error:', error)
-      setError('Network error. Please check your connection and try again.')
+      console.error('[useAI] Section rebuild error:', error)
+      setRebuild(null, { section: name, message: 'Network error — the old version is kept.' })
       return false
-    } finally {
-      setIsGenerating(false)
     }
-  }, [regions, aiProvider, nvidiaModelId, setStatus, setError, setPreviewCode])
+  }, [globalTheme, aiProvider, nvidiaModelId, setRebuild, setPageParts, setPreviewCode, setError])
 
   return {
     isGenerating,
     generateCode,
-    regenerateRegion,
+    rebuildSection,
   }
 }

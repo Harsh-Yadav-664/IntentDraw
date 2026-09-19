@@ -7,11 +7,9 @@ import type { GenerationResponse } from '@/types'
 import type { Part } from '@google/generative-ai'
 import {
   GENERATION_SYSTEM_PROMPT,
-  REGENERATE_REGION_SYSTEM_PROMPT,
   CHUNKED_SHELL_SYSTEM_PROMPT,
   CHUNKED_REGION_SYSTEM_PROMPT,
   buildGenerationUserPrompt,
-  buildRegenerateUserPrompt,
   buildShellUserPrompt,
   buildChunkUserPrompt,
 } from './prompts'
@@ -319,51 +317,4 @@ export async function generateCode(
   // Chunks are generated independently, so their merged imports can collide
   // with names another chunk declared.
   return { success: true, code: repairGeneratedCode(assembledCode), provider: activeProvider }
-}
-
-// =============================================================================
-// Region Regeneration — Change one region, keep the rest
-// =============================================================================
-
-export async function regenerateRegion(
-  regionNumber: number,
-  userPrompt: string,
-  existingCode: string,
-  allRegions: Region[],
-  provider: ProviderName = 'gemini',
-  nvidiaModelId: string = DEFAULT_NVIDIA_MODEL
-): Promise<GenerationResponse> {
-  const userMessage = buildRegenerateUserPrompt(regionNumber, userPrompt, existingCode, allRegions)
-
-  // Shares callProvider so timeout and provider dispatch can't drift from the
-  // generation path (this used to be a hand-rolled if/else that would have
-  // routed an unknown provider to Gemini by accident).
-  const runProvider = (p: ProviderName): Promise<string> =>
-    callProvider(p, REGENERATE_REGION_SYSTEM_PROMPT, userMessage, { nvidiaModelId })
-
-  const fallbacks = buildFallbackChain(provider)
-
-  let lastError = 'Unknown error'
-
-  for (const currentProvider of fallbacks) {
-    try {
-      const responseText = await runProvider(currentProvider)
-      const code = extractReact(responseText)
-
-      if (!code || code.length < 20) {
-        throw new Error(`${currentProvider} returned empty or too-short response`)
-      }
-
-      return { success: true, code, provider: currentProvider }
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err)
-      console.warn(`[AI Regen] ${currentProvider} failed, trying next fallback:`, lastError)
-    }
-  }
-
-  console.error('[AI Regen] All providers failed. Last error:', lastError)
-  return {
-    success: false,
-    error: `Regeneration failed — ${humanizeProviderError(lastError)}`,
-  }
 }

@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { PRESETS } from '@/lib/ai/design-tokens'
 import { generateSectionStage } from '@/lib/ai/staged'
 import { normalizeBrief } from '@/lib/ai/brief'
+import { MAX_SECTION_NOTE_CHARS } from '@/lib/ai/page-parts'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
@@ -28,7 +29,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, sectionNames, shellCode, tokenId, brief } =
+    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, sectionNames, shellCode, tokenId, brief, note } =
       body as {
         brief?: unknown
         regions?: Region[]
@@ -40,6 +41,8 @@ export async function POST(request: Request) {
         sectionNames?: string[]
         shellCode?: string
         tokenId?: string
+        /** Optional one-line instruction when the user rebuilds a single section. */
+        note?: unknown
       }
 
     if (!Array.isArray(sectionNames) || sectionNames.length === 0) {
@@ -71,7 +74,9 @@ export async function POST(request: Request) {
         brief: brief ? normalizeBrief(brief, validRegions, prompt) : undefined,
       },
       sectionNames.slice(0, 6).map(String),
-      shellCode.slice(0, MAX_SHELL_CHARS)
+      shellCode.slice(0, MAX_SHELL_CHARS),
+      // User input: capped here, sanitized and capped again by the prompt builder.
+      typeof note === 'string' ? note.slice(0, MAX_SECTION_NOTE_CHARS) : undefined
     )
 
     if (!result.success || !result.code) {

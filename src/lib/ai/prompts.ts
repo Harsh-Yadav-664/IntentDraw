@@ -5,6 +5,8 @@ import { buildReferenceSection } from './references'
 import type { Region, RegionGroup } from '@/types'
 import type { DesignTokenSet } from './design-tokens'
 import { describeScene, renderBrief, type BriefPalette, type DesignBrief } from './brief'
+import { MAX_SECTION_NOTE_CHARS } from './page-parts'
+import { pageIndexForRegion } from '@/lib/canvas/pages'
 
 // =============================================================================
 // GENERATION SYSTEM PROMPT
@@ -261,29 +263,6 @@ const Region2 = () => (
 `
 
 // =============================================================================
-// REGENERATE REGION SYSTEM PROMPT
-// =============================================================================
-
-export const REGENERATE_REGION_SYSTEM_PROMPT = `You are IntentDraw's React regeneration engine.
-You will modify ONE specific region component while preserving all others EXACTLY.
-
-RULES:
-1. You receive the complete existing React TSX file and the region to regenerate.
-2. Find the React component for that region (look for comments or component names).
-3. ONLY modify that region's content and styling.
-4. Keep ALL other code byte-for-byte identical.
-5. Maintain the existing premium, bold, and unique Tailwind UI aesthetic. Avoid generic soft UI templates.
-6. The regenerated region must fit seamlessly with surrounding design.
-
-Locked regions (marked with // <!-- LOCKED:RX --> comments):
-  NEVER modify these, even if asked.
-
-Output:
-  Return the COMPLETE React TSX file with only the target region changed.
-  No markdown. No code fences. No explanation.`
-
-
-// =============================================================================
 // SHARED HELPERS
 // =============================================================================
 
@@ -328,6 +307,8 @@ function buildRegionData(regions: Region[], groups: RegionGroup[] = []) {
     return {
       id: `r${i + 1}`,
       label: `R${r.regionNumber}`,
+      // Which screenful (1-based, 1280x800 viewport) the region starts on.
+      page: pageIndexForRegion(r) + 1,
       // All positions are PERCENTAGES of the page (0-100)
       leftPercent: Math.round((r.geometry.x / canvasWidth) * 100),
       topPercent: Math.round((r.geometry.y / canvasHeight) * 100),
@@ -451,35 +432,6 @@ Decorative shapes are NOT literal layout boxes unless their tags say so.`)
   sections.push(`USER PROMPT:\n${sanitized}`)
 
   return wrapUserPrompt(sections.join('\n\n'))
-}
-
-export function buildRegenerateUserPrompt(
-  regionNumber: number,
-  userPrompt: string,
-  existingCode: string,
-  allRegions: Region[]
-): string {
-  const sanitized = sanitizeUserPrompt(userPrompt)
-
-  const regionList = allRegions.map(r => {
-    const marker = r.regionNumber === regionNumber ? ' ← REGENERATE' : ''
-    const locked = (r.lockState.layout || r.lockState.style || r.lockState.animation) ? ' [LOCKED]' : ''
-    const intent = r.intent?.trim() ? ` — "${r.intent.trim()}"` : ''
-    return `R${r.regionNumber}: ${r.geometry.type}${locked}${intent}${marker}`
-  }).join('\n')
-
-  const prompt = `EXISTING HTML:
-${existingCode}
-
-REGIONS:
-${regionList}
-
-REGENERATE R${regionNumber} with:
-${sanitized}
-
-Return complete React TSX code with ONLY R${regionNumber} modified.`
-
-  return wrapUserPrompt(prompt)
 }
 
 export function buildShellUserPrompt(
@@ -626,7 +578,9 @@ export function buildStagedSectionUserPrompt(
   tokens: DesignTokenSet,
   globalTheme?: string,
   groups: RegionGroup[] = [],
-  brief?: DesignBrief
+  brief?: DesignBrief,
+  /** The user's instruction when rebuilding one section ("make it a comparison table"). */
+  note?: string
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
   const sections: string[] = [buildTokenSection(tokens, brief?.palette)]
@@ -670,6 +624,14 @@ ${shellCode}`)
 
   if (globalTheme) sections.push(`THEME: ${globalTheme}`)
   sections.push(`USER PROMPT:\n${sanitized}`)
+
+  // A rebuild: the user saw this section and said what to change. Last, so it
+  // reads as the final word on this component; capped because it is user input.
+  const cleanNote = note ? sanitizeUserPrompt(note.replace(/\s+/g, ' ')).slice(0, MAX_SECTION_NOTE_CHARS).trim() : ''
+  if (cleanNote) {
+    sections.push(`USER INSTRUCTION FOR ${sectionNames.join(', ')} (a rebuild of this section — follow it over the plan above where they conflict, but keep the palette, tokens and fit with the shell):
+${cleanNote}`)
+  }
 
   return wrapUserPrompt(sections.join('\n\n'))
 }
