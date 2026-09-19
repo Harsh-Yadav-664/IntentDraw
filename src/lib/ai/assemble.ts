@@ -42,6 +42,13 @@ function splitImports(code: string, into: ParsedImports): string {
     const [, clause, moduleName] = match
     if (!clause) continue // bare side-effect import — nothing to merge
 
+    // The output is ONE file: a relative or alias import can never resolve. A
+    // model thinking in multi-file terms wrote `import HeroSection from
+    // './HeroSection'` in the shell while the section pass defined HeroSection
+    // in the same file, and Babel rejects that as a duplicate declaration
+    // before the runtime's own import stripping ever runs.
+    if (/^(?:\.{1,2}\/|\/|@\/|~\/)/.test(moduleName)) continue
+
     // `React, { useState }` / `* as ns` / `{ a, b as c }` / `Thing`
     const namespaceMatch = clause.match(/\*\s+as\s+([A-Za-z_$][\w$]*)/)
     if (namespaceMatch) {

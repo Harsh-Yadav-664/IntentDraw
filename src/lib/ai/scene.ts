@@ -183,6 +183,50 @@ export function fitCircle(points: Point[]): { cx: number; cy: number; r: number 
   return { cx, cy, r }
 }
 
+/**
+ * Upward spikes: local minima of y (screen-up) that stand out from both
+ * neighbouring valleys by a meaningful margin. Wobble below the threshold is
+ * hand tremor, not a spike.
+ */
+export function countPeaks(points: Point[], minProminence: number): number {
+  // Collapse to alternating turning points first.
+  const turns: Point[] = [points[0]]
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = points[i - 1].y
+    const cur = points[i].y
+    const next = points[i + 1].y
+    if ((cur < prev && cur <= next) || (cur > prev && cur >= next)) turns.push(points[i])
+  }
+  turns.push(points[points.length - 1])
+
+  let peaks = 0
+  for (let i = 1; i < turns.length - 1; i++) {
+    const cur = turns[i].y
+    const left = turns[i - 1].y
+    const right = turns[i + 1].y
+    if (cur < left && cur < right && Math.min(left - cur, right - cur) >= minProminence) peaks++
+  }
+  return peaks
+}
+
+/**
+ * True when a stroke sits close to one circle — an arc or ring, not a zig-zag.
+ * A zig-zag of rays drawn around a sun also hugs a circle, loosely enough to
+ * pass a residual test on its own, and became a second, blank disc; so a round
+ * stroke must also be free of spikes.
+ */
+export function isRound(region: Region): boolean {
+  const points = absolutePoints(region)
+  const fit = fitCircle(points)
+  if (!fit) return false
+  const residual =
+    points.reduce((sum, p) => sum + Math.abs(Math.hypot(p.x - fit.cx, p.y - fit.cy) - fit.r), 0) / points.length / fit.r
+  if (residual >= 0.09) return false
+  // Spikes stand out radially, so measure them as distance from the centre.
+  const radial = points.map(p => ({ x: 0, y: -Math.hypot(p.x - fit.cx, p.y - fit.cy) }))
+  return countPeaks(radial, Math.max(8, fit.r * 0.08)) < 3
+}
+
 /** A round body. Drawn circles use their box; strokes are circle-fitted. */
 export function discShape(region: Region): string {
   const g = region.geometry
@@ -236,8 +280,20 @@ export function buildSceneShape(
       const d = toPathData(simplified(members[0], 18))
       return d ? { svg: `<path d="${d}" />`, paint: 'stroke' } : null
     }
-    case 'disc':
-      return { svg: members.map(discShape).join(' '), paint: 'fill' }
+    case 'disc': {
+      // A sun is often drawn as an arc plus a zig-zag of rays around it, and the
+      // understanding pass rightly groups them as one element. Circle-fitting the
+      // zig-zag too would turn the rays into a second, blank disc — so only the
+      // member that really is round becomes the disc; the rest stay strokes.
+      const round = members.filter(m => m.geometry.type === 'circle' || isRound(m))
+      const discs = (round.length > 0 ? round : [members[0]]).map(discShape)
+      const rays = members
+        .filter(m => !(round.length > 0 ? round : [members[0]]).includes(m))
+        .map(m => toPathData(simplified(m, 28)))
+        .filter(Boolean)
+        .map(d => `<path data-part="rays" d="${d}" />`)
+      return { svg: [...discs, ...rays].join(' '), paint: 'fill' }
+    }
     case 'shape': {
       const d = members.map(m => toPathData(simplified(m, 20), true)).filter(Boolean)
       return d.length ? { svg: d.map(path => `<path d="${path}" />`).join(' '), paint: 'fill' } : null

@@ -2,14 +2,8 @@ import type { Region, RegionGroup } from '@/types'
 import { PRESETS, resolveByKeywords, stablePresetFor } from './design-tokens'
 import { sanitizeUserPrompt } from './prompt-rules'
 import { simplifyToBudget } from './shape-path'
-import {
-  CANVAS_WIDTH,
-  SCENE_FORMS,
-  absolutePoints,
-  buildSceneShape,
-  sceneGround,
-  type SceneForm,
-} from './scene'
+import { perceiveDrawing } from './perception'
+import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
 
 /**
  * The design brief: what the understanding pass (understand.ts) produces, and
@@ -103,6 +97,7 @@ Read strokes by their shape AND by how they relate:
 - a long wavy horizontal line low down = water; a jagged flat-topped line = a city skyline
 - the prompt confirms or overrides your read ("the sun and the river" means those strokes ARE a sun and a river)
 Call strokes "decoration" only when they genuinely depict nothing (scribbles, swooshes, glow lines) or the user says they are decoration.
+Some shapes carry MEASURED facts computed from the stroke itself (peaks, arcs, zig-zags, which strokes run side by side, which wrap around an arc). They are exact — trust them over your visual impression of a rough sketch, then decide what the thing IS from them and the prompt.
 Put shapes that together depict one thing into one element. Every shape number belongs to exactly one element.
 
 For each element:
@@ -137,11 +132,12 @@ function readingBudget(strokes: number): number {
   return 16
 }
 
-function shapeLine(region: Region, budget: number): string {
+function shapeLine(region: Region, budget: number, measured?: string): string {
   const g = region.geometry
   const box = `x=${Math.round(g.x)}..${Math.round(g.x + g.width)} y=${Math.round(g.y)}..${Math.round(g.y + g.height)}`
   const label = `R${region.regionNumber} ${g.type} ${box}`
-  const note = region.intent?.trim() ? ` — user's note: "${sanitizeUserPrompt(region.intent.trim()).slice(0, 200)}"` : ''
+  const userNote = region.intent?.trim() ? ` — user's note: "${sanitizeUserPrompt(region.intent.trim()).slice(0, 200)}"` : ''
+  const note = (measured ? ` — MEASURED: ${measured}` : '') + userNote
 
   if (!g.path || g.path.length < 2) return label + note
   const extent = Math.max(g.width, g.height, 1)
@@ -172,7 +168,8 @@ export function buildUnderstandUserMessage(
       `DRAWING: ${regions.length} shapes on a ${CANVAS_WIDTH} x ${Math.ceil(height)} px canvas (origin top-left, y grows downward).` +
         (hasImage ? ' An image of the drawing is attached.' : '')
     )
-    parts.push(regions.map(r => shapeLine(r, budget)).join('\n'))
+    const measured = perceiveDrawing(regions)
+    parts.push(regions.map(r => shapeLine(r, budget, measured.get(r.regionNumber))).join('\n'))
 
     const populated = groups.filter(g => regions.some(r => r.groupId === g.id))
     if (populated.length > 0) {
@@ -424,67 +421,43 @@ export function applyBriefToRegions(regions: Region[], brief: DesignBrief): Regi
 
 const PLACEMENT_TEXT: Record<Placement, string> = {
   'page-background':
-    'Behind the WHOLE page, fixed to the viewport: <div className="fixed inset-0 z-0 pointer-events-none"> wrapping the svg (className="w-full h-full"), as the first child of the root wrapper, with every content section inside a sibling <div className="relative z-10">. The root wrapper takes the palette background colour; nothing opaque may sit between it and the scene.',
+    'Fixed behind the WHOLE page. The FIRST child of the root wrapper is exactly <div className="fixed inset-0 z-0 pointer-events-none"><IntentScene /></div>, and every content section sits inside a sibling <div className="relative z-10">. The root wrapper itself gets NO background colour — the scene is the page background. Sections over it are transparent or translucent (the first one always transparent).',
   'hero-background':
-    'Behind the FIRST section only: <div className="relative"><div className="absolute inset-0 z-0 overflow-hidden pointer-events-none">{svg className="w-full h-full"}</div><div className="relative z-10"><FirstSection /></div></div>. Give that section enough height for the scene to read (min-h-[85vh]).',
+    'Behind the FIRST section only: <div className="relative min-h-[85vh]"><div className="absolute inset-0 z-0 overflow-hidden pointer-events-none"><IntentScene /></div><div className="relative z-10"><FirstSection /></div></div>. That first section keeps a transparent background.',
   'section-background':
-    'Behind the section at that position: wrap it the same way as a hero background — absolute inset-0 z-0 layer, section in a relative z-10 wrapper.',
-  inline: 'Inline, as an illustration inside the section it sits in, at the drawn size.',
+    'Behind the section at the drawn position: wrapped like a hero background — an absolute inset-0 z-0 layer holding <IntentScene />, the section in a relative z-10 wrapper with a transparent background.',
+  inline: 'Inline, inside the section it belongs to, at roughly the drawn size: <div className="w-full aspect-[16/9]"><IntentScene /></div>.',
 }
 
 /**
- * The drawing as a picture: exact geometry, painted back to front. Returns ''
- * when nothing in the brief is an illustration.
+ * The drawing as a picture. The picture itself is rendered in code
+ * (scene-render.ts) and supplied to the file as `<IntentScene />`; this block
+ * tells the shell what it depicts and where to put it. Returns '' when nothing
+ * in the brief is an illustration.
  */
 export function describeScene(brief: DesignBrief, regions: Region[]): string {
-  // Back to front. Sky bodies always sit behind land and water, whatever depth
-  // the model assigned: in a real run it put the sun in FRONT of the hills, and
-  // its glow washed out the whole picture. A sun in front of a mountain is
-  // almost never what someone drawing a landscape means.
-  const layer = (e: BriefElement) =>
-    e.form === 'disc' || e.form === 'rays' ? 0 : e.form === 'band' || e.form === 'line' ? 2 : 1
-  const art = brief.drawing.elements
-    .filter(e => e.role === 'illustration' || e.role === 'motion')
-    .sort((a, b) => layer(a) - layer(b) || a.depth - b.depth)
-  if (art.length === 0) return ''
-
-  const members = regions.filter(r => art.some(e => e.regions.includes(r.regionNumber)))
-  const ground = sceneGround(members)
+  const art = brief.drawing.elements.filter(e => e.role === 'illustration' || e.role === 'motion')
+  if (art.length === 0 || !regions.some(r => art.some(e => e.regions.includes(r.regionNumber)))) return ''
 
   const placements = art.map(e => e.placement)
   const placement = (['page-background', 'hero-background', 'section-background', 'inline'] as Placement[])
     .map(p => ({ p, n: placements.filter(x => x === p).length }))
     .sort((a, b) => b.n - a.n)[0].p
 
-  const body: string[] = []
-  art.forEach((e, i) => {
-    const shape = e.form ? buildSceneShape({ name: e.name, form: e.form, regionNumbers: e.regions }, regions, ground) : null
-    const from = e.regions.map(n => `R${n}`).join('+')
-    const notes = [e.render, e.motion ? `motion: ${e.motion}` : null].filter(Boolean).join(' · ')
-    const paint = shape?.paint === 'stroke' ? 'stroke' : 'fill'
-    body.push(`  <!-- ${i + 1}. ${e.name} — ${e.role === 'motion' ? 'motion path' : e.form} from ${from}, ${paint}${notes ? ` · ${notes}` : ''} -->`)
-    if (shape) body.push(`  ${shape.svg}`)
-  })
+  const moving = art.filter(e => e.motion).map(e => `${e.name} (${e.motion})`)
 
   return `ILLUSTRATED SCENE — THE USER DREW A PICTURE, NOT A LAYOUT
 What it depicts: ${brief.drawing.reading || art.map(e => e.name).join(', ')}
-Paint it as real illustration art — the drawing's subject in this site's palette and style — never as outlines, neon strokes or abstract lines. It is the visual signature of this page.
+
+It is ALREADY BUILT: a component named <IntentScene /> renders the user's drawing exactly — geometry, layering, colour${moving.length > 0 ? ` and motion (${moving.join('; ')})` : ''}. It is supplied in the final file.
+- Do NOT define, import, restyle, recolour or redraw it, and do not add a second version of the drawing (no SVG mountains, suns, rivers of your own).
+- Reference it exactly as <IntentScene /> — optionally with a className prop for sizing.
 
 Placement: ${PLACEMENT_TEXT[placement]}
 
-Exact geometry, computed from the user's strokes (canvas pixels; keep every coordinate):
-<svg viewBox="0 0 ${CANVAS_WIDTH} ${ground}" preserveAspectRatio="xMidYMax slice" aria-hidden="true">
-  <defs>{/* your gradients and filters */}</defs>
-${body.join('\n')}
-</svg>
-
-Rules for the scene:
-- Change no coordinate. Add fill, stroke, gradient, filter and opacity attributes, and you MAY add supporting detail that fits what is depicted (ridge texture, reflections on water, a haze band, stars) in the same frame.
-- Order is back to front — later elements cover earlier ones.
-- "fill" elements are solid, shaded forms, never outlines. Farther elements are lighter and hazier, nearer ones richer — that is what gives the picture depth.
-- The scene must read at a glance: the NEAREST land/water element needs at least 3:1 contrast against the page background, and no element's opacity goes below 0.6. A glow may soften a sun's edge; it must not wash over the rest of the picture.
-- Motion, where listed: animate with GSAP or CSS on those elements — slow, continuous, and never moving the geometry out of place. Motion paths are guides: move something along them, don't draw them as lines.
-- Text over the scene must stay legible: put a gradient scrim or a panel behind the text. Never fade the art to near-invisible to make room.`
+Designing around it:
+- It is the centrepiece: leave it visible. Do not cover most of it with opaque panels; put text on a translucent panel or a soft gradient scrim so the words stay legible without hiding the picture.
+- Its colours come from the brief's palette, so use that same palette everywhere else — the page and the picture must look like one piece.`
 }
 
 /** The brief as build instructions. The shell gets the plan; sections get what concerns them. */

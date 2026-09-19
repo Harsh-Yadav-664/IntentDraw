@@ -103,6 +103,7 @@ export async function POST(request: Request) {
       success: true,
       data: {
         shellCode: result.shellCode,
+        sceneCode: result.sceneCode ?? null,
         sections: result.sections ?? [],
         batches: result.batches ?? [],
         provider: result.provider,

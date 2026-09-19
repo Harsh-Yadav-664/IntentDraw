@@ -94,9 +94,10 @@ export function useAI() {
         return false
       }
 
-      const { shellCode, batches, tokenId, regions: classifiedRegions, prompt: resolvedPrompt } =
+      const { shellCode, sceneCode, batches, tokenId, regions: classifiedRegions, prompt: resolvedPrompt } =
         shellResult.data as {
           shellCode: string
+          sceneCode: string | null
           sections: string[]
           batches: string[][]
           tokenId: string
@@ -106,7 +107,9 @@ export function useAI() {
 
       const totalStages = 2 + batches.length
       let pending = batches.flat()
-      const completed: string[] = []
+      // The drawing, rendered in code, goes in first: assembly keeps the first
+      // definition of a name, so no section can replace the user's picture.
+      const completed: string[] = sceneCode ? [sceneCode] : []
 
       // Show the page immediately, with unbuilt sections as placeholders, so the
       // wait is visibly productive rather than a blank screen.

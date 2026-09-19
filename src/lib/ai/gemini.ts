@@ -73,9 +73,13 @@ export async function geminiGenerate(
       lastErr = err
       const msg = err instanceof Error ? err.message : String(err)
       const isRateLimit = /\b429\b|too many requests|resource_exhausted|rate.?limit|\bquota\b/i.test(msg)
-      if (!isRateLimit || attempt === maxRetries) throw err
+      // 503 "model is experiencing high demand" is Google saying "try again in
+      // a moment". Falling straight through drops the run to a weaker,
+      // text-only provider that can't see the drawing.
+      const isOverloaded = /\b503\b|service unavailable|high demand|overloaded/i.test(msg)
+      if ((!isRateLimit && !isOverloaded) || attempt === maxRetries) throw err
       const waitMs = parseRetryDelayMs(msg, attempt)
-      console.warn(`[Gemini] rate-limited (429); retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries})`)
+      console.warn(`[Gemini] ${isOverloaded ? "overloaded (503)" : "rate-limited (429)"}; retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries})`)
       await new Promise((res) => setTimeout(res, waitMs))
     }
   }

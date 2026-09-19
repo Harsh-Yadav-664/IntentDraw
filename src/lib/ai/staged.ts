@@ -16,6 +16,7 @@ import {
 } from './prompts'
 import { repairGeneratedCode } from './repair'
 import { batchSections, resolveSections } from './sections'
+import { SCENE_COMPONENT, renderSceneComponent } from './scene-render'
 
 /**
  * Staged generation: one short call for the page shell, then one short call per
@@ -43,6 +44,8 @@ export interface StageContext {
 export interface ShellStageResult {
   success: boolean
   shellCode?: string
+  /** The user's drawing as a ready-made component, assembled in ahead of the sections. */
+  sceneCode?: string
   sections?: string[]
   batches?: string[][]
   provider?: ProviderName
@@ -73,6 +76,30 @@ const RATE_LIMIT_RETRIES = 2
 const RATE_LIMIT_BACKOFF_MS = [8000, 16000]
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
+
+/**
+ * Safety net for a shell that never referenced <IntentScene />: renames its
+ * default export and wraps it with the scene fixed behind it. Best effort — a
+ * page that paints its own opaque background will still cover the scene, which
+ * is why the prompt asks the model to place it properly in the first place.
+ */
+export function placeSceneBehind(shellCode: string, background?: string): string {
+  const match = shellCode.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)?\s*\(/)
+  if (!match) return shellCode
+  const renamed = shellCode.replace(match[0], 'function IntentDrawPage(')
+  const bg = background ? ` style={{ backgroundColor: '${background}' }}` : ''
+  return `${renamed}
+
+export default function App() {
+  return (
+    <div className="relative min-h-screen"${bg}>
+      <div className="fixed inset-0 z-0 pointer-events-none"><${SCENE_COMPONENT} /></div>
+      <div className="relative z-10"><IntentDrawPage /></div>
+    </div>
+  );
+}
+`
+}
 
 /**
  * Stage 1 — the page shell: layout, full-page background, and a manifest of the
@@ -108,14 +135,26 @@ export async function generateShellStage(
           (current === 'gemini' || current === 'openrouter') && hasDrawingImage ? imageBase64 : undefined,
       })
 
-      const shellCode = repairGeneratedCode(extractReact(responseText))
+      let shellCode = repairGeneratedCode(extractReact(responseText))
       if (!shellCode || shellCode.length < 20) throw new Error('shell empty')
       if (!shellCode.includes('export default')) throw new Error('shell truncated — no export default')
 
-      const sections = resolveSections(shellCode)
+      // The drawing is rendered in code, not by the model; the shell only places
+      // it. If the model forgot to, place it ourselves rather than lose the one
+      // part of the page the user literally drew.
+      const sceneCode = brief && brief.source !== 'fallback'
+        ? renderSceneComponent(brief.drawing.elements, regions, brief.palette)
+        : ''
+      if (sceneCode && !shellCode.includes(`<${SCENE_COMPONENT}`)) {
+        shellCode = placeSceneBehind(shellCode, brief?.palette?.background)
+      }
+
+      // IntentScene is supplied, never generated — it must not become a section.
+      const sections = resolveSections(shellCode).filter(name => name !== SCENE_COMPONENT)
       return {
         success: true,
         shellCode,
+        sceneCode: sceneCode || undefined,
         sections,
         batches: batchSections(sections),
         provider: current,

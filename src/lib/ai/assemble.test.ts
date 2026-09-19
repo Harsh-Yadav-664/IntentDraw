@@ -49,6 +49,16 @@ describe('assembleFile', () => {
     expect(gsapLines).toEqual(["import gsap from 'gsap';"])
   })
 
+  it('drops relative imports of components the file itself defines', () => {
+    // Real failure: a shell written as if multi-file, and a section defining the same name.
+    const shell = `import React from 'react';\nimport Hero from './Hero';\nimport { cn } from '@/lib/utils';\n${SHELL.split('\n').slice(2).join('\n')}`
+    const { code } = assembleFile(shell, [`export function Hero() { return <h1>Hi</h1>; }`])
+
+    expect(code).not.toMatch(/from '\.\/Hero'/)
+    expect(code).not.toMatch(/from '@\/lib\/utils'/)
+    expect(code).toContain('function Hero()')
+  })
+
   it('drops a stray default export from a section', () => {
     const { code } = assembleFile(SHELL, [`export default function Hero() { return <h1>Hi</h1>; }`])
 

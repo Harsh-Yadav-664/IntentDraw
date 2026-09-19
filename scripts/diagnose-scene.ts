@@ -11,7 +11,24 @@
  */
 import { readFileSync, writeFileSync } from 'fs'
 import { describeScene, normalizeBrief } from '../src/lib/ai/brief'
+import { renderSceneComponent } from '../src/lib/ai/scene-render'
 import type { Region } from '../src/types'
+
+/** Our own generated JSX → plain SVG, just enough to open the scene in a browser. */
+function jsxToSvg(component: string): string {
+  const svg = component.match(/<svg[\s\S]*<\/svg>/)?.[0] ?? ''
+  return svg
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, '')
+    .replace(/className=\{`[^`]*`\}/g, '')
+    .replace(/className="[^"]*"/g, '')
+    .replace(/style=\{\{[^}]*\}\}/g, '')
+    .replace(/<style>\{`([\s\S]*?)`\}<\/style>/, '<style>$1</style>')
+    .replace(/([a-z])([A-Z])(?=[a-zA-Z]*=)/g, (_m, a, b) => `${a}-${b.toLowerCase()}`)
+    .replace(/=\{([^}]+)\}/g, '="$1"')
+    .replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg" width="1280"')
+    .replace(/view-box=/, 'viewBox=')
+    .replace(/preserve-aspect-ratio=/, 'preserveAspectRatio=')
+}
 
 async function main() {
   const [projectPath, briefPath, outPath = 'public/_scene-debug.svg'] = process.argv.slice(2)
@@ -32,24 +49,14 @@ async function main() {
         },
       }
   const brief = normalizeBrief(rawBrief, regions, project.prompt ?? '')
-  const scene = describeScene(brief, regions)
-  console.log(scene || '(no illustration elements in this brief)')
+  console.log(describeScene(brief, regions) || '(no illustration elements in this brief)')
 
-  // Pull the <svg> out of the block and give each shape a visible debug style.
-  const svg = scene.match(/<svg[\s\S]*<\/svg>/)?.[0]
-  if (!svg) return
-  const palette = ['#F4B942', '#E07A5F', '#6B8F71', '#3D5A80', '#98C1D9', '#9C6644', '#5E548E']
-  let n = 0
-  const styled = svg
-    .replace('<svg ', '<svg xmlns="http://www.w3.org/2000/svg" width="1280" ')
-    .replace('<defs>{/* your gradients and filters */}</defs>', '<rect width="100%" height="100%" fill="#FFF8EE"/>')
-    .replace(/<!--([^>]*?), (fill|stroke)([^>]*?)-->\s*((?:<(?:path|circle)[^>]*\/>\s*)+)/g, (_m, _label, paint, _rest, shapes: string) => {
-      const color = palette[n++ % palette.length]
-      const style = paint === 'fill' ? `fill="${color}" fill-opacity="0.85" stroke="none"` : `fill="none" stroke="${color}" stroke-width="5"`
-      return shapes.replace(/\/>/g, ` ${style}/>`)
-    })
-  writeFileSync(outPath, styled)
-  console.log(`\nwrote ${outPath}`)
+  const component = renderSceneComponent(brief.drawing.elements, regions, brief.palette)
+  if (!component) return
+  console.log(`
+--- IntentScene: ${component.length} chars`)
+  writeFileSync(outPath, jsxToSvg(component))
+  console.log(`wrote ${outPath}`)
 }
 
 main().catch(err => {

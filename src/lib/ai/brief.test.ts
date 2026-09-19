@@ -109,25 +109,6 @@ describe('applyBriefToRegions', () => {
     expect(describeScene(brief, tagged)).toContain('ILLUSTRATED SCENE')
   })
 
-  it('paints a sun behind the land even when the model gives it a nearer depth', () => {
-    const regions = [region(1, 'freeform'), region(2, 'freeform')]
-    const brief = normalizeBrief(
-      {
-        concept: 'c',
-        drawing: {
-          elements: [
-            { name: 'Hill', regions: [1], role: 'illustration', form: 'silhouette', depth: 0 },
-            { name: 'Sun', regions: [2], role: 'illustration', form: 'disc', depth: 5 },
-          ],
-        },
-      },
-      regions,
-      'x'
-    )
-    const scene = describeScene(brief, applyBriefToRegions(regions, brief))
-    expect(scene.indexOf('Sun —')).toBeLessThan(scene.indexOf('Hill —'))
-  })
-
   it('falls back to the old heuristics when no model wrote the brief', () => {
     const regions = [region(1, 'rectangle'), region(2, 'freeform'), region(3, 'arrow')]
     const brief = { ...normalizeBrief({}, regions, 'x'), source: 'fallback' as const }

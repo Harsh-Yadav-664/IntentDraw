@@ -85,6 +85,25 @@ describe('buildSceneShape', () => {
     expect(shape?.paint).toBe('stroke')
   })
 
+  it('keeps a zig-zag grouped with a sun as rays instead of fitting it to a second disc', () => {
+    const arc = Array.from({ length: 20 }, (_, i): [number, number] => {
+      const a = Math.PI + (i / 19) * Math.PI
+      return [500 + 150 * Math.cos(a), 400 + 150 * Math.sin(a)]
+    })
+    const zigzag = Array.from({ length: 15 }, (_, i): [number, number] => {
+      const a = Math.PI + (i / 14) * Math.PI
+      const r = i % 2 === 0 ? 170 : 220
+      return [500 + r * Math.cos(a), 400 + r * Math.sin(a)]
+    })
+    const shape = buildSceneShape(
+      { name: 'Sun', form: 'disc', regionNumbers: [1, 2] },
+      [stroke(1, arc), stroke(2, zigzag)],
+      700
+    )!
+    expect(shape.svg.match(/<circle/g)).toHaveLength(1)
+    expect(shape.svg).toContain('data-part="rays"')
+  })
+
   it('returns null when the element names no existing region', () => {
     expect(buildSceneShape({ name: 'Ghost', form: 'disc', regionNumbers: [9] }, [], 700)).toBeNull()
   })
