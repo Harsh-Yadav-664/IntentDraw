@@ -3,11 +3,18 @@
 import { useState } from 'react'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { toast } from 'sonner'
 import PreviewFrame from './preview-frame'
-import { wrapReactForPreview } from '@/lib/utils/sanitize'
+import { downloadFile, exportHtml, exportSource, slugify } from '@/lib/export'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import {
   Monitor,
   Tablet,
@@ -17,7 +24,9 @@ import {
   Code,
   Eye,
   Check,
-  Maximize2
+  Maximize2,
+  FileCode2,
+  Globe,
 } from 'lucide-react'
 
 type ViewMode = 'preview' | 'code'
@@ -25,16 +34,16 @@ type DeviceSize = 'desktop' | 'tablet' | 'mobile'
 
 export default function PreviewPanel() {
   const previewCode = useWorkflowStore((s) => s.previewCode)
+  const projectName = useWorkflowStore((s) => s.projectName)
   const [viewMode, setViewMode] = useState<ViewMode>('preview')
   const [deviceSize, setDeviceSize] = useState<DeviceSize>('desktop')
   const [copied, setCopied] = useState(false)
-  const [isFullscreen, setIsFullscreen] = useState(false)
 
   const handleCopyCode = async () => {
     if (!previewCode) return
 
     try {
-      await navigator.clipboard.writeText(previewCode)
+      await navigator.clipboard.writeText(exportSource(previewCode, projectName))
       setCopied(true)
       toast.success('Code copied to clipboard!')
       setTimeout(() => setCopied(false), 2000)
@@ -43,36 +52,26 @@ export default function PreviewPanel() {
     }
   }
 
-  const handleDownload = () => {
-  if (!previewCode) return
+  // Export was half-built for a long time: a download handler existed but no
+  // button called it. A paying user has to be able to take the site away.
+  const handleExportHtml = () => {
+    if (!previewCode) return
+    downloadFile(`${slugify(projectName)}.html`, exportHtml(previewCode, projectName), 'text/html')
+    toast.success('Website downloaded — open it in any browser, or upload it to any static host.')
+  }
 
-  // previewCode is React TSX — wrap it in the full preview document
-  // (React UMD + Babel Standalone + Tailwind) so the exported file
-  // actually renders in a browser.
-  const finalHtml = wrapReactForPreview(previewCode)
-
-  const blob = new Blob([finalHtml], { type: 'text/html' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'intentdraw-export.html'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-
-  toast.success('HTML file downloaded!')
-}
+  const handleExportSource = () => {
+    if (!previewCode) return
+    downloadFile(`${slugify(projectName)}.tsx`, exportSource(previewCode, projectName), 'text/plain')
+    toast.success('Source downloaded — one React component, styled with Tailwind.')
+  }
 
   const handleOpenFullscreen = () => {
     if (!previewCode) return
-
-    // Same wrapping as download — raw TSX would not render on its own
-    const fullHtml = wrapReactForPreview(previewCode)
-
-    const blob = new Blob([fullHtml], { type: 'text/html' })
-    const url = URL.createObjectURL(blob)
+    // The exported page, so links behave as they will on the real site.
+    const url = URL.createObjectURL(new Blob([exportHtml(previewCode, projectName)], { type: 'text/html' }))
     window.open(url, '_blank')
+    setTimeout(() => URL.revokeObjectURL(url), 60_000)
   }
 
   return (
@@ -82,7 +81,7 @@ export default function PreviewPanel() {
       <div className="h-12 bg-black/40 backdrop-blur-md border-b border-white/5 flex items-center justify-between px-4 flex-shrink-0">
         
         {/* Left spacing to balance the layout */}
-        <div className="w-32"></div>
+        <div className="w-56"></div>
 
         {/* Center: Device Toggles (if preview code exists) */}
         <div className="flex items-center justify-center flex-1">
@@ -123,7 +122,7 @@ export default function PreviewPanel() {
         </div>
 
         {/* Right: View Toggles & Actions */}
-        <div className="flex items-center justify-end gap-2 w-32">
+        <div className="flex items-center justify-end gap-2 w-56">
           {previewCode && (
             <>
               <Tabs value={viewMode} onValueChange={(v) => setViewMode(v as ViewMode)}>
@@ -146,6 +145,33 @@ export default function PreviewPanel() {
               >
                 <Maximize2 className="h-3.5 w-3.5" />
               </Button>
+
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button size="sm" className="h-7 rounded-md px-2.5 text-xs font-medium">
+                    <Download className="mr-1.5 h-3.5 w-3.5" />
+                    Export
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-64 border-white/10 bg-popover">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground">Take your site with you</DropdownMenuLabel>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onClick={handleExportHtml} className="items-start gap-2 py-2">
+                    <Globe className="mt-0.5 h-4 w-4" />
+                    <div className="flex flex-col">
+                      <span>Website (.html)</span>
+                      <span className="text-[11px] text-muted-foreground">One file. Opens anywhere, uploads to any host.</span>
+                    </div>
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleExportSource} className="items-start gap-2 py-2">
+                    <FileCode2 className="mt-0.5 h-4 w-4" />
+                    <div className="flex flex-col">
+                      <span>Source code (.tsx)</span>
+                      <span className="text-[11px] text-muted-foreground">A React component for your own project.</span>
+                    </div>
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </>
           )}
         </div>

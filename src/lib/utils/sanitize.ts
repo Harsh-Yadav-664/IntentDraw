@@ -63,7 +63,13 @@ export function sanitizeHtml(html: string): string {
  */
 export function wrapReactForPreview(
   tsxCode: string,
-  options?: { freeze?: boolean; /** Overrides the detected origin, e.g. when rendering outside the app. */ appOrigin?: string }
+  options?: {
+    freeze?: boolean
+    /** Overrides the detected origin, e.g. when rendering outside the app. */
+    appOrigin?: string
+    /** A file the user downloads and publishes, rather than the in-app preview. */
+    export?: { title?: string }
+  }
 ): string {
   // Remove markdown formatting if somehow it slipped through
   let code = tsxCode;
@@ -85,7 +91,9 @@ export function wrapReactForPreview(
   const appOrigin = options?.appOrigin ?? (typeof window !== 'undefined' ? window.location.origin : '');
 
   // Navigation and height reporting script
-  const systemScript = `
+  // The preview blocks navigation so a click can't take the frame away from the
+  // generated site; an exported site is a real website, where links must work.
+  const navigationGuard = options?.export ? '' : `
     document.addEventListener('click', function(e) {
       const link = e.target.closest('a');
       if (link) { e.preventDefault(); e.stopPropagation(); }
@@ -93,6 +101,11 @@ export function wrapReactForPreview(
     document.addEventListener('submit', function(e) {
       e.preventDefault(); e.stopPropagation();
     }, true);
+  `;
+  const title = (options?.export?.title || 'Website').replace(/[<>&"]/g, '').slice(0, 120);
+
+  const systemScript = `
+    ${navigationGuard}
 
     function reportHeight() {
       if (document.documentElement && document.documentElement.scrollHeight) {
@@ -354,6 +367,7 @@ if (typeof window.__RenderComponent !== "undefined") {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
