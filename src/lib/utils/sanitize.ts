@@ -1,5 +1,6 @@
 import { normalizeImports } from '@/lib/ai/assemble'
 import { softenSceneOverlays } from '@/lib/ai/repair'
+import { rewriteImageUrl } from './image-url'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -60,7 +61,10 @@ export function sanitizeHtml(html: string): string {
  * Granting `allow-same-origin` would fix html2canvas and destroy the sandbox that
  * makes running model-written code safe, so freezing in place is the right trade.
  */
-export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolean }): string {
+export function wrapReactForPreview(
+  tsxCode: string,
+  options?: { freeze?: boolean; /** Overrides the detected origin, e.g. when rendering outside the app. */ appOrigin?: string }
+): string {
   // Remove markdown formatting if somehow it slipped through
   let code = tsxCode;
   if (code.startsWith('```')) {
@@ -75,6 +79,10 @@ export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolea
   code = normalizeImports(code);
   // Full-bleed "scrims" that would wash out the user's drawing — see repair.ts.
   code = softenSceneOverlays(code);
+
+  // The app's own origin, for routing keyword photos through /api/image. Empty
+  // when this runs outside a browser (offline scripts), which keeps direct URLs.
+  const appOrigin = options?.appOrigin ?? (typeof window !== 'undefined' ? window.location.origin : '');
 
   // Navigation and height reporting script
   const systemScript = `
@@ -102,12 +110,13 @@ export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolea
     // showed the same unrelated picture. One keyword always matches something on
     // topic. Rewritten as React sets the attribute, because the URL is often
     // built at runtime from data the code-level rewrite can't see.
-    function __fixImageUrl(u) {
-      var m = /^(https?:\\/\\/loremflickr\\.com\\/\\d+\\/\\d+\\/)([^\\/?#]+)(.*)$/.exec(u);
-      if (!m) return u;
-      var first = decodeURIComponent(m[2]).split(',')[0].trim();
-      return m[1] + encodeURIComponent(first) + m[3].replace(/^\\/(all|any)(?=[?#]|$)/, '');
-    }
+    // Inside the app, keyword photos go through /api/image, which serves
+    // licensed Pexels photos when configured and otherwise resolves LoremFlickr
+    // server-side, skipping its "no match" default. Offline (no origin) the
+    // direct URL is kept, reduced to one keyword.
+    var __APP_ORIGIN = ${JSON.stringify(appOrigin)};
+    var __rewriteImageUrl = (${rewriteImageUrl.toString()});
+    function __fixImageUrl(u) { return __rewriteImageUrl(u, __APP_ORIGIN); }
     (function() {
       // Both routes: React assigns the src *property* for images; other code
       // uses setAttribute.
