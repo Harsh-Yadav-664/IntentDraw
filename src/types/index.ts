@@ -51,7 +51,9 @@ export interface Region {
   geometry: RegionGeometry
   intent: string
   groupId?: string | null
-  classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'
+  // 'illustration': part of a picture the user drew (a mountain, a sun). It is
+  // painted from computed geometry by the scene block, never laid out as a box.
+  classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational' | 'illustration'
   // For decorative regions: 'region' = confined to where it was drawn /
   // behind the region it overlaps; 'full' = whole-page background.
   backgroundScope?: 'region' | 'full'

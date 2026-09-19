@@ -35,3 +35,5 @@ AGENTS.md
 
 # local preview-runtime check written by scripts/preview-harness.ts
 public/preview-harness.html
+# Debug renders written by scripts/diagnose-scene.ts
+public/_*.svg

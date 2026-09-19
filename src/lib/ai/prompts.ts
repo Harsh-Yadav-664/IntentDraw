@@ -4,6 +4,7 @@ import { buildShapePath, describeShapePath, pointBudget } from './shape-path'
 import { buildReferenceSection } from './references'
 import type { Region, RegionGroup } from '@/types'
 import type { DesignTokenSet } from './design-tokens'
+import { describeScene, renderBrief, type BriefPalette, type DesignBrief } from './brief'
 
 // =============================================================================
 // GENERATION SYSTEM PROMPT
@@ -318,7 +319,9 @@ function buildRegionData(regions: Region[], groups: RegionGroup[] = []) {
   const budget = pointBudget(regions)
 
   return regions.map((r, i) => {
-    const shape = buildShapePath(r, budget)
+    // Illustration shapes are drawn from the scene block's exact geometry;
+    // repeating their local path here would only cost tokens.
+    const shape = r.classificationTag === 'illustration' ? null : buildShapePath(r, budget)
     return {
       id: `r${i + 1}`,
       label: `R${r.regionNumber}`,
@@ -345,11 +348,17 @@ function buildRegionData(regions: Region[], groups: RegionGroup[] = []) {
   })
 }
 
-function buildTokenSection(tokens: DesignTokenSet): string {
+function buildTokenSection(tokens: DesignTokenSet, palette?: BriefPalette | null): string {
+  // The brief's palette belongs to this site's concept; the preset's is generic
+  // to every site that lands on the preset. The preset still supplies shape,
+  // type and shadow language, and its banned classes.
+  const colors = palette
+    ? `EXACTLY the brief's palette — background ${palette.background}, surface ${palette.surface}, text ${palette.text}, accent ${palette.accent}, secondary ${palette.secondary} — via arbitrary classes (bg-[${palette.background}]). No stock Tailwind hues.`
+    : tokens.colorPalette
   return `HARD DESIGN CONSTRAINTS (PRESET: ${tokens.name}):
 You MUST follow these concrete style tokens exactly. Do NOT use generic fallback classes.
 - Border Radius: ${tokens.borderRadius}
-- Colors: ${tokens.colorPalette}
+- Colors: ${colors}
 - Typography: ${tokens.typography}
 - Shadows/Borders: ${tokens.shadowTreatment}
 - Special Instructions: ${tokens.specialInstructions || 'None'}
@@ -384,17 +393,26 @@ export function buildGenerationUserPrompt(
   tokens: DesignTokenSet,
   globalTheme?: string,
   hasDrawingImage?: boolean,
-  groups: RegionGroup[] = []
+  groups: RegionGroup[] = [],
+  brief?: DesignBrief
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
   const sections: string[] = []
 
   // Add Design Tokens (Aesthetic Enforcement)
-  sections.push(buildTokenSection(tokens))
+  sections.push(buildTokenSection(tokens, brief?.palette))
 
-  // Structure to imitate — the strongest anti-generic lever we have offline
-  pushReferenceSection(sections, userPrompt, tokens, 'page')
+  // What the user actually wants, worked out before building — it frames
+  // everything after it, so it comes straight after the hard constraints.
+  const briefBlock = brief ? renderBrief(brief, 'shell') : ''
+  if (briefBlock) sections.push(briefBlock)
+
+  // Structure to imitate — the strongest anti-generic lever we have offline.
+  // The brief's reading of the request is a better match signal than the raw
+  // prompt, which is often a single vague line.
+  const referenceSignal = brief ? `${userPrompt} ${brief.summary} ${brief.concept}` : userPrompt
+  pushReferenceSection(sections, referenceSignal, tokens, 'page')
 
   // Build normalized region data
   if (regions.length > 0) {
@@ -402,6 +420,10 @@ export function buildGenerationUserPrompt(
 
     sections.push(`REGIONS (all positions/sizes are PERCENTAGES of the page, 0-100):
 ${JSON.stringify(buildRegionData(regions, groups), null, 2)}`)
+
+    // The drawing as a picture, with exact computed geometry.
+    const scene = brief ? describeScene(brief, regions) : ''
+    if (scene) sections.push(scene)
 
     // Add layout description (skeleton + positioned decorative/relational instructions)
     sections.push(describeLayout(regions, canvasWidth, canvasHeight, groups))
@@ -554,9 +576,11 @@ YOUR OUTPUT — SHELL ONLY
 3. DO NOT define the section components. Reference them as <Hero />, <Features />.
    A later pass generates them — defining them here wastes the whole run.
 4. If a LAYOUT SKELETON is provided, the sections ARE its <RegionX /> placeholders;
-   use exactly those names. With no drawing, choose 4-7 sections yourself for the
-   page the user described.
+   use exactly those names. Otherwise, if the DESIGN BRIEF has a section plan, use
+   exactly its names in its order. Only with neither, choose 4-7 sections yourself.
 5. Full-page background and decorative layers belong HERE — they span every section.
+   If there is an ILLUSTRATED SCENE block, YOU paint it, in full, exactly as it
+   specifies: it is the user's own drawing and the centrepiece of the page.
 6. Put the positioning/wrapper classes in the shell so each section drops straight in.
 7. The shell adds NO vertical space of its own between sections — no space-y-*,
    no gap-* and no empty spacer divs on the section stack. Each section owns its
@@ -598,14 +622,34 @@ export function buildStagedSectionUserPrompt(
   userPrompt: string,
   tokens: DesignTokenSet,
   globalTheme?: string,
-  groups: RegionGroup[] = []
+  groups: RegionGroup[] = [],
+  brief?: DesignBrief
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
-  const sections: string[] = [buildTokenSection(tokens)]
+  const sections: string[] = [buildTokenSection(tokens, brief?.palette)]
 
-  pushReferenceSection(sections, userPrompt, tokens, 'section')
+  const briefBlock = brief ? renderBrief(brief, 'section') : ''
+  if (briefBlock) sections.push(briefBlock)
+
+  const referenceSignal = brief ? `${userPrompt} ${brief.summary} ${brief.concept}` : userPrompt
+  pushReferenceSection(sections, referenceSignal, tokens, 'section')
 
   sections.push(`BUILD EXACTLY THESE COMPONENTS: ${sectionNames.join(', ')}`)
+
+  // What each requested component is FOR, from the brief — the difference
+  // between a section with real content and one with "Feature 1, Feature 2".
+  if (brief) {
+    const purposes = sectionNames
+      .map(name => {
+        const planned = brief.sections.find(s => s.name === name)
+        if (planned?.purpose) return `  ${name} — ${planned.purpose}`
+        const regionNumber = Number(name.match(/^Region(\d+)$/)?.[1])
+        const drawn = brief.drawing.elements.find(e => e.role === 'layout' && e.regions.includes(regionNumber))
+        return drawn ? `  ${name} — ${drawn.name}${drawn.render ? `: ${drawn.render}` : ''}` : null
+      })
+      .filter(Boolean)
+    if (purposes.length > 0) sections.push(`WHAT EACH COMPONENT IS FOR:\n${purposes.join('\n')}`)
+  }
 
   // Region-backed sections carry real geometry the component must honour.
   if (regions.length > 0) {

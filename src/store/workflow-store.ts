@@ -5,6 +5,7 @@
 
 import { create } from 'zustand'
 import type { AIProvider } from '@/types'
+import type { DesignBrief } from '@/lib/ai/brief'
 
 // =============================================================================
 // Types
@@ -44,10 +45,10 @@ export interface WorkflowState {
   prompt: string
   globalTheme: string
   previewCode: string
-  // Frozen bitmap of the last generation, shown as the Design-canvas backdrop
-  // so we don't run a live compiling iframe behind the drawing surface.
-  // In-memory only — never persisted or sent to the save payload.
-  previewSnapshot: string | null
+  // What the understanding stage made of the last request — shown to the user
+  // so a misread drawing is visible instead of silently shaping the output.
+  // In-memory only for now.
+  brief: DesignBrief | null
   aiProvider: AIProvider
   nvidiaModelId: string
 
@@ -80,7 +81,7 @@ export interface WorkflowActions {
   setPrompt: (prompt: string) => void
   setGlobalTheme: (theme: string) => void
   setPreviewCode: (code: string) => void
-  setPreviewSnapshot: (snapshot: string | null) => void
+  setBrief: (brief: DesignBrief | null) => void
   setAiProvider: (provider: AIProvider) => void
   setNvidiaModelId: (modelId: string) => void
 
@@ -106,7 +107,7 @@ const initialState: WorkflowState = {
   prompt: '',
   globalTheme: '',
   previewCode: '',
-  previewSnapshot: null,
+  brief: null,
   aiProvider: 'gemini',
   nvidiaModelId: 'nvidia/nemotron-3.5-lightning-30b-a3b',
   saveStatus: 'saved',
@@ -162,7 +163,7 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
       projectName: project.name,
       prompt: project.prompt ?? '',
       previewCode: project.generated_code ?? '',
-      previewSnapshot: null,
+      brief: null,
       globalTheme: project.global_theme ?? '',
       saveStatus: 'saved',
       lastSavedAt: new Date(),
@@ -191,12 +192,10 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
   },
 
   setPreviewCode: (previewCode) => {
-    // New code invalidates the cached backdrop snapshot — it gets recaptured
-    // the next time the Design canvas mounts the preview.
-    set({ previewCode, previewSnapshot: null, saveStatus: 'unsaved' })
+    set({ previewCode, saveStatus: 'unsaved' })
   },
 
-  setPreviewSnapshot: (previewSnapshot) => set({ previewSnapshot }),
+  setBrief: (brief) => set({ brief }),
 
   setAiProvider: (aiProvider) => {
     set({ aiProvider })

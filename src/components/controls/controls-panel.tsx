@@ -4,6 +4,7 @@ import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { useAI } from '@/hooks/use-ai'
 import { PromptComposer } from './prompt-composer'
+import { BriefCard } from './brief-card'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { Card, CardContent } from '@/components/ui/card'
@@ -332,6 +333,7 @@ export default function ControlsPanel() {
         )}
 
         <PromptComposer />
+        <BriefCard />
       </CardContent>
     </Card>
   )

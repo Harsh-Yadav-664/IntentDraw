@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { PRESETS } from '@/lib/ai/design-tokens'
 import { generateSectionStage } from '@/lib/ai/staged'
+import { normalizeBrief } from '@/lib/ai/brief'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 const MAX_SHELL_CHARS = 40000
@@ -23,8 +24,9 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, sectionNames, shellCode, tokenId } =
+    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, sectionNames, shellCode, tokenId, brief } =
       body as {
+        brief?: unknown
         regions?: Region[]
         groups?: RegionGroup[]
         prompt?: string
@@ -50,15 +52,19 @@ export async function POST(request: Request) {
     // arbitrary can be injected into the prompt's style constraints.
     const tokens = (tokenId && PRESETS[tokenId]) || PRESETS.neosleek
 
+    const validRegions = Array.isArray(regions) ? regions : []
+
     const result = await generateSectionStage(
       {
-        regions: Array.isArray(regions) ? regions : [],
+        regions: validRegions,
         groups: Array.isArray(groups) ? groups : [],
         prompt,
         tokens,
         globalTheme,
         provider: provider ?? 'gemini',
         nvidiaModelId,
+        // Re-validated: it came back through the client.
+        brief: brief ? normalizeBrief(brief, validRegions, prompt) : undefined,
       },
       sectionNames.slice(0, 6).map(String),
       shellCode.slice(0, MAX_SHELL_CHARS)

@@ -1,3 +1,4 @@
+import { normalizeImports } from '@/lib/ai/assemble'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -67,6 +68,10 @@ export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolea
     if (lines[lines.length - 1].startsWith('```')) lines.pop();
     code = lines.join('\n');
   }
+
+  // A name bound twice across imports is a fatal compile error. Assembly
+  // prevents it for new generations; this repairs files saved before it did.
+  code = normalizeImports(code);
 
   // Navigation and height reporting script
   const systemScript = `

@@ -99,8 +99,13 @@ export async function callProvider(
   const {
     nvidiaModelId = DEFAULT_NVIDIA_MODEL,
     openrouterModelId = OPENROUTER_DEFAULT_MODEL,
-    imageBase64,
   } = options
+  // The canvas exports a data URL, but Gemini's inlineData wants bare base64 and
+  // OpenRouter adds its own prefix. Passing the URL through made Gemini reject
+  // every drawing with a 400 ("Invalid value at inline_data.data"), so staged
+  // generation silently fell through to text-only providers that never saw the
+  // drawing at all. Normalised once, here, for every caller.
+  const imageBase64 = options.imageBase64?.replace(/^data:image\/\w+;base64,/, '')
 
   const call = async (): Promise<string> => {
     if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId)

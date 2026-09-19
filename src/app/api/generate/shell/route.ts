@@ -1,13 +1,15 @@
 import { NextResponse } from 'next/server'
 import { checkRateLimit, getUsageStats, incrementUsage } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
-import { resolveDesignTokens } from '@/lib/ai/design-tokens'
+import { PRESETS } from '@/lib/ai/design-tokens'
+import { applyBriefToRegions, normalizeBrief } from '@/lib/ai/brief'
+import { understandRequest } from '@/lib/ai/understand'
 import { generateShellStage } from '@/lib/ai/staged'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 /**
- * Stage 1 of a staged generation: resolve design tokens, classify the drawing,
- * and build the page shell plus the list of sections still to generate.
+ * Stage 1 of a staged generation: build the page shell plus the list of
+ * sections still to generate, from the brief the understanding stage wrote.
  *
  * This consumes the generation's single quota slot — the section calls that
  * follow are part of the same generation and must not be charged again.
@@ -37,7 +39,7 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, imageData } = body as {
+    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, imageData, brief: sentBrief } = body as {
       regions?: Region[]
       groups?: RegionGroup[]
       prompt?: string
@@ -45,6 +47,7 @@ export async function POST(request: Request) {
       provider?: AIProvider
       nvidiaModelId?: string
       imageData?: string
+      brief?: unknown
     }
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -54,28 +57,26 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Prompt too long. Max 10000 characters.' }, { status: 400 })
     }
 
-    let validRegions = Array.isArray(regions) ? regions : []
+    const rawRegions = Array.isArray(regions) ? regions : []
     const validGroups = Array.isArray(groups) ? groups : []
-    let finalPrompt = prompt.trim()
+    const finalPrompt = prompt.trim()
 
-    // Intent classification only when there is a drawing — text-only prompts
-    // skip it entirely and spend no extra model call.
-    if (validRegions.length > 0) {
-      const { classifyRegionIntents } = await import('@/lib/ai/intent-classifier')
-      const { tags, backgroundScopes } = await classifyRegionIntents(validRegions, finalPrompt, imageData)
+    // The brief normally arrives from the understanding stage. It crossed the
+    // client, so it is re-validated rather than trusted. A caller that skipped
+    // that stage gets it run here instead.
+    const brief = sentBrief
+      ? normalizeBrief(sentBrief, rawRegions, finalPrompt)
+      : await understandRequest({
+          prompt: finalPrompt,
+          regions: rawRegions,
+          groups: validGroups,
+          provider: provider ?? 'gemini',
+          nvidiaModelId,
+          imageBase64: imageData,
+        })
 
-      validRegions = validRegions.map(r => ({
-        ...r,
-        classificationTag: tags[r.id] || 'exact-placement',
-        backgroundScope: backgroundScopes[r.id] ?? undefined,
-      }))
-
-      if (validRegions.every(r => r.classificationTag === 'decorative')) {
-        finalPrompt += `\n\n(Note: The user provided a drawing as a style/pattern/background reference. Do not treat the strokes as literal layout boundaries — use them as aesthetic inspiration, respecting each element's described scope.)`
-      }
-    }
-
-    const tokens = await resolveDesignTokens(finalPrompt)
+    const validRegions = applyBriefToRegions(rawRegions, brief)
+    const tokens = PRESETS[brief.styleId] ?? PRESETS.neosleek
 
     const result = await generateShellStage(
       {
@@ -86,6 +87,7 @@ export async function POST(request: Request) {
         globalTheme,
         provider: provider ?? 'gemini',
         nvidiaModelId,
+        brief,
       },
       imageData
     )
@@ -109,6 +111,7 @@ export async function POST(request: Request) {
         tokenId: tokens.id,
         regions: validRegions,
         prompt: finalPrompt,
+        brief,
         usage: {
           remaining: usage.remaining,
           used: usage.used,

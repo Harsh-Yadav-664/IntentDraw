@@ -39,6 +39,16 @@ describe('assembleFile', () => {
     expect(code).toContain('Star as StarIcon')
   })
 
+  it('does not bind the same name as both a default and a named import', () => {
+    // Real failure: shell used the default export, a section the named one.
+    const { code } = assembleFile(`import gsap from 'gsap';\n${SHELL}`, [
+      `import { gsap } from 'gsap';\nconst Hero = () => <h1>Hi</h1>;`,
+    ])
+
+    const gsapLines = code.split('\n').filter(l => l.includes("from 'gsap'"))
+    expect(gsapLines).toEqual(["import gsap from 'gsap';"])
+  })
+
   it('drops a stray default export from a section', () => {
     const { code } = assembleFile(SHELL, [`export default function Hero() { return <h1>Hi</h1>; }`])
 

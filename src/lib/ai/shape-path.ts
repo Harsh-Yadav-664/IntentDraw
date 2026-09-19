@@ -60,7 +60,7 @@ function simplify(points: Point[], tolerance: number): Point[] {
  * Reduces to at most maxPoints by raising the tolerance until it fits.
  * `scale` converts the normalized tolerance into the points' own pixel units.
  */
-function simplifyToBudget(points: Point[], maxPoints: number, scale: number): Point[] {
+export function simplifyToBudget(points: Point[], maxPoints: number, scale: number): Point[] {
   if (points.length <= maxPoints) return points
   const maxTolerance = 25 * scale
   let tolerance = 0.5 * scale

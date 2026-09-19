@@ -184,6 +184,10 @@ export function describeLayout(
     lines.push(`</div>`)
     lines.push(`\`\`\``)
     lines.push(``)
+  } else if (regions.some(r => r.classificationTag === 'illustration')) {
+    lines.push(`NO LAYOUT BOXES WERE DRAWN — the drawing is a picture (see ILLUSTRATED SCENE).`)
+    lines.push(`Design the page layout freely from the brief and prompt, arranged so the scene stays visible and is the page's focal point.`)
+    lines.push(``)
   } else {
     lines.push(`NO STRUCTURAL REGIONS — the drawing contains only decorative/relational shapes.`)
     lines.push(`Design the page layout freely from the prompt; the shapes below are stylistic inputs only.`)

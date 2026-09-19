@@ -2,6 +2,7 @@ import { useState, useCallback } from 'react'
 import { useCanvasStore } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { assembleProgressive } from '@/lib/ai/assemble'
+import type { DesignBrief } from '@/lib/ai/brief'
 
 /**
  * Hook for AI operations: generate code and regenerate regions.
@@ -19,12 +20,12 @@ export function useAI() {
   const groups = useCanvasStore((s) => s.groups)
   const exportToPng = useCanvasStore((s) => s.exportToPng)
 
-  const prompt = useWorkflowStore((s) => s.prompt)
   const globalTheme = useWorkflowStore((s) => s.globalTheme)
   const setStatus = useWorkflowStore((s) => s.setStatus)
   const setError = useWorkflowStore((s) => s.setError)
   const setPreviewCode = useWorkflowStore((s) => s.setPreviewCode)
   const setGenerationProgress = useWorkflowStore((s) => s.setGenerationProgress)
+  const setBrief = useWorkflowStore((s) => s.setBrief)
   const aiProvider = useWorkflowStore((s) => s.aiProvider)
   const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
 
@@ -32,6 +33,10 @@ export function useAI() {
    * Generates React TSX from regions and user prompt.
    */
   const generateCode = useCallback(async (): Promise<boolean> => {
+    // Read at call time, not from this render's closure: the prompt composer
+    // flushes its debounced draft into the store and calls this in the same
+    // tick, so the closure's `prompt` would still be the previous text.
+    const prompt = useWorkflowStore.getState().prompt
     if (!prompt.trim()) {
       setError('Please enter a prompt describing your design.')
       return false
@@ -39,7 +44,12 @@ export function useAI() {
 
     setIsGenerating(true)
     setStatus('generating')
-    setGenerationProgress({ label: 'Designing the page structure', done: 0, total: 1 })
+    setBrief(null)
+    setGenerationProgress({
+      label: regions.length > 0 ? 'Reading your drawing and prompt' : 'Understanding your idea',
+      done: 0,
+      total: 2,
+    })
 
     try {
       // Only capture/send the canvas image when something was drawn
@@ -53,12 +63,29 @@ export function useAI() {
         nvidiaModelId,
       }
 
+      // Stage 0 — understanding. What the user wants, what the drawing depicts,
+      // and what will make this site unlike a template. Shown to the user as
+      // soon as it lands, so the rest of the wait has a visible purpose.
+      const understandRes = await fetch('/api/generate/understand', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...shared, imageData }),
+      })
+      const understood = await understandRes.json()
+      if (!understood.success) {
+        setError(understood.error || 'Could not read the request. Please try again.')
+        return false
+      }
+      const brief = understood.data.brief as DesignBrief
+      setBrief(brief)
+      setGenerationProgress({ label: 'Designing the page structure', done: 1, total: 2 })
+
       // Stage 1 — the shell. Short enough to survive a serverless timeout, and
       // it tells us what sections still need building.
       const shellRes = await fetch('/api/generate/shell', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...shared, imageData }),
+        body: JSON.stringify({ ...shared, imageData, brief }),
       })
       const shellResult = await shellRes.json()
 
@@ -77,7 +104,7 @@ export function useAI() {
           prompt: string
         }
 
-      const totalStages = 1 + batches.length
+      const totalStages = 2 + batches.length
       let pending = batches.flat()
       const completed: string[] = []
 
@@ -85,7 +112,7 @@ export function useAI() {
       // wait is visibly productive rather than a blank screen.
       const firstPass = assembleProgressive(shellCode, completed, pending)
       if (firstPass.code) setPreviewCode(firstPass.code)
-      setGenerationProgress({ label: 'Building sections', done: 1, total: totalStages })
+      setGenerationProgress({ label: 'Building sections', done: 2, total: totalStages })
 
       const failed: string[] = []
 
@@ -95,7 +122,7 @@ export function useAI() {
         const sectionNames = batches[i]
         setGenerationProgress({
           label: `Building ${sectionNames.join(' & ')}`,
-          done: 1 + i,
+          done: 2 + i,
           total: totalStages,
         })
 
@@ -110,6 +137,7 @@ export function useAI() {
               sectionNames,
               shellCode,
               tokenId,
+              brief,
             }),
           })
           const sectionResult = await sectionRes.json()
@@ -145,7 +173,7 @@ export function useAI() {
       setIsGenerating(false)
       setGenerationProgress(null)
     }
-  }, [regions, groups, prompt, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress])
+  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBrief])
 
   /**
    * Regenerates a single region while keeping others intact.

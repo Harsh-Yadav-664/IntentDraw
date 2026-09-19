@@ -78,6 +78,14 @@ function renderImports(imports: ParsedImports): string {
     ...imports.namespaces.keys(),
   ])
 
+  // Every local name may be bound once across the whole file. Blocks disagree
+  // about HOW to import the same thing — the shell wrote `import gsap from 'gsap'`
+  // and a section wrote `import { gsap } from 'gsap'`, which merged into
+  // `import gsap, { gsap }`: a fatal duplicate declaration. Defaults and
+  // namespaces are bound first, so a named specifier that would rebind one of
+  // them is dropped (for gsap both names are the same object).
+  const bound = new Set<string>([...imports.defaults.values(), ...imports.namespaces.values()])
+
   const lines: string[] = []
   for (const moduleName of modules) {
     const namespace = imports.namespaces.get(moduleName)
@@ -87,8 +95,14 @@ function renderImports(imports: ParsedImports): string {
     }
 
     const defaultName = imports.defaults.get(moduleName)
-    const named = imports.named.get(moduleName)
-    const namedClause = named && named.size > 0 ? `{ ${[...named.values()].join(', ')} }` : ''
+    const named = [...(imports.named.get(moduleName) ?? new Map<string, string>()).entries()]
+      .filter(([local]) => {
+        if (bound.has(local)) return false
+        bound.add(local)
+        return true
+      })
+      .map(([, spec]) => spec)
+    const namedClause = named.length > 0 ? `{ ${named.join(', ')} }` : ''
     const clause = [defaultName, namedClause].filter(Boolean).join(', ')
     if (clause) lines.push(`import ${clause} from '${moduleName}';`)
   }
@@ -257,4 +271,18 @@ export function assembleFile(shellCode: string, sectionCodes: string[]): Assembl
   ].filter(part => part.trim().length > 0)
 
   return { code: parts.join('\n\n') + '\n' }
+}
+
+/**
+ * Re-merges one complete file's imports so no local name is bound twice.
+ *
+ * Assembly already does this, but files saved before a collision class was
+ * handled still carry it — and repairing them at render time costs nothing,
+ * where regenerating costs a whole run of free-tier quota.
+ */
+export function normalizeImports(code: string): string {
+  const imports = emptyImports()
+  const body = splitImports(code, imports).trim()
+  const rendered = renderImports(imports)
+  return rendered ? `${rendered}\n\n${body}\n` : `${body}\n`
 }

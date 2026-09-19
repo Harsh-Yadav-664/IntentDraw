@@ -1,6 +1,7 @@
 import { extractReact } from '@/lib/utils'
 import type { Region, RegionGroup } from '@/types'
 import type { DesignTokenSet } from './design-tokens'
+import type { DesignBrief } from './brief'
 import {
   buildFallbackChain,
   callProvider,
@@ -35,6 +36,8 @@ export interface StageContext {
   globalTheme?: string
   provider: ProviderName
   nvidiaModelId?: string
+  /** The understanding pass's brief. Absent only for callers that predate it. */
+  brief?: DesignBrief
 }
 
 export interface ShellStageResult {
@@ -79,7 +82,7 @@ export async function generateShellStage(
   context: StageContext,
   imageBase64?: string
 ): Promise<ShellStageResult> {
-  const { regions, groups, prompt, tokens, globalTheme, provider, nvidiaModelId } = context
+  const { regions, groups, prompt, tokens, globalTheme, provider, nvidiaModelId, brief } = context
   const hasDrawingImage = regions.length > 0 && !!imageBase64
 
   const userMessage = buildGenerationUserPrompt(
@@ -88,7 +91,8 @@ export async function generateShellStage(
     tokens,
     globalTheme,
     hasDrawingImage,
-    groups
+    groups,
+    brief
   )
 
   const errors: Record<string, string> = {}
@@ -98,8 +102,10 @@ export async function generateShellStage(
     try {
       const responseText = await callProvider(current, STAGED_SHELL_SYSTEM_PROMPT, userMessage, {
         nvidiaModelId,
-        // Only Gemini reads the image; the drawing's geometry reaches the others as text.
-        imageBase64: current === 'gemini' && hasDrawingImage ? imageBase64 : undefined,
+        // Gemini and OpenRouter (which swaps to a vision model) can read the
+        // image; the drawing's geometry reaches the others as text.
+        imageBase64:
+          (current === 'gemini' || current === 'openrouter') && hasDrawingImage ? imageBase64 : undefined,
       })
 
       const shellCode = repairGeneratedCode(extractReact(responseText))
@@ -138,7 +144,7 @@ export async function generateSectionStage(
   sectionNames: string[],
   shellCode: string
 ): Promise<SectionStageResult> {
-  const { regions, groups, prompt, tokens, globalTheme, provider, nvidiaModelId } = context
+  const { regions, groups, prompt, tokens, globalTheme, provider, nvidiaModelId, brief } = context
 
   const userMessage = buildStagedSectionUserPrompt(
     sectionNames,
@@ -147,7 +153,8 @@ export async function generateSectionStage(
     prompt,
     tokens,
     globalTheme,
-    groups
+    groups,
+    brief
   )
 
   const fallbacks = buildFallbackChain(provider)
