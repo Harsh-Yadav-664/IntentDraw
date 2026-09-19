@@ -64,7 +64,7 @@ This is a solo project. The owner's stated goals, in priority order:
 
 Request path — `POST src/app/api/generate/route.ts`:
 
-1. `createClient()` auth — **currently stubbed to a fake dev user** (`src/lib/supabase/server.ts` monkey-patches `auth.getUser`). The real `401` branch in the route is therefore dead code until real auth is reconnected.
+1. `createClient()` auth. **Development runs as one fixed user** so the owner can work without signing in; **production always requires real sign-in.** Both are decided in one place, `src/lib/auth/bypass.ts` (`authBypassed()`), used by the server client, the middleware and the browser `AuthProvider` — it used to be hard-coded in all three, which would have served every production visitor as the same user. Set `NEXT_PUBLIC_AUTH_BYPASS=false` to exercise real sign-in locally. Verified against a production build: signed-out page visits redirect to `/login`, APIs return 401. Email links (signup confirmation, password reset) go through `/auth/callback`, which exchanges the PKCE code for a session and only redirects to same-site paths.
 2. `checkRateLimit(userId)` — real Supabase `usage` table call, wrapped in a 4s timeout and **fails open** (allows generation) on any DB error.
 3. If regions were drawn: `classifyRegionIntents()` (`src/lib/ai/intent-classifier.ts`) — one Gemini vision call tagging each shape `exact-placement | approximate-area | decorative | relational` (+ `backgroundScope` for decorative). Fails safe to all-`exact-placement`. Writes a debug dump to `.system_generated/region-intent-debug.json` on every call (no env gate — that's why the file is perpetually dirty in git).
 4. `generateCode()` in `src/lib/ai/provider.ts` — the orchestrator:

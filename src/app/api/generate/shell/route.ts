@@ -7,6 +7,10 @@ import { understandRequest } from '@/lib/ai/understand'
 import { generateShellStage } from '@/lib/ai/staged'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
+// Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
+// function at its plan's limit; this asks for the most the plan allows.
+export const maxDuration = 300
+
 /**
  * Stage 1 of a staged generation: build the page shell plus the list of
  * sections still to generate, from the brief the understanding stage wrote.

@@ -4,6 +4,10 @@ import { checkRateLimit, incrementUsage, getUsageStats } from '@/lib/middleware/
 import { createClient } from '@/lib/supabase/server'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
+// Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
+// function at its plan's limit; this asks for the most the plan allows.
+export const maxDuration = 300
+
 export async function POST(request: Request) {
   try {
     // --- Auth: get real user ID ---

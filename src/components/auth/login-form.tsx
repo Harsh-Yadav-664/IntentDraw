@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useAuth } from '@/hooks/use-auth'
 import { loginSchema, extractFieldErrors, type LoginFormData } from '@/lib/validations/auth'
 import { Button } from '@/components/ui/button'
@@ -16,7 +17,12 @@ export function LoginForm() {
     email: '',
     password: '',
   })
-  const [errors, setErrors] = useState<Partial<Record<keyof LoginFormData | 'root', string>>>({})
+  // An expired or reused email link comes back here as ?error= from
+  // /auth/callback; show it rather than silently landing on a blank form.
+  const linkError = useSearchParams().get('error')
+  const [errors, setErrors] = useState<Partial<Record<keyof LoginFormData | 'root', string>>>(
+    linkError ? { root: linkError.slice(0, 200) } : {}
+  )
   const [showPassword, setShowPassword] = useState(false)
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {

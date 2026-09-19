@@ -5,6 +5,10 @@ import { applyBriefToRegions } from '@/lib/ai/brief'
 import { understandRequest } from '@/lib/ai/understand'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
+// Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
+// function at its plan's limit; this asks for the most the plan allows.
+export const maxDuration = 300
+
 /**
  * Stage 0 of a generation: work out what the user wants before building it.
  *

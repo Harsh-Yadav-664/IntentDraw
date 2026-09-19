@@ -5,6 +5,10 @@ import { generateSectionStage } from '@/lib/ai/staged'
 import { normalizeBrief } from '@/lib/ai/brief'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
+// Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
+// function at its plan's limit; this asks for the most the plan allows.
+export const maxDuration = 300
+
 const MAX_SHELL_CHARS = 40000
 
 /**

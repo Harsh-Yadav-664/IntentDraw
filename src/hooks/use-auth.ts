@@ -58,7 +58,9 @@ export function useAuthActions(): UseAuthActionsReturn {
           data: {
             name: data.name || null,
           },
-          emailRedirectTo: `${window.location.origin}/dashboard`,
+          // Through the callback: the link carries a code that must be
+          // exchanged for a session server-side before the dashboard.
+          emailRedirectTo: `${window.location.origin}/auth/callback?next=/dashboard`,
         },
       })
 
@@ -137,7 +139,7 @@ export function useAuthActions(): UseAuthActionsReturn {
     
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
+        redirectTo: `${window.location.origin}/auth/callback?next=/reset-password`,
       })
 
       if (error) {
