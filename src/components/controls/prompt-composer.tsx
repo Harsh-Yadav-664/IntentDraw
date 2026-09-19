@@ -19,7 +19,7 @@ import type { AIProvider } from '@/types'
  */
 
 const PROVIDERS: Array<{ value: AIProvider; label: string; hint: string }> = [
-  { value: 'gemini', label: 'Gemini 2.5 Flash', hint: 'Best quality · reads your drawing' },
+  { value: 'gemini', label: 'Gemini 3.8 Flash', hint: 'Best quality · reads your drawing · falls back through newer Gemini models' },
   { value: 'openrouter', label: 'OpenRouter', hint: 'Stronger free coding models' },
   { value: 'groq', label: 'Groq GPT-OSS 120B', hint: 'Fastest · text-only' },
   { value: 'nvidia', label: 'NVIDIA Nemotron 3.5', hint: 'Backup · slowest' },
