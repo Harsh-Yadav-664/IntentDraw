@@ -38,3 +38,7 @@ public/preview-harness.html
 # Debug renders written by scripts/diagnose-scene.ts
 public/_*.svg
 public/_*.html
+
+# Build artifacts that were tracked by mistake
+tsconfig.tsbuildinfo
+.system_generated/

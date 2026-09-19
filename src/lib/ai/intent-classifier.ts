@@ -124,8 +124,9 @@ Analyze the attached drawing image together with the positions above, then respo
       }
     }
 
-    // Debug log (local only)
-    try {
+    // Debug dump for local development only — never on a server, where the
+    // filesystem is read-only and this ran on every single request.
+    if (process.env.NODE_ENV !== 'production') try {
       const fs = await import('fs')
       const path = await import('path')
       const debugDir = path.join(process.cwd(), '.system_generated')
