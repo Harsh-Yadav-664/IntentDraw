@@ -2,9 +2,10 @@ import { create } from 'zustand'
 import type { Region, RegionGeometry, RegionGroup, CanvasData, CanvasTool } from '@/types'
 import { generateUUID } from '@/lib/utils'
 
-interface StageExporter {
-  toDataURL(config?: { pixelRatio?: number }): string
-}
+import type Konva from 'konva'
+
+/** The Konva stage, as far as exporting needs it. */
+type StageExporter = Pick<Konva.Stage, 'toDataURL' | 'getLayers' | 'width' | 'height' | 'scaleX'>
 
 interface HistoryEntry {
   regions: Region[]
@@ -330,32 +331,56 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     exportToPng: () => {
       const stage = get()._stageInstance
       if (!stage) return null
-      
-      // Temporarily add a background rect so the image isn't transparent
-      // We use any type here to bypass strict Konva types since we just need the layer
-      const layer = (stage as any).getLayers()[0]
-      if (layer && typeof window !== 'undefined' && (window as any).Konva) {
-        const bgRect = new (window as any).Konva.Rect({
-          x: 0,
-          y: 0,
-          width: (stage as any).width(),
-          height: (stage as any).height(),
-          fill: '#0A0A0B',
-          listening: false,
-        })
-        layer.add(bgRect)
-        bgRect.moveToBottom()
-        layer.draw()
-        
-        const dataUrl = stage.toDataURL({ pixelRatio: 2 })
-        
-        bgRect.destroy()
-        layer.draw()
-        
-        return dataUrl
+      const { regions } = get()
+
+      // Only the drawn area, at 1x. The whole stage is several pages tall and
+      // mostly empty; at the old pixelRatio 2 it made a multi-megabyte image
+      // that slowed every request and spent vision tokens on blank canvas.
+      // Positions reach the model as text; the image only conveys how the
+      // strokes look, so cropping loses nothing.
+      let crop: { x: number; y: number; width: number; height: number } | undefined
+      if (regions.length > 0) {
+        // Region geometry is in logical units; the layer is scaled to the stage.
+        const layer = stage.getLayers()[0]
+        const scale = layer ? layer.scaleX() : 1
+        const pad = 24
+        const minX = Math.min(...regions.map(r => r.geometry.x))
+        const minY = Math.min(...regions.map(r => r.geometry.y))
+        const maxX = Math.max(...regions.map(r => r.geometry.x + r.geometry.width))
+        const maxY = Math.max(...regions.map(r => r.geometry.y + r.geometry.height))
+        const x = Math.max(0, minX * scale - pad)
+        const y = Math.max(0, minY * scale - pad)
+        crop = {
+          x,
+          y,
+          width: Math.min(stage.width() - x, (maxX - minX) * scale + pad * 2),
+          height: Math.min(stage.height() - y, (maxY - minY) * scale + pad * 2),
+        }
       }
-      
-      return stage.toDataURL({ pixelRatio: 2 })
+
+      // A background rect so the image isn't transparent (dark strokes on
+      // transparency read as nothing to a vision model).
+      const layer = stage.getLayers()[0]
+      const KonvaGlobal = typeof window !== 'undefined'
+        ? (window as unknown as { Konva?: typeof Konva }).Konva
+        : undefined
+      if (!layer || !KonvaGlobal) return stage.toDataURL({ pixelRatio: 1, ...crop })
+
+      const bgRect = new KonvaGlobal.Rect({
+        x: 0,
+        y: 0,
+        width: stage.width() / (layer.scaleX() || 1),
+        height: stage.height() / (layer.scaleY() || 1),
+        fill: '#0A0A0B',
+        listening: false,
+      })
+      layer.add(bgRect)
+      bgRect.moveToBottom()
+      layer.draw()
+      const dataUrl = stage.toDataURL({ pixelRatio: 1, ...crop })
+      bgRect.destroy()
+      layer.draw()
+      return dataUrl
     },
 
     exportAsJson: () => JSON.stringify({ regions: get().regions, groups: get().groups }),
@@ -373,3 +398,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     },
   }
 })
+// Development-only handle for in-browser verification (e.g. checking what
+// exportToPng sends a vision model) without spending generation quota.
+// Compiled out of production builds.
+if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
+  ;(window as unknown as { __canvasStore?: typeof useCanvasStore }).__canvasStore = useCanvasStore
+}
