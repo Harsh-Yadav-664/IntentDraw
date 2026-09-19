@@ -14,6 +14,7 @@ import { useWorkflowStore } from '@/store/workflow-store'
 import { useCanvasStore, parseCanvasData } from '@/store/canvas-store'
 import { SaveStatus } from '@/components/shared/save-status'
 import { ProjectTitle } from '@/components/shared/project-title'
+import { ShareButton } from '@/components/shared/share-button'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft } from 'lucide-react'
 import { toast } from 'sonner'
@@ -33,6 +34,7 @@ export default function ProjectPage({ params }: PageProps) {
   const triggerAutoSave = useWorkflowStore((s) => s.triggerAutoSave)
   const setCanvasData = useCanvasStore((s) => s.setCanvasData)
   const viewMode = useCanvasStore((s) => s.viewMode)
+  const hasOutput = useWorkflowStore((s) => s.previewCode.length > 0)
   
   const [loading, setLoading] = useState(true)
   const [notFound, setNotFound] = useState(false)
@@ -185,8 +187,9 @@ export default function ProjectPage({ params }: PageProps) {
           </div>
         </div>
 
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3">
           <SaveStatus />
+          <ShareButton projectId={id} hasOutput={hasOutput} />
         </div>
       </div>
 

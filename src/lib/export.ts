@@ -14,7 +14,7 @@ export function slugify(name: string): string {
   const slug = name
     .toLowerCase()
     .normalize('NFKD')
-    .replace(/[̀-ͯ]/g, '')
+    .replace(/[\u0300-\u036f]/g, '') // strip accents left by NFKD
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60)
@@ -22,8 +22,8 @@ export function slugify(name: string): string {
 }
 
 /** A single HTML file that runs in any browser: open it, or upload it to any static host. */
-export function exportHtml(code: string, projectName: string): string {
-  return wrapReactForPreview(code, { export: { title: projectName } })
+export function exportHtml(code: string, projectName: string, appOrigin?: string): string {
+  return wrapReactForPreview(code, { export: { title: projectName }, appOrigin })
 }
 
 /**
