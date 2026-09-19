@@ -6,14 +6,14 @@ interface AuthLayoutProps {
 
 export default function AuthLayout({ children }: AuthLayoutProps) {
   return (
-    <main className="min-h-screen flex flex-col bg-gradient-to-br from-slate-50 via-white to-blue-50">
+    <main className="min-h-screen flex flex-col bg-[#0A0A0B]" style={{ backgroundImage: 'radial-gradient(800px circle at 50% -10%, rgba(250,204,21,0.08), transparent 60%)' }}>
       {/* Header */}
       <header className="p-4">
         <Link 
           href="/" 
-          className="text-xl font-bold inline-flex items-center gap-1 hover:opacity-80 transition-opacity"
+          className="font-display text-xl font-bold hover:opacity-80 transition-opacity"
         >
-          Intent<span className="text-blue-600">Draw</span>
+          Intent<span className="text-primary">Draw</span>
         </Link>
       </header>
 
@@ -23,7 +23,7 @@ export default function AuthLayout({ children }: AuthLayoutProps) {
       </div>
 
       {/* Footer */}
-      <footer className="p-4 text-center text-sm text-slate-500">
+      <footer className="p-4 text-center text-sm text-muted-foreground">
         <p>
           © {new Date().getFullYear()} IntentDraw. All rights reserved.
         </p>

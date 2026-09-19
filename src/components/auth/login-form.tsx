@@ -64,9 +64,9 @@ export function LoginForm() {
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Root Error */}
       {errors.root && (
-        <div className="p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
-          <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-red-700">{errors.root}</p>
+        <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
+          <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-destructive">{errors.root}</p>
         </div>
       )}
 
@@ -86,7 +86,7 @@ export function LoginForm() {
           autoFocus
         />
         {errors.email && (
-          <p className="text-sm text-red-500">{errors.email}</p>
+          <p className="text-sm text-destructive">{errors.email}</p>
         )}
       </div>
 
@@ -96,7 +96,7 @@ export function LoginForm() {
           <Label htmlFor="password">Password</Label>
           <Link 
             href="/forgot-password" 
-            className="text-sm text-blue-600 hover:text-blue-700 hover:underline"
+            className="text-sm text-primary hover:text-primary/80 hover:underline"
           >
             Forgot password?
           </Link>
@@ -117,7 +117,7 @@ export function LoginForm() {
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
             tabIndex={-1}
           >
             {showPassword ? (
@@ -128,7 +128,7 @@ export function LoginForm() {
           </button>
         </div>
         {errors.password && (
-          <p className="text-sm text-red-500">{errors.password}</p>
+          <p className="text-sm text-destructive">{errors.password}</p>
         )}
       </div>
 
@@ -145,9 +145,9 @@ export function LoginForm() {
       </Button>
 
       {/* Sign Up Link */}
-      <p className="text-center text-sm text-slate-500">
+      <p className="text-center text-sm text-muted-foreground">
         Don&apos;t have an account?{' '}
-        <Link href="/signup" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
+        <Link href="/signup" className="text-primary hover:text-primary/80 hover:underline font-medium">
           Sign up
         </Link>
       </p>

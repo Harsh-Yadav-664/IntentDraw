@@ -55,9 +55,9 @@ export default function ResetPasswordPage() {
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           {error && (
-            <div className="p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
-              <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-              <p className="text-sm text-red-700">{error}</p>
+            <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
+              <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+              <p className="text-sm text-destructive">{error}</p>
             </div>
           )}
 
@@ -96,9 +96,9 @@ export default function ResetPasswordPage() {
             )}
           </Button>
 
-          <p className="text-center text-sm text-slate-500">
+          <p className="text-center text-sm text-muted-foreground">
             Link expired?{' '}
-            <Link href="/forgot-password" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
+            <Link href="/forgot-password" className="text-primary hover:text-primary/80 hover:underline font-medium">
               Send a new one
             </Link>
           </p>

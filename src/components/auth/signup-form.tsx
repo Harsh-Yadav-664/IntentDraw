@@ -69,11 +69,11 @@ export function SignupForm() {
   if (success) {
     return (
       <div className="space-y-4">
-        <div className="p-4 rounded-lg bg-green-50 border border-green-200 flex items-start gap-3">
-          <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+        <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3">
+          <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0 mt-0.5" />
           <div>
-            <h3 className="font-medium text-green-800">Account created!</h3>
-            <p className="text-sm text-green-700 mt-1">
+            <h3 className="font-medium text-emerald-200">Account created!</h3>
+            <p className="text-sm text-emerald-300 mt-1">
               Please check your email to verify your account, then you can sign in.
             </p>
           </div>
@@ -89,9 +89,9 @@ export function SignupForm() {
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Root Error */}
       {errors.root && (
-        <div className="p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
-          <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-          <p className="text-sm text-red-700">{errors.root}</p>
+        <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
+          <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+          <p className="text-sm text-destructive">{errors.root}</p>
         </div>
       )}
 
@@ -111,7 +111,7 @@ export function SignupForm() {
           autoFocus
         />
         {errors.name && (
-          <p className="text-sm text-red-500">{errors.name}</p>
+          <p className="text-sm text-destructive">{errors.name}</p>
         )}
       </div>
 
@@ -130,7 +130,7 @@ export function SignupForm() {
           autoComplete="email"
         />
         {errors.email && (
-          <p className="text-sm text-red-500">{errors.email}</p>
+          <p className="text-sm text-destructive">{errors.email}</p>
         )}
       </div>
 
@@ -153,7 +153,7 @@ export function SignupForm() {
           <button
             type="button"
             onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
             tabIndex={-1}
           >
             {showPassword ? (
@@ -164,10 +164,10 @@ export function SignupForm() {
           </button>
         </div>
         {errors.password && (
-          <p className="text-sm text-red-500">{errors.password}</p>
+          <p className="text-sm text-destructive">{errors.password}</p>
         )}
         {!errors.password && formData.password.length > 0 && formData.password.length < 8 && (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-muted-foreground">
             {8 - formData.password.length} more characters needed
           </p>
         )}
@@ -192,7 +192,7 @@ export function SignupForm() {
           <button
             type="button"
             onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground/70 hover:text-muted-foreground"
             tabIndex={-1}
           >
             {showConfirmPassword ? (
@@ -203,7 +203,7 @@ export function SignupForm() {
           </button>
         </div>
         {errors.confirmPassword && (
-          <p className="text-sm text-red-500">{errors.confirmPassword}</p>
+          <p className="text-sm text-destructive">{errors.confirmPassword}</p>
         )}
       </div>
 
@@ -220,17 +220,17 @@ export function SignupForm() {
       </Button>
 
       {/* Terms */}
-      <p className="text-center text-xs text-slate-500">
+      <p className="text-center text-xs text-muted-foreground">
         By creating an account, you agree to our{' '}
-        <Link href="/terms" className="text-blue-600 hover:underline">Terms of Service</Link>
+        <Link href="/terms" className="text-primary hover:underline">Terms of Service</Link>
         {' '}and{' '}
-        <Link href="/privacy" className="text-blue-600 hover:underline">Privacy Policy</Link>
+        <Link href="/privacy" className="text-primary hover:underline">Privacy Policy</Link>
       </p>
 
       {/* Sign In Link */}
-      <p className="text-center text-sm text-slate-500">
+      <p className="text-center text-sm text-muted-foreground">
         Already have an account?{' '}
-        <Link href="/login" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
+        <Link href="/login" className="text-primary hover:text-primary/80 hover:underline font-medium">
           Sign in
         </Link>
       </p>
