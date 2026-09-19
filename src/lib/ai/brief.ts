@@ -456,7 +456,7 @@ It is ALREADY BUILT: a component named <IntentScene /> renders the user's drawin
 Placement: ${PLACEMENT_TEXT[placement]}
 
 Designing around it:
-- It is the centrepiece: leave it visible. Do not cover most of it with opaque panels; put text on a translucent panel or a soft gradient scrim so the words stay legible without hiding the picture.
+- It is the centrepiece: leave it visible. NEVER lay a full-bleed overlay over it — no element with "absolute inset-0" carrying a background colour, gradient or backdrop-blur in any section that sits over the scene. For legibility, put the text on a panel sized to the text (max-w-2xl, rounded, 70-85% opacity of the palette surface) or give it a text shadow.
 - Its colours come from the brief's palette, so use that same palette everywhere else — the page and the picture must look like one piece.`
 }
 
@@ -507,7 +507,7 @@ export function renderBrief(brief: DesignBrief, mode: 'shell' | 'section'): stri
 
   if (mode === 'section' && brief.drawing.elements.some(e => e.role === 'illustration' && e.placement !== 'inline')) {
     lines.push(
-      'The shell paints the user\'s drawing as an illustrated scene behind the page. Sections over it must let it show: transparent or translucent backgrounds where it sits (always for the first section), with a scrim or panel behind text for legibility.'
+      'The page shows the user\'s drawing (<IntentScene />, supplied — never redraw it) behind the content. Sections over it keep transparent backgrounds (always the first section) and NEVER add a full-bleed overlay — no "absolute inset-0" element with a background colour, gradient or backdrop-blur. For legibility, put text on a panel sized to the text (max-w-2xl, rounded, 70-85% opacity of the palette surface) or give it a text shadow.'
     )
   }
 

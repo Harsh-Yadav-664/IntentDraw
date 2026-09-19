@@ -1,4 +1,5 @@
 import { normalizeImports } from '@/lib/ai/assemble'
+import { softenSceneOverlays } from '@/lib/ai/repair'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -72,6 +73,8 @@ export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolea
   // A name bound twice across imports is a fatal compile error. Assembly
   // prevents it for new generations; this repairs files saved before it did.
   code = normalizeImports(code);
+  // Full-bleed "scrims" that would wash out the user's drawing — see repair.ts.
+  code = softenSceneOverlays(code);
 
   // Navigation and height reporting script
   const systemScript = `
@@ -93,6 +96,63 @@ export function wrapReactForPreview(tsxCode: string, options?: { freeze?: boolea
     // number — grew the page without bound and pegged the main thread. No parent
     // resizes itself from this any more; it is informational.
     window.addEventListener('load', reportHeight);
+
+    // LoremFlickr matches ALL keywords by default and answers "no match" with one
+    // stock photo (a cat statue), so cards asking for "textile,scarf,linen" all
+    // showed the same unrelated picture. One keyword always matches something on
+    // topic. Rewritten as React sets the attribute, because the URL is often
+    // built at runtime from data the code-level rewrite can't see.
+    function __fixImageUrl(u) {
+      var m = /^(https?:\\/\\/loremflickr\\.com\\/\\d+\\/\\d+\\/)([^\\/?#]+)(.*)$/.exec(u);
+      if (!m) return u;
+      var first = decodeURIComponent(m[2]).split(',')[0].trim();
+      return m[1] + encodeURIComponent(first) + m[3].replace(/^\\/(all|any)(?=[?#]|$)/, '');
+    }
+    (function() {
+      // Both routes: React assigns the src *property* for images; other code
+      // uses setAttribute.
+      var setAttribute = Element.prototype.setAttribute;
+      Element.prototype.setAttribute = function(name, value) {
+        if (name === 'src' && this.tagName === 'IMG' && typeof value === 'string') value = __fixImageUrl(value);
+        return setAttribute.call(this, name, value);
+      };
+      var srcProp = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
+      if (srcProp && srcProp.set) {
+        Object.defineProperty(HTMLImageElement.prototype, 'src', {
+          configurable: true,
+          enumerable: srcProp.enumerable,
+          get: srcProp.get,
+          set: function(value) { srcProp.set.call(this, typeof value === 'string' ? __fixImageUrl(value) : value); },
+        });
+      }
+    })();
+
+    // A photo that fails to load becomes a quiet, labelled tile instead of a
+    // broken-image icon — one dead URL shouldn't make the whole page look broken.
+    window.addEventListener('error', function(e) {
+      var img = e.target;
+      if (!img || img.tagName !== 'IMG' || img.getAttribute('data-fallback')) return;
+      img.setAttribute('data-fallback', '1');
+      var label = (img.getAttribute('alt') || '').replace(/[<>&"]/g, '').slice(0, 48);
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice">' +
+        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#cfc6b8"/><stop offset="1" stop-color="#a99d8b"/></linearGradient></defs>' +
+        '<rect width="400" height="300" fill="url(#g)"/>' +
+        '<text x="200" y="156" font-family="system-ui,sans-serif" font-size="15" fill="#4a4238" fill-opacity=".75" text-anchor="middle">' + label + '</text></svg>';
+      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    }, true);
+
+    // A URL built from a missing field ("…/undefined?lock=undefined") doesn't
+    // fail — the image service answers it with one stock photo, so every such
+    // card showed the same unrelated picture. Treat it as the failure it is.
+    function __replaceUndefinedImages() {
+      document.querySelectorAll('img').forEach(function(img) {
+        var src = img.getAttribute('src') || '';
+        if (/\\/(undefined|null)(\\/|\\?|$)|=(undefined|null)(&|$)/.test(src) && !img.getAttribute('data-fallback')) {
+          img.dispatchEvent(new Event('error'));
+        }
+      });
+    }
+    window.addEventListener('load', function(){ __replaceUndefinedImages(); setTimeout(__replaceUndefinedImages, 1500); });
   `;
 
   // Freezing the backdrop: finish and pause everything that would keep painting.

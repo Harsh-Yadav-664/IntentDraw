@@ -37,3 +37,4 @@ AGENTS.md
 public/preview-harness.html
 # Debug renders written by scripts/diagnose-scene.ts
 public/_*.svg
+public/_*.html

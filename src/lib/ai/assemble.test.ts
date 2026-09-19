@@ -59,6 +59,15 @@ describe('assembleFile', () => {
     expect(code).toContain('function Hero()')
   })
 
+  it('recognises an import followed by a comment', () => {
+    // Real failure: the line wasn't treated as an import, so it was never dropped.
+    const shell = `import React from 'react';\nimport { Scene } from './Scene' // assuming it lives here\n${SHELL.split('\n').slice(2).join('\n')}`
+    const { code } = assembleFile(shell, [`const Scene = () => null;`])
+
+    expect(code).not.toContain("from './Scene'")
+    expect(code.match(/\bScene\b/g)).toHaveLength(1)
+  })
+
   it('drops a stray default export from a section', () => {
     const { code } = assembleFile(SHELL, [`export default function Hero() { return <h1>Hi</h1>; }`])
 

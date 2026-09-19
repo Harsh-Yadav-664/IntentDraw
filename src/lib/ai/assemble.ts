@@ -19,7 +19,10 @@ interface ParsedImports {
   namespaces: Map<string, string>
 }
 
-const IMPORT_LINE = /^\s*import\s+(?:(.+?)\s+from\s+)?['"]([^'"]+)['"]\s*;?\s*$/
+// A trailing comment is allowed: models write `import { X } from './X' // assuming…`,
+// and a line that didn't match was kept verbatim as code — a duplicate
+// declaration of X the moment the file also defined it.
+const IMPORT_LINE = /^\s*import\s+(?:(.+?)\s+from\s+)?['"]([^'"]+)['"]\s*;?\s*(?:\/\/.*|\/\*.*?\*\/)?\s*$/
 
 function emptyImports(): ParsedImports {
   return { named: new Map(), defaults: new Map(), namespaces: new Map() }
