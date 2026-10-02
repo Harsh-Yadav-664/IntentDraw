@@ -1,16 +1,23 @@
 import { create } from 'zustand'
-import type { Region, RegionGeometry, CanvasTool } from '@/types'
+import type { Region, RegionGeometry, RegionGroup, RegionTag, CanvasData, CanvasTool } from '@/types'
 import { generateUUID } from '@/lib/utils'
 
-interface StageExporter {
-  toDataURL(config?: { pixelRatio?: number }): string
+import type Konva from 'konva'
+
+/** The Konva stage, as far as exporting needs it. */
+type StageExporter = Pick<Konva.Stage, 'toDataURL' | 'getLayers' | 'width' | 'height' | 'scaleX'>
+
+interface HistoryEntry {
+  regions: Region[]
+  groups: RegionGroup[]
 }
 
-let _history: Region[][] = [[]]
+let _history: HistoryEntry[] = [{ regions: [], groups: [] }]
 let _historyIndex = 0
 
 interface CanvasStore {
   regions: Region[]
+  groups: RegionGroup[]
   activeTool: CanvasTool
   selectedRegionIds: string[]
   canUndo: boolean
@@ -32,10 +39,19 @@ interface CanvasStore {
   addRegion: (geometry: RegionGeometry) => void
   updateRegionGeometry: (id: string, updates: Partial<RegionGeometry>) => void
   updateRegionIntent: (id: string, intent: string) => void
+  /** The user's one-click answer to "what is this, and where does it go?" — null clears it. */
+  setRegionTag: (regionNumbers: number[], tag: RegionTag | null) => void
   deleteRegions: (ids: string[]) => void
   clearRegions: () => void
   setRegions: (regions: Region[]) => void
-  
+  setCanvasData: (data: CanvasData) => void
+
+  // Groups
+  groupSelection: (name?: string) => string | null
+  ungroup: (groupId: string) => void
+  updateGroupIntent: (groupId: string, intent: string) => void
+  renameGroup: (groupId: string, name: string) => void
+
   // Visibility actions
   toggleVisibility: (id: string) => void
   setVisibility: (id: string, visible: boolean) => void
@@ -46,6 +62,26 @@ interface CanvasStore {
   exportToPng: () => string | null
   exportAsJson: () => string
   importFromJson: (json: string) => void
+}
+
+/**
+ * Reads persisted canvas state. Projects saved before groups existed hold a
+ * bare `Region[]`, so both shapes have to keep working.
+ */
+export function parseCanvasData(raw: unknown): CanvasData {
+  if (Array.isArray(raw)) return { regions: raw as Region[], groups: [] }
+  if (raw && typeof raw === 'object') {
+    const data = raw as Partial<CanvasData>
+    if (Array.isArray(data.regions)) {
+      return { regions: data.regions, groups: Array.isArray(data.groups) ? data.groups : [] }
+    }
+  }
+  return { regions: [], groups: [] }
+}
+
+/** The members of a group, in region order. */
+export function regionsInGroup(regions: Region[], groupId: string): Region[] {
+  return regions.filter(r => r.groupId === groupId)
 }
 
 // Region colors - Professional wireframe palette
@@ -67,13 +103,26 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
   }
 
   const pushHistory = () => {
-    const { regions } = get()
+    const { regions, groups } = get()
     _history = _history.slice(0, _historyIndex + 1)
-    _history.push(JSON.parse(JSON.stringify(regions)) as Region[])
+    _history.push(JSON.parse(JSON.stringify({ regions, groups })) as HistoryEntry)
     if (_history.length > 50) _history = _history.slice(-50)
     _historyIndex = _history.length - 1
     syncHistoryFlags()
   }
+
+  /** Restores a history entry, rebuilding the derived visibility map. */
+  const restore = (entry: HistoryEntry) => {
+    const { regions, groups } = JSON.parse(JSON.stringify(entry)) as HistoryEntry
+    const visibility: Record<string, boolean> = {}
+    regions.forEach(r => { visibility[r.id] = true })
+    set({ regions, groups, selectedRegionIds: [], visibility })
+    syncHistoryFlags()
+  }
+
+  /** Groups with no remaining members are noise in the UI and the prompt. */
+  const dropEmptyGroups = (regions: Region[], groups: RegionGroup[]): RegionGroup[] =>
+    groups.filter(g => regions.some(r => r.groupId === g.id))
 
   const renumber = (regions: Region[]): Region[] =>
     regions.map((r, i) => ({ ...r, regionNumber: i + 1 }))
@@ -104,6 +153,7 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
 
   return {
     regions: [],
+    groups: [],
     activeTool: 'select',
     selectedRegionIds: [],
     canUndo: false,
@@ -162,21 +212,37 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       }))
     },
 
-    deleteRegions: (ids) => {
-      const { selectedRegionIds, visibility } = get()
-      const newVisibility = { ...visibility }
-      ids.forEach(id => delete newVisibility[id])
-      
+    setRegionTag: (regionNumbers, tag) => {
       set((state) => ({
-        regions: renumber(state.regions.filter((r) => !ids.includes(r.id))),
-        selectedRegionIds: selectedRegionIds.filter(id => !ids.includes(id)),
-        visibility: newVisibility,
+        regions: state.regions.map((r) => {
+          if (!regionNumbers.includes(r.regionNumber)) return r
+          const next = tag ? { ...r.tag, ...tag } : undefined
+          const empty = !next || (!next.kind && !next.anchor)
+          return { ...r, tag: empty ? undefined : next, updatedAt: new Date().toISOString() }
+        }),
       }))
       pushHistory()
     },
 
+    deleteRegions: (ids) => {
+      const { selectedRegionIds, visibility } = get()
+      const newVisibility = { ...visibility }
+      ids.forEach(id => delete newVisibility[id])
+
+      set((state) => {
+        const regions = renumber(state.regions.filter((r) => !ids.includes(r.id)))
+        return {
+          regions,
+          groups: dropEmptyGroups(regions, state.groups),
+          selectedRegionIds: selectedRegionIds.filter(id => !ids.includes(id)),
+          visibility: newVisibility,
+        }
+      })
+      pushHistory()
+    },
+
     clearRegions: () => {
-      set({ regions: [], selectedRegionIds: [], visibility: {} })
+      set({ regions: [], groups: [], selectedRegionIds: [], visibility: {} })
       pushHistory()
     },
 
@@ -184,6 +250,69 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const visibility: Record<string, boolean> = {}
       regions.forEach(r => { visibility[r.id] = true })
       set({ regions, visibility })
+    },
+
+    setCanvasData: ({ regions, groups }) => {
+      const visibility: Record<string, boolean> = {}
+      regions.forEach(r => { visibility[r.id] = true })
+      const nextGroups = dropEmptyGroups(regions, groups)
+      set({ regions, groups: nextGroups, visibility, selectedRegionIds: [] })
+
+      // History is module-level and survives navigation. Without this reset,
+      // loading a project and pressing undo restored the *previous* project's
+      // shapes onto this canvas — and auto-save then persisted them.
+      _history = [JSON.parse(JSON.stringify({ regions, groups: nextGroups })) as HistoryEntry]
+      _historyIndex = 0
+      syncHistoryFlags()
+    },
+
+    groupSelection: (name) => {
+      const { selectedRegionIds, regions, groups } = get()
+      if (selectedRegionIds.length < 2) return null
+
+      const now = new Date().toISOString()
+      const group: RegionGroup = {
+        id: generateUUID(),
+        name: name?.trim() || `Group ${groups.length + 1}`,
+        intent: '',
+        createdAt: now,
+        updatedAt: now,
+      }
+
+      const nextRegions = regions.map(r =>
+        selectedRegionIds.includes(r.id) ? { ...r, groupId: group.id, updatedAt: now } : r
+      )
+      set({
+        regions: nextRegions,
+        // A region belongs to one group, so re-grouping can empty its old one.
+        groups: dropEmptyGroups(nextRegions, [...groups, group]),
+      })
+      pushHistory()
+      return group.id
+    },
+
+    ungroup: (groupId) => {
+      set((state) => ({
+        regions: state.regions.map(r => (r.groupId === groupId ? { ...r, groupId: null } : r)),
+        groups: state.groups.filter(g => g.id !== groupId),
+      }))
+      pushHistory()
+    },
+
+    updateGroupIntent: (groupId, intent) => {
+      set((state) => ({
+        groups: state.groups.map(g =>
+          g.id === groupId ? { ...g, intent, updatedAt: new Date().toISOString() } : g
+        ),
+      }))
+    },
+
+    renameGroup: (groupId, name) => {
+      set((state) => ({
+        groups: state.groups.map(g =>
+          g.id === groupId ? { ...g, name, updatedAt: new Date().toISOString() } : g
+        ),
+      }))
     },
     
     toggleVisibility: (id) => {
@@ -204,62 +333,78 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     undo: () => {
       if (_historyIndex <= 0) return
       _historyIndex--
-      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
-      const visibility: Record<string, boolean> = {}
-      regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, selectedRegionIds: [], visibility })
-      syncHistoryFlags()
+      restore(_history[_historyIndex])
     },
 
     redo: () => {
       if (_historyIndex >= _history.length - 1) return
       _historyIndex++
-      const regions = JSON.parse(JSON.stringify(_history[_historyIndex])) as Region[]
-      const visibility: Record<string, boolean> = {}
-      regions.forEach(r => { visibility[r.id] = true })
-      set({ regions, selectedRegionIds: [], visibility })
-      syncHistoryFlags()
+      restore(_history[_historyIndex])
     },
 
     exportToPng: () => {
       const stage = get()._stageInstance
       if (!stage) return null
-      
-      // Temporarily add a background rect so the image isn't transparent
-      // We use any type here to bypass strict Konva types since we just need the layer
-      const layer = (stage as any).getLayers()[0]
-      if (layer && typeof window !== 'undefined' && (window as any).Konva) {
-        const bgRect = new (window as any).Konva.Rect({
-          x: 0,
-          y: 0,
-          width: (stage as any).width(),
-          height: (stage as any).height(),
-          fill: '#0A0A0B',
-          listening: false,
-        })
-        layer.add(bgRect)
-        bgRect.moveToBottom()
-        layer.draw()
-        
-        const dataUrl = stage.toDataURL({ pixelRatio: 2 })
-        
-        bgRect.destroy()
-        layer.draw()
-        
-        return dataUrl
+      const { regions } = get()
+
+      // Only the drawn area, at 1x. The whole stage is several pages tall and
+      // mostly empty; at the old pixelRatio 2 it made a multi-megabyte image
+      // that slowed every request and spent vision tokens on blank canvas.
+      // Positions reach the model as text; the image only conveys how the
+      // strokes look, so cropping loses nothing.
+      let crop: { x: number; y: number; width: number; height: number } | undefined
+      if (regions.length > 0) {
+        // Region geometry is in logical units; the layer is scaled to the stage.
+        const layer = stage.getLayers()[0]
+        const scale = layer ? layer.scaleX() : 1
+        const pad = 24
+        const minX = Math.min(...regions.map(r => r.geometry.x))
+        const minY = Math.min(...regions.map(r => r.geometry.y))
+        const maxX = Math.max(...regions.map(r => r.geometry.x + r.geometry.width))
+        const maxY = Math.max(...regions.map(r => r.geometry.y + r.geometry.height))
+        const x = Math.max(0, minX * scale - pad)
+        const y = Math.max(0, minY * scale - pad)
+        crop = {
+          x,
+          y,
+          width: Math.min(stage.width() - x, (maxX - minX) * scale + pad * 2),
+          height: Math.min(stage.height() - y, (maxY - minY) * scale + pad * 2),
+        }
       }
-      
-      return stage.toDataURL({ pixelRatio: 2 })
+
+      // A background rect so the image isn't transparent (dark strokes on
+      // transparency read as nothing to a vision model).
+      const layer = stage.getLayers()[0]
+      const KonvaGlobal = typeof window !== 'undefined'
+        ? (window as unknown as { Konva?: typeof Konva }).Konva
+        : undefined
+      if (!layer || !KonvaGlobal) return stage.toDataURL({ pixelRatio: 1, ...crop })
+
+      const bgRect = new KonvaGlobal.Rect({
+        x: 0,
+        y: 0,
+        width: stage.width() / (layer.scaleX() || 1),
+        height: stage.height() / (layer.scaleY() || 1),
+        fill: '#0A0A0B',
+        listening: false,
+      })
+      layer.add(bgRect)
+      bgRect.moveToBottom()
+      layer.draw()
+      const dataUrl = stage.toDataURL({ pixelRatio: 1, ...crop })
+      bgRect.destroy()
+      layer.draw()
+      return dataUrl
     },
 
-    exportAsJson: () => JSON.stringify(get().regions),
+    exportAsJson: () => JSON.stringify({ regions: get().regions, groups: get().groups }),
 
     importFromJson: (json) => {
       try {
-        const regions = JSON.parse(json) as Region[]
+        const { regions, groups } = parseCanvasData(JSON.parse(json))
         const visibility: Record<string, boolean> = {}
         regions.forEach(r => { visibility[r.id] = true })
-        set({ regions, selectedRegionIds: [], visibility })
+        set({ regions, groups, selectedRegionIds: [], visibility })
         pushHistory()
       } catch (e) {
         console.error('Failed to import canvas JSON:', e)
@@ -267,3 +412,9 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
     },
   }
 })
+// Development-only handle for in-browser verification (e.g. checking what
+// exportToPng sends a vision model) without spending generation quota.
+// Compiled out of production builds.
+if (process.env.NODE_ENV !== 'production' && typeof window !== 'undefined') {
+  ;(window as unknown as { __canvasStore?: typeof useCanvasStore }).__canvasStore = useCanvasStore
+}

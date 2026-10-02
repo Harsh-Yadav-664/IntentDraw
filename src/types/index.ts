@@ -2,6 +2,13 @@
 // Core Type Definitions
 // =============================================================================
 
+/**
+ * The AI backends the generator can call. Declared once here because this union
+ * used to be spelled out literally in eight places, and adding a provider meant
+ * finding all of them. `ProviderName` in `lib/ai/provider.ts` aliases this.
+ */
+export type AIProvider = 'gemini' | 'groq' | 'nvidia' | 'openrouter'
+
 export interface RegionLockState {
   layout: boolean
   style: boolean
@@ -17,15 +24,51 @@ export interface RegionGeometry {
   path?: Array<{ x: number; y: number }>
 }
 
+/**
+ * A named set of regions sharing one description. Users draw a feature as many
+ * shapes, then want to explain it once ("these 20 shapes are the pricing table")
+ * instead of repeating themselves per shape.
+ * Membership lives on `Region.groupId`, so deleting a region can't leave a
+ * dangling reference behind.
+ */
+export interface RegionGroup {
+  id: string
+  name: string
+  intent: string
+  createdAt: string
+  updatedAt: string
+}
+
+/** What gets persisted to `projects.canvas_data`. */
+export interface CanvasData {
+  regions: Region[]
+  groups: RegionGroup[]
+}
+
+/** What a shape is — the user's one-click answer, or the intent engine's (lib/ai/intent.ts). */
+export type IntentKind = 'content' | 'text' | 'picture' | 'object' | 'background' | 'decoration' | 'motion' | 'connector'
+/** Where it goes: exactly where drawn, anywhere in its part of the page, or behind the content. */
+export type IntentAnchor = 'exact' | 'anywhere' | 'behind'
+export interface RegionTag {
+  kind?: IntentKind
+  anchor?: IntentAnchor
+}
+
 export interface Region {
   id: string
   regionNumber: number
   geometry: RegionGeometry
   intent: string
-  classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational'
+  groupId?: string | null
+  // 'illustration': part of a picture the user drew (a mountain, a sun). It is
+  // painted from computed geometry by the scene block, never laid out as a box.
+  classificationTag?: 'exact-placement' | 'approximate-area' | 'decorative' | 'relational' | 'illustration'
   // For decorative regions: 'region' = confined to where it was drawn /
   // behind the region it overlaps; 'full' = whole-page background.
   backgroundScope?: 'region' | 'full'
+  // The user's one-click answer to 'what is this, and where does it go?' —
+  // final evidence for the intent engine, stored with the drawing.
+  tag?: RegionTag
   lockState: RegionLockState
   generatedCode: string | null
   createdAt: string
@@ -59,7 +102,7 @@ export interface Generation {
   prompt: string
   generatedCode: string
   version: number
-  provider: 'gemini' | 'groq' | 'nvidia'
+  provider: AIProvider
   createdAt: string
 }
 
@@ -105,7 +148,7 @@ export interface Usage {
 export interface GenerationResponse {
   success: boolean
   code?: string
-  provider?: 'gemini' | 'groq' | 'nvidia'
+  provider?: AIProvider
   error?: string
 }
 

@@ -24,30 +24,36 @@ const DEVICE_HEIGHTS = {
 
 export default function PreviewFrame({ code, deviceSize = 'desktop', className = '' }: PreviewFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
   const [scale, setScale] = useState(1)
+  const [frameHeight, setFrameHeight] = useState(DEVICE_HEIGHTS[deviceSize])
 
   const targetWidth = DEVICE_WIDTHS[deviceSize]
-  const targetHeight = DEVICE_HEIGHTS[deviceSize]
+  const minHeight = DEVICE_HEIGHTS[deviceSize]
 
-  // Calculate scale to fit in container width
+  // The iframe is a real browser viewport: fixed height, page scrolls inside it.
+  // Its height comes from the panel and NEVER from the page's own reported
+  // height — that creates a feedback loop, because `min-h-screen` inside the
+  // iframe resolves against whatever height we just set, so every measurement
+  // grows the page and the preview runs away into an empty void.
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
 
-    const updateScale = () => {
+    const measure = () => {
       const rect = container.getBoundingClientRect()
-      
-      // Scale down to fit, but never scale up
-      // 32px padding for the container
-      const newScale = Math.min(1, (rect.width - 32) / targetWidth)
-      setScale(newScale)
+      const nextScale = Math.min(1, (rect.width - 32) / targetWidth)
+      setScale(nextScale)
+      // Fill the panel vertically at that scale, so a tall window shows more of
+      // the site instead of letterboxing a fixed 800px viewport.
+      setFrameHeight(Math.max(minHeight, Math.round((rect.height - 32) / (nextScale || 1))))
     }
 
-    updateScale()
-    const observer = new ResizeObserver(updateScale)
+    measure()
+    const observer = new ResizeObserver(measure)
     observer.observe(container)
     return () => observer.disconnect()
-  }, [targetWidth])
+  }, [targetWidth, minHeight])
 
   const srcDoc = useMemo(() => {
     if (!code) return null
@@ -71,17 +77,18 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
       className={`overflow-auto bg-slate-100 flex justify-center py-4 ${className}`}
     >
       {/* Wrapper element that matches the exact scaled size of the iframe */}
-      <div style={{ width: targetWidth * scale, height: targetHeight * scale }}>
-        <div 
+      <div style={{ width: targetWidth * scale, height: frameHeight * scale }}>
+        <div
           className="bg-white shadow-md ring-1 ring-black/5"
           style={{
             width: targetWidth,
-            height: targetHeight,
+            height: frameHeight,
             transform: `scale(${scale})`,
             transformOrigin: 'top left',
           }}
         >
           <iframe
+            ref={frameRef}
             srcDoc={srcDoc}
             sandbox="allow-scripts"
             title="Design Preview"

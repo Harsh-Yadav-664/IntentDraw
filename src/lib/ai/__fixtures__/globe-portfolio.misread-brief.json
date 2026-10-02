@@ -1,0 +1,106 @@
+{
+ "tone": [
+  "confident",
+  "premium",
+  "tech‑savvy"
+ ],
+ "avoid": [
+  "generic hero video",
+  "overused gradient overlays",
+  "stock icon grids"
+ ],
+ "design": {
+  "corners": "sharp",
+  "density": "balanced",
+  "bodyFont": "Space Grotesk",
+  "headings": "oversized",
+  "surfaces": "glass",
+  "displayFont": "Bebas Neue"
+ },
+ "source": "model",
+ "concept": "An interactive 3D landscape that mirrors the creator’s journey, framing a sleek, dark‑mode portfolio.",
+ "drawing": {
+  "kind": "mixed",
+  "reading": "A circular scene depicting mountains, a river, and a sun within a disc.",
+  "elements": [
+   {
+    "form": "shape",
+    "name": "AnimatedLandscape",
+    "role": "illustration",
+    "depth": 0,
+    "motion": "slow parallax rotation and gentle depth shift reacting to scroll and mouse movement",
+    "render": "A low‑poly, dark‑themed 3D landscape rendered as a glowing disc, with silhouetted mountain ridges, a winding river and a subtle sun, using deep charcoal with teal accent highlights.",
+    "regions": [
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "placement": "hero-background"
+   },
+   {
+    "form": null,
+    "name": "KeyPoints",
+    "role": "layout",
+    "depth": 0,
+    "motion": null,
+    "render": "A dark glass‑styled card area containing large single‑word achievement tags in the accent coral color, spaced evenly across the rectangle.",
+    "regions": [
+     11
+    ],
+    "placement": "section-background"
+   },
+   {
+    "form": null,
+    "name": "R10",
+    "role": "decoration",
+    "depth": 2,
+    "motion": null,
+    "render": null,
+    "regions": [
+     10
+    ],
+    "placement": "page-background"
+   }
+  ]
+ },
+ "palette": {
+  "text": "#E0E0E0",
+  "accent": "#FF6F61",
+  "surface": "#1E1E1E",
+  "secondary": "#4A90E2",
+  "background": "#0A0A0A"
+ },
+ "styleId": "neosleek",
+ "summary": "A premium dark‑themed portfolio that opens with an immersive 3D landscape reacting to scroll and mouse, followed by concise achievement cards and classic portfolio sections.",
+ "audience": "Tech recruiters, potential clients, and fellow developers seeking a high‑impact showcase of skills and accomplishments.",
+ "sections": [
+  {
+   "name": "HeroSection",
+   "purpose": "Introduce the creator with the animated 3D landscape and a bold tagline."
+  },
+  {
+   "name": "AboutSection",
+   "purpose": "Brief bio, mission statement, and personal photo."
+  },
+  {
+   "name": "ProjectsSection",
+   "purpose": "Showcase selected projects with screenshots and short descriptions."
+  },
+  {
+   "name": "HighlightsSection",
+   "purpose": "Display key achievements (e.g., hackathons won) as single‑word cards."
+  },
+  {
+   "name": "ContactSection",
+   "purpose": "Invite visitors to get in touch via a contact form and social links."
+  }
+ ],
+ "signature": "A scroll‑responsive, low‑poly 3D landscape embedded in the hero that subtly morphs with mouse movement.",
+ "primaryAction": "Get in Touch"
+}

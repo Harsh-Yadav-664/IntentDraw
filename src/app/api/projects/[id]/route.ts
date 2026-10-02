@@ -73,12 +73,13 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     }
 
     const body = await request.json()
-    const { name, canvas_data, prompt, generated_code, global_theme } = body as {
+    const { name, canvas_data, prompt, generated_code, global_theme, is_public } = body as {
       name?: string
       canvas_data?: unknown
       prompt?: string
       generated_code?: string
       global_theme?: string
+      is_public?: unknown
     }
 
     // Build update object with only provided fields
@@ -90,6 +91,8 @@ export async function PATCH(request: Request, { params }: RouteParams) {
     if (prompt !== undefined) updates.prompt = prompt
     if (generated_code !== undefined) updates.generated_code = generated_code
     if (global_theme !== undefined) updates.global_theme = global_theme
+    // Sharing is an explicit, boolean-only decision — never coerced from truthy junk.
+    if (typeof is_public === 'boolean') updates.is_public = is_public
 
     const admin = createAdminClient()
 
@@ -112,7 +115,7 @@ export async function PATCH(request: Request, { params }: RouteParams) {
       .from('projects')
       .update(updates)
       .eq('id', id)
-      .select('id, name, updated_at')
+      .select('id, name, updated_at, is_public')
       .single()
 
     if (error) {

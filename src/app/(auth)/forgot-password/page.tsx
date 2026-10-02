@@ -51,11 +51,11 @@ export default function ForgotPasswordPage() {
       <CardContent>
         {success ? (
           <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-green-50 border border-green-200 flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 text-green-500 flex-shrink-0 mt-0.5" />
+            <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3">
+              <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0 mt-0.5" />
               <div>
-                <h3 className="font-medium text-green-800">Check your email</h3>
-                <p className="text-sm text-green-700 mt-1">
+                <h3 className="font-medium text-emerald-200">Check your email</h3>
+                <p className="text-sm text-emerald-300 mt-1">
                   We&apos;ve sent a password reset link to <strong>{email}</strong>
                 </p>
               </div>
@@ -70,9 +70,9 @@ export default function ForgotPasswordPage() {
         ) : (
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="p-3 rounded-lg bg-red-50 border border-red-200 flex items-start gap-2">
-                <AlertCircle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-red-700">{error}</p>
+              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
+                <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
+                <p className="text-sm text-destructive">{error}</p>
               </div>
             )}
 
@@ -102,9 +102,9 @@ export default function ForgotPasswordPage() {
               )}
             </Button>
 
-            <p className="text-center text-sm text-slate-500">
+            <p className="text-center text-sm text-muted-foreground">
               Remember your password?{' '}
-              <Link href="/login" className="text-blue-600 hover:text-blue-700 hover:underline font-medium">
+              <Link href="/login" className="text-primary hover:text-primary/80 hover:underline font-medium">
                 Sign in
               </Link>
             </p>

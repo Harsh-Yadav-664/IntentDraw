@@ -9,6 +9,7 @@ import {
   useMemo,
 } from 'react'
 import { createBrowserClient } from '@/lib/supabase'
+import { DEV_USER, authBypassed } from '@/lib/auth/bypass'
 import type { User, Session } from '@supabase/supabase-js'
 
 // =============================================================================
@@ -39,21 +40,21 @@ interface AuthProviderProps {
 }
 
 export function AuthProvider({ children }: AuthProviderProps) {
-  const [user, setUser] = useState<User | null>(
-    { id: '10b15cad-04b2-42b0-89db-829e905a5b95', email: 'dev@intentdraw.local' } as any 
-  )
+  // Development only — see lib/auth/bypass.ts. Never active in a production build.
+  const bypass = authBypassed()
+  const [user, setUser] = useState<User | null>(bypass ? (DEV_USER as unknown as User) : null)
   const [session, setSession] = useState<Session | null>(
-    { user: { id: '10b15cad-04b2-42b0-89db-829e905a5b95' } } as any
+    bypass ? ({ user: DEV_USER } as unknown as Session) : null
   )
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState(!bypass)
 
   // Create Supabase client once
   const supabase = useMemo(() => createBrowserClient(), [])
 
   // Fetch initial session
   useEffect(() => {
-    return;
-    
+    if (bypass) return
+
     const initializeAuth = async () => {
       try {
         const { data: { session: initialSession } } = await supabase.auth.getSession()
@@ -69,10 +70,12 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
 
     initializeAuth()
-  }, [supabase])
+  }, [supabase, bypass])
 
-  // Listen for auth state changes
+  // Listen for auth state changes. Skipped under the dev bypass: Supabase
+  // reports INITIAL_SESSION with no session, which would null the dev user.
   useEffect(() => {
+    if (bypass) return
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, newSession) => {
@@ -93,7 +96,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     return () => {
       subscription.unsubscribe()
     }
-  }, [supabase])
+  }, [supabase, bypass])
 
   // Sign out function
   const signOut = useCallback(async () => {

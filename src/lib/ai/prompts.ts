@@ -1,24 +1,25 @@
 import { wrapUserPrompt, sanitizeUserPrompt } from './prompt-rules'
 import { describeLayout } from './region-analyzer'
-import type { Region } from '@/types'
+import { buildShapePath, describeShapePath, pointBudget } from './shape-path'
+import { buildReferenceSection } from './references'
+import type { Region, RegionGroup } from '@/types'
 import type { DesignTokenSet } from './design-tokens'
+import { describeScene, renderBrief, type BriefPalette, type DesignBrief } from './brief'
+import { MAX_SECTION_NOTE_CHARS } from './page-parts'
+import { pageIndexForRegion } from '@/lib/canvas/pages'
+import { describeDrawnSections } from './page-shell'
+import { PRODUCT_PRINCIPLE } from './principle'
 
 // =============================================================================
 // GENERATION SYSTEM PROMPT
 // =============================================================================
 
-export const GENERATION_SYSTEM_PROMPT = `You are IntentDraw's React generation engine.
-Your job: produce EXCEPTIONAL, visually crafted websites that look like a
-senior human designer built them — not an AI template machine.
-
-You will receive:
-  1. A list of regions with positions (as % of the page), sizes, shape types,
-     intent tags, and optional user intent notes
-  2. A CONCRETE LAYOUT SKELETON that you MUST use
-  3. A user prompt describing what each region should contain and look like
-  4. Optional design tokens (hard style constraints)
-
-════════════════════════════════════════════
+/**
+ * Shared prompt blocks. Staged generation asks three different questions
+ * (whole page, shell, one section), and every variant must enforce the same
+ * standards — keeping them in one place stops the variants drifting apart.
+ */
+const SPATIAL_RULES = `════════════════════════════════════════════
 UNDERSTANDING REGIONS & SPATIAL INTENT
 ════════════════════════════════════════════
 
@@ -39,13 +40,35 @@ Each region carries a classificationTag:
   - "relational": an arrow/connection. Express it as a directional cue,
     connector line, or animated hint — not a content block.
 
+DRAWN STROKES — freeform shapes and arrows:
+These regions carry an "svgPath" field: the EXACT stroke the user drew, as an
+SVG path in a "0 0 100 100" viewBox. This is real geometry, not a hint.
+  - RENDER THE PATH. Never substitute your own generic wave, blob or divider.
+    <svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full">
+      <path d="<the svgPath value>" fill="none" stroke="currentColor" />
+    </svg>
+  - The geometry is the user's; the STYLING is yours — stroke weight, gradients,
+    glow/blur filters, fill vs stroke, opacity layering. Make it beautiful.
+  - A stroke is also a MOTION PATH. When the prompt implies movement, animate it:
+    stroke-dashoffset draw-on, a gradient sweeping along the path, slow drift, or
+    an element travelling the path via CSS offset-path.
+  - Several strokes described as one composite background must share a SINGLE
+    full-page svg layer, styled as one coherent system.
+  - LAYERING (this is the #1 way background layers silently fail): NEVER put a
+    full-page background behind an opaque parent using a negative z-index — the
+    parent's own background paints over it and the strokes become invisible.
+    Correct pattern: the page wrapper carries NO background colour, the
+    background sits in <svg className="absolute inset-0 w-full h-full z-0
+    pointer-events-none">, and ALL content goes in a sibling with "relative z-10".
+    Put the page's background colour on <body> or on the svg layer itself.
+
 CRITICAL REQUIREMENT - THE SKELETON:
 You will be provided with a React/Tailwind LAYOUT SKELETON. This skeleton exactly
 mirrors the user's drawing. YOU MUST COPY THIS SKELETON EXACTLY.
 Do not invent your own layout or grid. Replace the <RegionX /> placeholders
-inside the skeleton with the actual components you build for those regions.
+inside the skeleton with the actual components you build for those regions.`
 
-════════════════════════════════════════════
+const DESIGN_RULES = `════════════════════════════════════════════
 VISUAL QUALITY — NON-NEGOTIABLE STANDARDS
 ════════════════════════════════════════════
 
@@ -65,15 +88,91 @@ LAYOUT:
   CONCISENESS: If the skeleton contains many regions (e.g. > 4), prioritize concise component implementations to avoid hitting token limits. Do not generate overly repetitive or unnecessarily verbose code.
 
 ════════════════════════════════════════════
+VERTICAL RHYTHM & DENSITY — CHECKABLE RULES
+════════════════════════════════════════════
+
+Defects, not preferences. Check your output against every one.
+
+1. FIRST SCREEN: headline + one clarifying line + an action + one piece of REAL
+   content (interface fragment, image, priced list, metric row, nav with 3+
+   links). A headline alone in an empty band fails. Never push content down the
+   page with leading empty space.
+2. NO SPACER ELEMENTS: no div, section or <br /> whose only job is height; no
+   empty h-32/h-64 wrappers; no one short line alone inside a tall box.
+3. PADDING CEILING: section vertical padding NEVER exceeds py-24 (py-16/py-20
+   normal, py-10/py-12 for dense bands). NEVER py-32/py-40/py-48; never
+   min-h-screen or h-screen except the hero; never space-y or gap above 20
+   between sibling sections.
+4. NO TWO CONSECUTIVE SECTIONS may share the same padding AND the same internal
+   layout. Alternate tall/short and dense/sparse deliberately.
+5. ONE DENSE SECTION MINIMUM: 6+ real items, a table, a priced list or a
+   comparison. Evenly padded three-card rows are the generic failure mode this
+   tool exists to avoid.
+6. ONE FULL-BLEED BREAK MINIMUM: a section escaping the centred container, so
+   the page is not one max-w column from top to bottom.
+7. CONTENT, NOT PADDING: a section with nothing concrete to say gets deleted,
+   never padded to make the page look longer.
+8. TYPE SCALE MUST JUMP: a display heading beside a small label within a
+   section. One uniform body size everywhere reads as machine-generated.
+
+════════════════════════════════════════════
+MOTION — THE PAGE MUST FEEL ALIVE
+════════════════════════════════════════════
+
+A completely static page reads as unfinished. Animate deliberately.
+Available: GSAP 3 (global \`gsap\`), MotionPathPlugin, ScrollTrigger, CSS transitions.
+Drive GSAP from useEffect — never during render — and always clean up:
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.hero-line', { y: 40, opacity: 0, stagger: 0.08, duration: 0.8, ease: 'power3.out' })
+    })
+    return () => ctx.revert()
+  }, [])
+
+USE MOTION FOR:
+  - Entrance: stagger headline lines and cards in. Never animate everything at once.
+  - Scroll: ScrollTrigger reveals, parallax depth, pinned sections.
+  - Drawn strokes: animate the user's svgPath — stroke-dashoffset draw-on, a gradient
+    travelling the path, or an element following it with MotionPathPlugin.
+  - Hover and state changes: transforms and colour shifts on a real easing curve.
+
+RULES:
+  - Ease everything (power2/power3/expo). Linear and default easing look cheap.
+  - Motion must serve hierarchy — guide the eye, never decorate for its own sake.
+  - Honour prefers-reduced-motion.
+
+════════════════════════════════════════════
 BANNED PATTERNS — NEVER PRODUCE THESE
 ════════════════════════════════════════════
 
-NEVER: Import or use ANY external libraries (e.g., framer-motion, next/image, next/link, react-router). You ONLY have access to 'react' and 'lucide-react'. If you need an image, use a standard <img> tag.
+NEVER: Import libraries outside the allowed set. You have EXACTLY: 'react', 'lucide-react', and 'gsap' (plus MotionPathPlugin and ScrollTrigger). framer-motion / 'motion' is NOT available and will crash the preview — never import it. No next/image, next/link, react-router. If you need an image, use a standard <img> tag.
 NEVER: Bootstrap-style generic cards with heavy drop shadows.
-NEVER: placeholder images from picsum.photos. Use realistic Unsplash source URLs if an image is absolutely required, or better, use CSS gradients/Lucide icons.
+IMAGES: never invent Unsplash or other photo URLs — you cannot know real photo IDs, so invented ones are broken or show something unrelated. Every photo MUST use this exact form, with ONE concrete subject keyword for what that image shows (a single lowercase word — several keywords match nothing and return an unrelated stock photo) and a different lock number per image:
+  https://loremflickr.com/{width}/{height}/{keyword}?lock={1-999}
+  e.g. https://loremflickr.com/800/600/pottery?lock=12  ·  https://loremflickr.com/600/800/weaver?lock=40  ·  https://loremflickr.com/400/400/necklace?lock=7
+Always give a meaningful alt. Never picsum.photos. Where a photo isn't needed, prefer typography, colour and shape over decoration.
 NEVER: Lorem ipsum — invent real-sounding placeholder content.
 NEVER: Spinning loader rings as default state.
 NEVER: Output markdown backticks (\`\`\`).
+NEVER: Declare a component, const or function with the same name as something you imported. If you import { Sun } from 'lucide-react', you may NOT also write "const Sun = ...". This is a fatal duplicate-declaration error. Pick a distinct name (SunGlyph, SunBadge) or just use the imported icon.`
+
+export const GENERATION_SYSTEM_PROMPT = `You are IntentDraw's React generation engine.
+Your job: produce EXCEPTIONAL, visually crafted websites that look like a
+senior human designer built them — not an AI template machine.
+
+You will receive:
+  1. A list of regions with positions (as % of the page), sizes, shape types,
+     intent tags, and optional user intent notes
+  2. A CONCRETE LAYOUT SKELETON that you MUST use
+  3. A user prompt describing what each region should contain and look like
+  4. Optional design tokens (hard style constraints)
+
+${PRODUCT_PRINCIPLE}
+
+${SPATIAL_RULES}
+
+${DESIGN_RULES}
 
 ════════════════════════════════════════════
 OUTPUT FORMAT
@@ -168,29 +267,6 @@ const Region2 = () => (
 `
 
 // =============================================================================
-// REGENERATE REGION SYSTEM PROMPT
-// =============================================================================
-
-export const REGENERATE_REGION_SYSTEM_PROMPT = `You are IntentDraw's React regeneration engine.
-You will modify ONE specific region component while preserving all others EXACTLY.
-
-RULES:
-1. You receive the complete existing React TSX file and the region to regenerate.
-2. Find the React component for that region (look for comments or component names).
-3. ONLY modify that region's content and styling.
-4. Keep ALL other code byte-for-byte identical.
-5. Maintain the existing premium, bold, and unique Tailwind UI aesthetic. Avoid generic soft UI templates.
-6. The regenerated region must fit seamlessly with surrounding design.
-
-Locked regions (marked with // <!-- LOCKED:RX --> comments):
-  NEVER modify these, even if asked.
-
-Output:
-  Return the COMPLETE React TSX file with only the target region changed.
-  No markdown. No code fences. No explanation.`
-
-
-// =============================================================================
 // SHARED HELPERS
 // =============================================================================
 
@@ -205,7 +281,10 @@ function getCanvasBounds(regions: Region[]): { width: number; height: number } {
 }
 
 /** Normalized region data with explicit percentage units and intent notes. */
-function buildRegionData(regions: Region[]) {
+function buildRegionData(regions: Region[], groups: RegionGroup[] = []) {
+  const groupName = (id?: string | null) =>
+    (id && groups.find(g => g.id === id)?.name) || null
+
   const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
   // A region is floating if it overlaps another region by >40% of its area
@@ -223,42 +302,51 @@ function buildRegionData(regions: Region[]) {
     return false
   }
 
-  const getDirection = (region: Region): string | null => {
-    if (region.geometry.type !== 'arrow' || !region.geometry.path || region.geometry.path.length < 2) {
-      return null
-    }
-    const start = region.geometry.path[0]
-    const end = region.geometry.path[region.geometry.path.length - 1]
-    const dx = end.x - start.x
-    const dy = end.y - start.y
-    if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left'
-    return dy > 0 ? 'down' : 'up'
-  }
+  const budget = pointBudget(regions)
 
-  return regions.map((r, i) => ({
-    id: `r${i + 1}`,
-    label: `R${r.regionNumber}`,
-    // All positions are PERCENTAGES of the page (0-100)
-    leftPercent: Math.round((r.geometry.x / canvasWidth) * 100),
-    topPercent: Math.round((r.geometry.y / canvasHeight) * 100),
-    widthPercent: Math.round((r.geometry.width / canvasWidth) * 100),
-    heightPercent: Math.round((r.geometry.height / canvasHeight) * 100),
-    shapeType: r.geometry.type === 'rectangle' ? 'rect' : r.geometry.type,
-    isFloating: isFloating(r),
-    directionVector: getDirection(r),
-    locked: r.lockState.layout || r.lockState.style || r.lockState.animation,
-    // The user's own description of this specific region, if provided
-    intent: r.intent?.trim() || null,
-    classificationTag: r.classificationTag || 'exact-placement',
-    backgroundScope: r.classificationTag === 'decorative' ? (r.backgroundScope || 'region') : undefined,
-  }))
+  return regions.map((r, i) => {
+    // Illustration shapes are drawn from the scene block's exact geometry;
+    // repeating their local path here would only cost tokens.
+    const shape = r.classificationTag === 'illustration' ? null : buildShapePath(r, budget)
+    return {
+      id: `r${i + 1}`,
+      label: `R${r.regionNumber}`,
+      // Which screenful (1-based, 1280x800 viewport) the region starts on.
+      page: pageIndexForRegion(r) + 1,
+      // All positions are PERCENTAGES of the page (0-100)
+      leftPercent: Math.round((r.geometry.x / canvasWidth) * 100),
+      topPercent: Math.round((r.geometry.y / canvasHeight) * 100),
+      widthPercent: Math.round((r.geometry.width / canvasWidth) * 100),
+      heightPercent: Math.round((r.geometry.height / canvasHeight) * 100),
+      shapeType: r.geometry.type === 'rectangle' ? 'rect' : r.geometry.type,
+      isFloating: isFloating(r),
+      // The literal stroke the user drew, as an SVG `d` in a "0 0 100 100"
+      // viewBox. Without this a wave and a straight line look identical.
+      svgPath: shape?.d ?? null,
+      strokeCharacter: shape ? describeShapePath(shape) : null,
+      directionVector: shape?.direction ?? null,
+      locked: r.lockState.layout || r.lockState.style || r.lockState.animation,
+      // The user's own description of this specific region, if provided
+      intent: r.intent?.trim() || null,
+      // Set when the user grouped this shape with others — see REGION GROUPS.
+      group: groupName(r.groupId),
+      classificationTag: r.classificationTag || 'exact-placement',
+      backgroundScope: r.classificationTag === 'decorative' ? (r.backgroundScope || 'region') : undefined,
+    }
+  })
 }
 
-function buildTokenSection(tokens: DesignTokenSet): string {
+function buildTokenSection(tokens: DesignTokenSet, palette?: BriefPalette | null): string {
+  // The brief's palette belongs to this site's concept; the preset's is generic
+  // to every site that lands on the preset. The preset still supplies shape,
+  // type and shadow language, and its banned classes.
+  const colors = palette
+    ? `EXACTLY the brief's palette — background ${palette.background}, surface ${palette.surface}, text ${palette.text}, accent ${palette.accent}, secondary ${palette.secondary} — via arbitrary classes (bg-[${palette.background}]). No stock Tailwind hues.`
+    : tokens.colorPalette
   return `HARD DESIGN CONSTRAINTS (PRESET: ${tokens.name}):
 You MUST follow these concrete style tokens exactly. Do NOT use generic fallback classes.
 - Border Radius: ${tokens.borderRadius}
-- Colors: ${tokens.colorPalette}
+- Colors: ${colors}
 - Typography: ${tokens.typography}
 - Shadows/Borders: ${tokens.shadowTreatment}
 - Special Instructions: ${tokens.specialInstructions || 'None'}
@@ -266,6 +354,21 @@ You MUST follow these concrete style tokens exactly. Do NOT use generic fallback
 CRITICAL - BANNED CLASSES:
 You are explicitly BANNED from using the following Tailwind classes anywhere in your output:
 ${tokens.bannedClasses.join(', ')}`
+}
+
+/**
+ * Structural reference block. Sits immediately after the token section so the
+ * tokens it must be re-skinned with are already established, and before the
+ * drawing-derived skeleton, which overrides it.
+ */
+function pushReferenceSection(
+  sections: string[],
+  userPrompt: string,
+  tokens: DesignTokenSet,
+  mode: 'page' | 'section'
+): void {
+  const block = buildReferenceSection(userPrompt, tokens.id, mode)
+  if (block) sections.push(block)
 }
 
 // =============================================================================
@@ -277,24 +380,41 @@ export function buildGenerationUserPrompt(
   userPrompt: string,
   tokens: DesignTokenSet,
   globalTheme?: string,
-  hasDrawingImage?: boolean
+  hasDrawingImage?: boolean,
+  groups: RegionGroup[] = [],
+  brief?: DesignBrief
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
   const sections: string[] = []
 
   // Add Design Tokens (Aesthetic Enforcement)
-  sections.push(buildTokenSection(tokens))
+  sections.push(buildTokenSection(tokens, brief?.palette))
+
+  // What the user actually wants, worked out before building — it frames
+  // everything after it, so it comes straight after the hard constraints.
+  const briefBlock = brief ? renderBrief(brief, 'shell') : ''
+  if (briefBlock) sections.push(briefBlock)
+
+  // Structure to imitate — the strongest anti-generic lever we have offline.
+  // The brief's reading of the request is a better match signal than the raw
+  // prompt, which is often a single vague line.
+  const referenceSignal = brief ? `${userPrompt} ${brief.summary} ${brief.concept}` : userPrompt
+  pushReferenceSection(sections, referenceSignal, tokens, 'page')
 
   // Build normalized region data
   if (regions.length > 0) {
     const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
     sections.push(`REGIONS (all positions/sizes are PERCENTAGES of the page, 0-100):
-${JSON.stringify(buildRegionData(regions), null, 2)}`)
+${JSON.stringify(buildRegionData(regions, groups), null, 2)}`)
+
+    // The drawing as a picture, with exact computed geometry.
+    const scene = brief ? describeScene(brief, regions) : ''
+    if (scene) sections.push(scene)
 
     // Add layout description (skeleton + positioned decorative/relational instructions)
-    sections.push(describeLayout(regions, canvasWidth, canvasHeight))
+    sections.push(describeLayout(regions, canvasWidth, canvasHeight, groups))
   } else {
     sections.push('NO REGIONS DRAWN — Create a complete website based only on the prompt.')
   }
@@ -318,40 +438,12 @@ Decorative shapes are NOT literal layout boxes unless their tags say so.`)
   return wrapUserPrompt(sections.join('\n\n'))
 }
 
-export function buildRegenerateUserPrompt(
-  regionNumber: number,
-  userPrompt: string,
-  existingCode: string,
-  allRegions: Region[]
-): string {
-  const sanitized = sanitizeUserPrompt(userPrompt)
-
-  const regionList = allRegions.map(r => {
-    const marker = r.regionNumber === regionNumber ? ' ← REGENERATE' : ''
-    const locked = (r.lockState.layout || r.lockState.style || r.lockState.animation) ? ' [LOCKED]' : ''
-    const intent = r.intent?.trim() ? ` — "${r.intent.trim()}"` : ''
-    return `R${r.regionNumber}: ${r.geometry.type}${locked}${intent}${marker}`
-  }).join('\n')
-
-  const prompt = `EXISTING HTML:
-${existingCode}
-
-REGIONS:
-${regionList}
-
-REGENERATE R${regionNumber} with:
-${sanitized}
-
-Return complete React TSX code with ONLY R${regionNumber} modified.`
-
-  return wrapUserPrompt(prompt)
-}
-
 export function buildShellUserPrompt(
   regions: Region[],
   userPrompt: string,
   tokens: DesignTokenSet,
-  globalTheme?: string
+  globalTheme?: string,
+  groups: RegionGroup[] = []
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
@@ -359,13 +451,15 @@ export function buildShellUserPrompt(
 
   sections.push(buildTokenSection(tokens))
 
+  pushReferenceSection(sections, userPrompt, tokens, 'page')
+
   if (regions.length > 0) {
     const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(regions)
 
     sections.push(`REGIONS (all positions/sizes are PERCENTAGES of the page, 0-100):
-${JSON.stringify(buildRegionData(regions), null, 2)}`)
+${JSON.stringify(buildRegionData(regions, groups), null, 2)}`)
 
-    sections.push(describeLayout(regions, canvasWidth, canvasHeight))
+    sections.push(describeLayout(regions, canvasWidth, canvasHeight, groups))
   } else {
     sections.push('NO REGIONS DRAWN — Create a complete website based only on the prompt.')
   }
@@ -384,7 +478,8 @@ export function buildChunkUserPrompt(
   allRegions: Region[],
   userPrompt: string,
   tokens: DesignTokenSet,
-  globalTheme?: string
+  globalTheme?: string,
+  groups: RegionGroup[] = []
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
 
@@ -392,11 +487,13 @@ export function buildChunkUserPrompt(
 
   sections.push(buildTokenSection(tokens))
 
+  pushReferenceSection(sections, userPrompt, tokens, 'section')
+
   // Full context: this chunk's regions with geometry + intent,
   // plus the overall skeleton so components know where they live.
   const { width: canvasWidth, height: canvasHeight } = getCanvasBounds(allRegions)
 
-  const chunkData = buildRegionData(allRegions).filter(rd =>
+  const chunkData = buildRegionData(allRegions, groups).filter(rd =>
     regions.some(r => `R${r.regionNumber}` === rd.label)
   )
 
@@ -404,13 +501,103 @@ export function buildChunkUserPrompt(
 ${JSON.stringify(chunkData, null, 2)}`)
 
   sections.push(`OVERALL LAYOUT (for context — build ONLY your regions above):
-${describeLayout(allRegions, canvasWidth, canvasHeight)}`)
+${describeLayout(allRegions, canvasWidth, canvasHeight, groups)}`)
 
   if (globalTheme) {
     sections.push(`THEME: ${globalTheme}`)
   }
 
   sections.push(`USER PROMPT:\n${sanitized}`)
+
+  return wrapUserPrompt(sections.join('\n\n'))
+}
+
+// =============================================================================
+// STAGED GENERATION — sections (the page shell is built in code: page-shell.ts)
+// =============================================================================
+
+export const STAGED_SECTION_SYSTEM_PROMPT = `You are IntentDraw's section generation engine.
+You build a few named components that slot into a page shell written by another pass.
+
+${PRODUCT_PRINCIPLE}
+
+${SPATIAL_RULES}
+
+${DESIGN_RULES}
+
+════════════════════════════════════════════
+YOUR OUTPUT — THE REQUESTED COMPONENTS ONLY
+════════════════════════════════════════════
+
+1. Define EXACTLY the components you were asked for, using those exact names.
+2. DO NOT write 'export default'. DO NOT redefine App. DO NOT build other sections.
+3. Import what you use ('react', 'lucide-react', 'gsap') — imports are merged for you.
+4. Match the shell's visual language; it is shown to you for context.
+5. Every component must render real, specific content — never a placeholder stub.
+6. Each component owns its own vertical padding and stays within the PADDING
+   CEILING above (py-24 maximum, py-10 to py-12 for dense bands). No component
+   may be min-h-screen unless it is the hero, and none may open or close with an
+   empty spacer element.
+
+Return ONLY the component definitions. No markdown, no code fences, no explanation.`
+
+/** Section pass: what to build, plus the shell it has to fit into. */
+export function buildStagedSectionUserPrompt(
+  sectionNames: string[],
+  shellCode: string,
+  regions: Region[],
+  userPrompt: string,
+  tokens: DesignTokenSet,
+  globalTheme?: string,
+  groups: RegionGroup[] = [],
+  brief?: DesignBrief,
+  /** The user's instruction when rebuilding one section ("make it a comparison table"). */
+  note?: string
+): string {
+  const sanitized = sanitizeUserPrompt(userPrompt)
+  const sections: string[] = [buildTokenSection(tokens, brief?.palette)]
+
+  const briefBlock = brief ? renderBrief(brief, 'section') : ''
+  if (briefBlock) sections.push(briefBlock)
+
+  const referenceSignal = brief ? `${userPrompt} ${brief.summary} ${brief.concept}` : userPrompt
+  pushReferenceSection(sections, referenceSignal, tokens, 'section')
+
+  // Everything above and the next three blocks are the same for every section
+  // call in a run; only what follows them differs. Provider prompt caches match
+  // on the shared prefix, so the per-section part goes last (arXiv 2601.06007:
+  // 41-80% lower cost with dynamic content at the end).
+  sections.push(`THE PAGE YOUR COMPONENTS SLOT INTO (built by IntentDraw — do not reproduce it):
+${shellCode}`)
+  if (globalTheme) sections.push(`THEME: ${globalTheme}`)
+  sections.push(`USER PROMPT:\n${sanitized}`)
+
+  // ---- per-section from here ----
+  sections.push(`BUILD EXACTLY THESE COMPONENTS: ${sectionNames.join(', ')}`)
+
+  // What each requested component is FOR, from the brief — the difference
+  // between a section with real content and one with "Feature 1, Feature 2".
+  if (brief) {
+    const purposes = sectionNames
+      .map(name => {
+        const planned = brief.sections.find(s => s.name === name)
+        return planned?.purpose ? `  ${name} — ${planned.purpose}` : null
+      })
+      .filter(Boolean)
+    if (purposes.length > 0) sections.push(`WHAT EACH COMPONENT IS FOR:\n${purposes.join('\n')}`)
+  }
+
+  // What the user drew inside these sections, with exact desktop placement.
+  const drawn = describeDrawnSections(sectionNames, brief, regions, groups)
+  if (drawn) sections.push(drawn)
+
+  // A rebuild: the user saw this section and said what to change. Last, so it
+  // reads as the final word on this component; capped because it is user input.
+  const cleanNote = note ? sanitizeUserPrompt(note.replace(/\s+/g, ' ')).slice(0, MAX_SECTION_NOTE_CHARS).trim() : ''
+  if (cleanNote) {
+    sections.push(`USER INSTRUCTION FOR ${sectionNames.join(', ')} (a rebuild of this section — follow it over the plan above where they conflict, but keep the palette, tokens and fit with the page):
+${cleanNote}`)
+  }
 
   return wrapUserPrompt(sections.join('\n\n'))
 }

@@ -2,7 +2,11 @@ import { NextResponse } from 'next/server'
 import { generateCode } from '@/lib/ai/provider'
 import { checkRateLimit, incrementUsage, getUsageStats } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
-import type { Region } from '@/types'
+import type { AIProvider, Region, RegionGroup } from '@/types'
+
+// Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
+// function at its plan's limit; this asks for the most the plan allows.
+export const maxDuration = 300
 
 export async function POST(request: Request) {
   try {
@@ -36,11 +40,12 @@ export async function POST(request: Request) {
 
     // --- Parse body ---
     const body = await request.json()
-    const { regions, prompt, globalTheme, provider, nvidiaModelId, imageData } = body as {
+    const { regions, groups, prompt, globalTheme, provider, nvidiaModelId, imageData } = body as {
       regions?: Region[]
+      groups?: RegionGroup[]
       prompt?: string
       globalTheme?: string
-      provider?: 'gemini' | 'groq' | 'nvidia'
+      provider?: AIProvider
       nvidiaModelId?: string
       imageData?: string
     }
@@ -60,6 +65,7 @@ export async function POST(request: Request) {
     }
 
     let validRegions = Array.isArray(regions) ? regions : []
+    const validGroups = Array.isArray(groups) ? groups : []
     let finalPrompt = prompt.trim()
 
     // --- Intent classification (only when there is a drawing to classify) ---
@@ -93,7 +99,7 @@ export async function POST(request: Request) {
     console.log(`[Generate] user=${userId} | ${validRegions.length} regions | prompt: "${finalPrompt.substring(0, 100)}..."`)
 
     // --- Call AI ---
-    const result = await generateCode(validRegions, finalPrompt, globalTheme, provider, nvidiaModelId, imageData)
+    const result = await generateCode(validRegions, finalPrompt, globalTheme, provider, nvidiaModelId, imageData, validGroups)
 
     if (!result.success || !result.code) {
       return NextResponse.json(

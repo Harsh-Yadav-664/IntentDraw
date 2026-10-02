@@ -55,13 +55,10 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
   const viewMode = useCanvasStore((s) => s.viewMode)
   const [isControlsOpen, setControlsOpen] = useState(true)
 
-  // Automatically collapse controls in split view to save space
+  // Output is a view-only mode, so hand the preview the full width instead of
+  // rendering a real site into a ~550px column. The sidebar stays togglable.
   useEffect(() => {
-    if (viewMode === 'split') {
-      setControlsOpen(false)
-    } else {
-      setControlsOpen(true)
-    }
+    setControlsOpen(viewMode === 'canvas')
   }, [viewMode])
 
   return (
@@ -74,10 +71,21 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
           backgroundSize: '24px 24px' 
         }} 
       />
-      {/* Subtle ambient glows for premium feel */}
-      <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-primary/10 rounded-full blur-[120px] pointer-events-none mix-blend-screen opacity-60" />
-      <div className="absolute bottom-0 right-0 w-[600px] h-[600px] bg-primary/5 rounded-full blur-[150px] pointer-events-none mix-blend-screen opacity-40" />
-      <div className="absolute inset-0 bg-gradient-to-br from-black/20 via-transparent to-primary/5 pointer-events-none mix-blend-overlay" />
+      {/* Ambient glows, painted as one static gradient.
+          These used to be two 500–600px divs with blur-[120px]/blur-[150px] plus
+          mix-blend-screen and an overlay-blended gradient on top. A blend mode
+          forces its own compositing buffer that no backdrop-filter above it can
+          cache, so *every* paint — a keystroke, a hover, the pulsing save dot —
+          re-rasterized a 150px blur across the viewport. Identical look, zero
+          per-frame cost. */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          backgroundImage:
+            'radial-gradient(600px circle at 0% 0%, rgba(250,204,21,0.07), transparent 60%),' +
+            'radial-gradient(700px circle at 100% 100%, rgba(250,204,21,0.04), transparent 60%)',
+        }}
+      />
       
       <div className="h-full flex relative z-10">
         
@@ -85,7 +93,9 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
         <div className="flex-1 h-full flex flex-col relative min-w-0">
           
           {/* Content Area */}
-          <div className="flex-1 flex w-full h-full p-6 md:p-8 gap-6 overflow-hidden items-center justify-center">
+          <div className={`flex-1 flex w-full h-full gap-6 overflow-hidden items-center justify-center ${
+            viewMode === 'preview' ? 'p-2 md:p-3' : 'p-6 md:p-8'
+          }`}>
              
              {/* Canvas Artboard */}
              {viewMode === 'canvas' && (
@@ -94,7 +104,7 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
                  <div className="flex-1 flex flex-col w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 bg-[#121214] ring-1 ring-white/5 relative">
                     
                     {/* Top Canvas Ribbon (Toolbar) */}
-                    <div className="h-12 bg-black/60 backdrop-blur-md border-b border-white/10 flex items-center px-4 flex-shrink-0 z-40 w-full justify-center">
+                    <div className="h-12 bg-[#0D0D0F] border-b border-white/10 flex items-center px-4 flex-shrink-0 z-40 w-full justify-center">
                        <Toolbar />
                     </div>
                     
@@ -106,9 +116,9 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
                </div>
              )}
              
-             {/* Preview Artboard */}
+             {/* Preview Artboard — uncapped width so the site renders near 1:1 */}
              {viewMode === 'preview' && (
-               <div className="relative flex flex-col animate-in fade-in zoom-in-95 duration-300 w-full h-full max-w-5xl max-h-full">
+               <div className="relative flex flex-col animate-in fade-in zoom-in-95 duration-300 w-full h-full max-h-full">
                  <div className="w-full h-full rounded-2xl overflow-hidden shadow-2xl border border-white/10 ring-1 ring-white/5 flex flex-col">
                     <PreviewPanel />
                  </div>
@@ -121,14 +131,14 @@ export function CanvasEditor({ projectId: _projectId }: CanvasEditorProps) {
 
         {/* Right Sidebar (Controls) */}
         <div 
-          className={`h-full border-l border-white/5 flex-shrink-0 bg-[#0A0A0B]/95 backdrop-blur-xl z-50 flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)] transition-all duration-300 ease-in-out relative ${
+          className={`h-full border-l border-white/5 flex-shrink-0 bg-[#0A0A0B] z-50 flex flex-col shadow-[-10px_0_30px_rgba(0,0,0,0.5)] transition-all duration-300 ease-in-out relative ${
             isControlsOpen ? 'w-80 translate-x-0' : 'w-0 translate-x-full border-l-0 shadow-none'
           }`}
         >
           {/* Collapse Toggle Button */}
           <button
             onClick={() => setControlsOpen(!isControlsOpen)}
-            className={`absolute top-4 -left-12 h-10 w-10 flex items-center justify-center rounded-l-xl bg-[#0A0A0B]/95 border border-r-0 border-white/10 text-white/70 hover:text-white transition-all backdrop-blur-xl z-50 shadow-[-5px_0_15px_rgba(0,0,0,0.5)] ${!isControlsOpen ? 'bg-primary/20 text-primary border-primary/30 hover:bg-primary/30 hover:text-primary-foreground' : ''}`}
+            className={`absolute top-4 -left-12 h-10 w-10 flex items-center justify-center rounded-l-xl bg-[#0A0A0B] border border-r-0 border-white/10 text-white/70 hover:text-white transition-all z-50 shadow-[-5px_0_15px_rgba(0,0,0,0.5)] ${!isControlsOpen ? 'bg-primary/20 text-primary border-primary/30 hover:bg-primary/30 hover:text-primary-foreground' : ''}`}
             title={isControlsOpen ? "Collapse controls" : "Expand controls"}
           >
             {isControlsOpen ? <ChevronRight className="h-5 w-5" /> : <Menu className="h-5 w-5" />}

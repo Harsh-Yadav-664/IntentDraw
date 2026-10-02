@@ -1,11 +1,22 @@
 'use client'
 
+import { useState } from 'react'
 import { useCanvasStore } from '@/store/canvas-store'
 import type { CanvasTool } from '@/types'
 import type { LucideIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import {
   MousePointer2,
   Square,
@@ -37,6 +48,7 @@ export default function Toolbar() {
   const undo = useCanvasStore((s) => s.undo)
   const redo = useCanvasStore((s) => s.redo)
   const regionsCount = useCanvasStore((s) => s.regions.length)
+  const [confirmClear, setConfirmClear] = useState(false)
 
   return (
     <TooltipProvider delayDuration={300}>
@@ -107,22 +119,44 @@ export default function Toolbar() {
           </TooltipContent>
         </Tooltip>
 
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-8 w-8 p-0 text-destructive/80 hover:text-destructive hover:bg-destructive/20"
-              onClick={clearRegions}
-              disabled={regionsCount === 0}
-            >
-              <RotateCcw className="h-4 w-4" />
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent side="bottom" className="bg-black border-white/10 text-white">
-            <p>Clear canvas</p>
-          </TooltipContent>
-        </Tooltip>
+        {/* Clearing throws away every shape. It used to fire on a single click,
+            one icon away from Delete and styled identically. */}
+        <AlertDialog open={confirmClear} onOpenChange={setConfirmClear}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 text-destructive/80 hover:text-destructive hover:bg-destructive/20"
+                onClick={() => setConfirmClear(true)}
+                disabled={regionsCount === 0}
+              >
+                <RotateCcw className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="bg-black border-white/10 text-white">
+              <p>Clear canvas</p>
+            </TooltipContent>
+          </Tooltip>
+          <AlertDialogContent className="glass-panel border-white/10">
+            <AlertDialogHeader>
+              <AlertDialogTitle className="font-display">Clear the canvas?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This removes all {regionsCount} shape{regionsCount !== 1 ? 's' : ''}. You can undo
+                it with Ctrl+Z, but the prompt and generated output are kept.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel className="border-white/10 hover:bg-white/5">Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={clearRegions}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              >
+                Clear canvas
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {regionsCount > 0 && (
           <>

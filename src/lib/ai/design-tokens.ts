@@ -59,7 +59,7 @@ export const PRESETS: Record<string, DesignTokenSet> = {
  * stylistic cues, resolve the preset WITHOUT spending a model call.
  * Returns null when the signal is weak or conflicting — the LLM decides then.
  */
-function resolveByKeywords(prompt: string): DesignTokenSet | null {
+export function resolveByKeywords(prompt: string): DesignTokenSet | null {
   const p = prompt.toLowerCase()
 
   const scores: Record<string, number> = { neosleek: 0, playful_pop: 0, elegant_serif: 0, glassmorphism: 0 }
@@ -143,4 +143,17 @@ RULES:
   // This ensures variety and guarantees NO generic default
   const randomKey = keys[Math.floor(Math.random() * keys.length)]
   return PRESETS[randomKey]
+}
+
+/**
+ * A stable preset for a prompt with no style signal. The random fallback above
+ * made the same prompt produce a different-looking site on every run, which
+ * reads as the tool being arbitrary. Hashing the prompt keeps "no signal"
+ * varied across prompts but consistent for one.
+ */
+export function stablePresetFor(prompt: string): DesignTokenSet {
+  const keys = Object.keys(PRESETS)
+  let hash = 0
+  for (let i = 0; i < prompt.length; i++) hash = (hash * 31 + prompt.charCodeAt(i)) >>> 0
+  return PRESETS[keys[hash % keys.length]]
 }

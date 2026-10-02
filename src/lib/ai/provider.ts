@@ -1,21 +1,22 @@
 import { geminiGenerate } from './gemini'
 import { groqGenerate } from './groq'
 import { nvidiaGenerate } from './nvidia'
+import { openrouterGenerate, OPENROUTER_DEFAULT_MODEL } from './openrouter'
 import { extractReact, withTimeout } from '@/lib/utils'
 import type { GenerationResponse } from '@/types'
 import type { Part } from '@google/generative-ai'
 import {
   GENERATION_SYSTEM_PROMPT,
-  REGENERATE_REGION_SYSTEM_PROMPT,
   CHUNKED_SHELL_SYSTEM_PROMPT,
   CHUNKED_REGION_SYSTEM_PROMPT,
   buildGenerationUserPrompt,
-  buildRegenerateUserPrompt,
   buildShellUserPrompt,
   buildChunkUserPrompt,
 } from './prompts'
 import { resolveDesignTokens } from './design-tokens'
-import type { Region } from '@/types'
+import { repairGeneratedCode } from './repair'
+import { assembleFile } from './assemble'
+import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Per-provider hard cap for a single generation call. Above this we give up on
 // that provider and let the fallback chain try the next one, so a slow or dead
@@ -23,10 +24,18 @@ import type { Region } from '@/types'
 // (2026-08-30): Gemini vision generation runs ~30-45s and can exceed 60s on a
 // real drawing + full prompt, so it gets the most headroom; Groq (gpt-oss-120b)
 // answers in ~7s; NVIDIA models are currently slow/EOL, so cap low to fail over.
-const PROVIDER_TIMEOUT_MS: Record<'gemini' | 'groq' | 'nvidia', number> = {
+//
+// openrouter: 90s. Two effects stack on the free tier — free endpoints are
+// queued behind paid traffic, and the free models worth using are MoE
+// *reasoning* models that spend time before the first output token. So it needs
+// more headroom than Groq's dedicated fast endpoint, but not Gemini's: Gemini's
+// 120s covers vision plus in-band 429 retries, neither of which applies here
+// (openrouter.ts does its own 429 wait, which the backstop below accounts for).
+const PROVIDER_TIMEOUT_MS: Record<AIProvider, number> = {
   gemini: 120000,
   groq: 45000,
   nvidia: 75000,
+  openrouter: 90000,
 }
 
 const DEFAULT_NVIDIA_MODEL = 'nvidia/nemotron-3.5-lightning-30b-a3b'
@@ -41,6 +50,15 @@ const DEFAULT_NVIDIA_MODEL = 'nvidia/nemotron-3.5-lightning-30b-a3b'
 function humanizeProviderError(raw: string | undefined): string {
   if (!raw) return 'skipped'
   const m = raw.toLowerCase()
+  // Checked before the generic key/quota branches: OpenRouter answers 402 when
+  // a *free* model's daily allowance runs out. That is the free tier working as
+  // designed, not a broken key and not a bug — say so plainly.
+  if (/\b402\b|payment required|insufficient credits|allowance exhausted/.test(m)) {
+    return "OpenRouter's free daily allowance is used up — it resets tomorrow, or add credit at openrouter.ai/settings/credits"
+  }
+  if (/openrouter_api_key is missing/.test(m)) {
+    return 'OPENROUTER_API_KEY is not set — add it to .env.local (free key at openrouter.ai/keys)'
+  }
   if (/reduce your message size|request too large|context length|maximum context/.test(m)) {
     return 'prompt too large for the free-tier token limit (fewer regions or a shorter prompt may help)'
   }
@@ -63,6 +81,92 @@ function humanizeProviderError(raw: string | undefined): string {
   return raw.split('\n')[0].slice(0, 140)
 }
 
+export type ProviderName = AIProvider
+
+/**
+ * One provider call, with that provider's timeout plus a backstop in case an
+ * SDK ignores its own signal. Shared by monolithic and staged generation so
+ * timeout and image-attachment behaviour can't drift between them.
+ */
+export async function callProvider(
+  p: ProviderName,
+  systemPrompt: string,
+  userMessage: string,
+  options: { nvidiaModelId?: string; openrouterModelId?: string; imageBase64?: string; geminiDeadlineMs?: number } = {}
+): Promise<string> {
+  // How long Gemini may spend walking its model chain before the next provider
+  // gets a turn. geminiGenerate stops on its own; the backstop is a safety net.
+  const geminiDeadlineMs = options.geminiDeadlineMs ?? 150000
+  const {
+    nvidiaModelId = DEFAULT_NVIDIA_MODEL,
+    openrouterModelId = OPENROUTER_DEFAULT_MODEL,
+  } = options
+  // The canvas exports a data URL, but Gemini's inlineData wants bare base64 and
+  // OpenRouter adds its own prefix. Passing the URL through made Gemini reject
+  // every drawing with a 400 ("Invalid value at inline_data.data"), so staged
+  // generation silently fell through to text-only providers that never saw the
+  // drawing at all. Normalised once, here, for every caller.
+  const imageBase64 = options.imageBase64?.replace(/^data:image\/\w+;base64,/, '')
+
+  const call = async (): Promise<string> => {
+    if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId)
+    // Groq switches to its vision model when an image is attached.
+    if (p === 'groq') return groqGenerate(systemPrompt, userMessage, { imageBase64 })
+    // OpenRouter swaps to a vision-capable free model on its own when an image
+    // is attached, so the drawing isn't silently dropped.
+    if (p === 'openrouter') {
+      return openrouterGenerate(systemPrompt, userMessage, openrouterModelId, { imageBase64 })
+    }
+
+    const contentParts: Part[] = [{ text: systemPrompt }, { text: userMessage }]
+    if (imageBase64) {
+      contentParts.push({ inlineData: { mimeType: 'image/png', data: imageBase64 } })
+    }
+    // geminiGenerate retries free-tier 429s (honoring the server's
+    // retryDelay) before giving up and letting the chain fall through.
+    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini, deadlineMs: geminiDeadlineMs })
+  }
+
+  // Gemini and OpenRouter both retry through free-tier 429s in-band (honoring
+  // the server's delay), so their backstop has to allow for those waits too.
+  const backstopMs = p === 'gemini'
+    ? geminiDeadlineMs + 10000
+    : p === 'openrouter'
+      ? PROVIDER_TIMEOUT_MS.openrouter + 45000
+      : PROVIDER_TIMEOUT_MS[p] + 5000
+  return withTimeout(call(), backstopMs, `${p} generation`)
+}
+
+/**
+ * True only when an OpenRouter key is actually configured. Without it the
+ * provider fails instantly, and appending a guaranteed failure to every chain
+ * would add noise ("openrouter: key not set") to every existing error message.
+ * Server-side only — on the client this env var is undefined, which correctly
+ * resolves to "leave it out". The chain is only ever built inside route
+ * handlers, so that never changes what actually runs.
+ */
+function openrouterConfigured(): boolean {
+  return typeof process !== 'undefined' && !!process.env.OPENROUTER_API_KEY
+}
+
+/**
+ * The user's chosen provider first, then the others as fallbacks.
+ * OpenRouter goes last when it wasn't the pick: it is the newest of the four
+ * and shouldn't displace the known-good Gemini path, but it is worth one more
+ * attempt once everything else has failed.
+ */
+export function buildFallbackChain(provider: ProviderName): ProviderName[] {
+  const tail = openrouterConfigured() ? (['openrouter'] as ProviderName[]) : []
+  if (provider === 'openrouter') return ['openrouter', 'gemini', 'groq', 'nvidia']
+  // NVIDIA goes last: its free endpoints routinely take longer than a request
+  // budget allows (vision models didn't answer within 90s on 2026-10-02).
+  if (provider === 'nvidia') return ['nvidia', 'gemini', 'groq', ...tail]
+  if (provider === 'groq') return ['groq', 'gemini', ...tail, 'nvidia']
+  return ['gemini', 'groq', ...tail, 'nvidia']
+}
+
+export { humanizeProviderError }
+
 // =============================================================================
 // Code Generation — Regions + Prompt → React TSX
 // Gemini → Groq → Nvidia fallback chain
@@ -75,9 +179,10 @@ export async function generateCode(
   regions: Region[],
   userPrompt: string,
   globalTheme?: string,
-  provider: 'gemini' | 'groq' | 'nvidia' = 'gemini',
+  provider: ProviderName = 'gemini',
   nvidiaModelId: string = DEFAULT_NVIDIA_MODEL,
-  imageBase64?: string
+  imageBase64?: string,
+  groups: RegionGroup[] = []
 ): Promise<GenerationResponse> {
   const tokens = await resolveDesignTokens(userPrompt)
 
@@ -93,38 +198,14 @@ export async function generateCode(
 
   // Helper to run a specific provider
   // When image is available and provider is Gemini, includes inlineData for vision.
-  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia', sysPrompt: string, msg: string, attachImage = false): Promise<string> => {
-    const call = async (): Promise<string> => {
-      if (p === 'nvidia') {
-        return nvidiaGenerate(sysPrompt, msg, nvidiaModelId)
-      } else if (p === 'groq') {
-        return groqGenerate(sysPrompt, msg)
-      } else {
-        // Build content array — attach image when a drawing exists.
-        const contentParts: Part[] = [{ text: sysPrompt }, { text: msg }]
-        if (attachImage && rawImageBase64) {
-          contentParts.push({
-            inlineData: { mimeType: 'image/png', data: rawImageBase64 },
-          })
-        }
-        // geminiGenerate retries free-tier 429s (honoring the server's
-        // retryDelay) before giving up and letting the chain fall through.
-        return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini })
-      }
-    }
-    // Backstop in case an SDK ignores its own timeout/signal. Gemini can retry
-    // through free-tier 429s (each with a short wait), so give it extra headroom.
-    const backstopMs = p === 'gemini'
-      ? PROVIDER_TIMEOUT_MS.gemini + 45000
-      : PROVIDER_TIMEOUT_MS[p] + 5000
-    return withTimeout(call(), backstopMs, `${p} generation`)
-  }
+  const runProvider = (p: ProviderName, sysPrompt: string, msg: string, attachImage = false): Promise<string> =>
+    callProvider(p, sysPrompt, msg, {
+      nvidiaModelId,
+      imageBase64: attachImage ? rawImageBase64 : undefined,
+    })
 
   // Fallback chain based on user's selected provider
-  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> =
-    provider === 'nvidia' ? ['nvidia', 'gemini', 'groq'] :
-    provider === 'groq' ? ['groq', 'gemini', 'nvidia'] :
-    ['gemini', 'groq', 'nvidia']
+  const fallbacks = buildFallbackChain(provider)
 
   // -------------------------------------------------------------------------
   // Monolithic generation path (≤ 12 regions — single call).
@@ -133,13 +214,13 @@ export async function generateCode(
   // only fall back to it for genuinely large layouts.
   // -------------------------------------------------------------------------
   if (regions.length <= 12) {
-    const userMessage = buildGenerationUserPrompt(regions, userPrompt, tokens, globalTheme, hasDrawingImage)
+    const userMessage = buildGenerationUserPrompt(regions, userPrompt, tokens, globalTheme, hasDrawingImage, groups)
     const errors: Record<string, string> = {}
 
     for (const currentProvider of fallbacks) {
       try {
         const responseText = await runProvider(currentProvider, GENERATION_SYSTEM_PROMPT, userMessage, hasDrawingImage)
-        const code = extractReact(responseText)
+        const code = repairGeneratedCode(extractReact(responseText))
 
         if (!code || code.length < 20) throw new Error(`${currentProvider} returned empty response`)
         if (!code.includes('export default')) throw new Error('Generation truncated — output incomplete')
@@ -169,13 +250,13 @@ export async function generateCode(
 
   // Phase 1: Shell (gets the drawing image so full-page backgrounds
   // and decorative placement can echo the actual strokes)
-  const shellMessage = buildShellUserPrompt(regions, userPrompt, tokens, globalTheme)
+  const shellMessage = buildShellUserPrompt(regions, userPrompt, tokens, globalTheme, groups)
   let shellSuccess = false
 
   for (const currentProvider of fallbacks) {
     try {
       const responseText = await runProvider(currentProvider, CHUNKED_SHELL_SYSTEM_PROMPT, shellMessage, hasDrawingImage)
-      shellCode = extractReact(responseText)
+      shellCode = repairGeneratedCode(extractReact(responseText))
       if (!shellCode || shellCode.length < 20) throw new Error('Shell empty')
       if (!shellCode.includes('export default')) throw new Error('Shell truncated')
       activeProvider = currentProvider
@@ -209,15 +290,14 @@ export async function generateCode(
     chunks.push(chunkTargets.slice(i, i + CHUNK_SIZE))
   }
 
-  const chunkFallbacks: Array<'gemini' | 'groq' | 'nvidia'> =
+  const chunkFallbacks: ProviderName[] =
     [activeProvider, ...fallbacks.filter(p => p !== activeProvider)]
 
   const generatedComponents: string[] = new Array(chunks.length).fill('')
-  const allImports = new Set<string>()
 
   for (let index = 0; index < chunks.length; index++) {
     const chunk = chunks[index]
-    const chunkMessage = buildChunkUserPrompt(chunk, regions, userPrompt, tokens, globalTheme)
+    const chunkMessage = buildChunkUserPrompt(chunk, regions, userPrompt, tokens, globalTheme, groups)
 
     for (const currentProvider of chunkFallbacks) {
       try {
@@ -225,13 +305,8 @@ export async function generateCode(
         const chunkCode = extractReact(responseText)
         if (!chunkCode || chunkCode.length < 10) throw new Error(`Chunk ${index} empty`)
 
-        const lines = chunkCode.split('\n')
-        lines.filter(l => l.trim().startsWith('import ')).forEach(l => allImports.add(l.trim()))
-
-        const componentLines = lines.filter(
-          l => !l.trim().startsWith('import ') && !l.trim().startsWith('export default')
-        )
-        generatedComponents[index] = componentLines.join('\n')
+        // Kept whole — assembleFile parses and merges each chunk's imports.
+        generatedComponents[index] = chunkCode
         break
       } catch (err) {
         console.warn(`[AI Gen Chunk ${index}] ${currentProvider} failed:`, err)
@@ -240,95 +315,12 @@ export async function generateCode(
   }
 
   // Phase 3: Assembly
-  const shellLines = shellCode.split('\n')
-  const finalImports = new Set<string>()
-  const nonImportLines: string[] = []
-
-  for (const line of shellLines) {
-    if (line.trim().startsWith('import ')) {
-      finalImports.add(line.trim())
-    } else {
-      nonImportLines.push(line)
-    }
-  }
-  for (const imp of allImports) finalImports.add(imp)
-
-  const mergedImports = Array.from(finalImports).join('\n')
-  const shellBody = nonImportLines.join('\n')
-  const exportIndex = shellBody.indexOf('export default')
-
-  if (exportIndex === -1) {
-    return { success: false, error: 'Could not assemble: shell is missing export default' }
+  const { code: assembledCode, error: assemblyError } = assembleFile(shellCode, generatedComponents)
+  if (assemblyError) {
+    return { success: false, error: `Could not assemble: ${assemblyError}` }
   }
 
-  const assembledCode =
-    mergedImports + '\n\n' +
-    shellBody.substring(0, exportIndex) + '\n\n' +
-    generatedComponents.filter(Boolean).join('\n\n') + '\n\n' +
-    shellBody.substring(exportIndex)
-
-  return { success: true, code: assembledCode, provider: activeProvider }
-}
-
-// =============================================================================
-// Region Regeneration — Change one region, keep the rest
-// =============================================================================
-
-export async function regenerateRegion(
-  regionNumber: number,
-  userPrompt: string,
-  existingCode: string,
-  allRegions: Region[],
-  provider: 'gemini' | 'groq' | 'nvidia' = 'gemini',
-  nvidiaModelId: string = DEFAULT_NVIDIA_MODEL
-): Promise<GenerationResponse> {
-  const userMessage = buildRegenerateUserPrompt(regionNumber, userPrompt, existingCode, allRegions)
-
-  const runProvider = async (p: 'gemini' | 'groq' | 'nvidia'): Promise<string> => {
-    const call = async (): Promise<string> => {
-      if (p === 'nvidia') {
-        return nvidiaGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage, nvidiaModelId)
-      } else if (p === 'groq') {
-        return groqGenerate(REGENERATE_REGION_SYSTEM_PROMPT, userMessage)
-      } else {
-        return geminiGenerate(
-          [{ text: REGENERATE_REGION_SYSTEM_PROMPT }, { text: userMessage }],
-          { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini }
-        )
-      }
-    }
-    const backstopMs = p === 'gemini'
-      ? PROVIDER_TIMEOUT_MS.gemini + 45000
-      : PROVIDER_TIMEOUT_MS[p] + 5000
-    return withTimeout(call(), backstopMs, `${p} regeneration`)
-  }
-
-  const fallbacks: Array<'gemini' | 'groq' | 'nvidia'> =
-    provider === 'nvidia' ? ['nvidia', 'gemini', 'groq'] :
-    provider === 'groq' ? ['groq', 'gemini', 'nvidia'] :
-    ['gemini', 'groq', 'nvidia']
-
-  let lastError = 'Unknown error'
-
-  for (const currentProvider of fallbacks) {
-    try {
-      const responseText = await runProvider(currentProvider)
-      const code = extractReact(responseText)
-
-      if (!code || code.length < 20) {
-        throw new Error(`${currentProvider} returned empty or too-short response`)
-      }
-
-      return { success: true, code, provider: currentProvider }
-    } catch (err) {
-      lastError = err instanceof Error ? err.message : String(err)
-      console.warn(`[AI Regen] ${currentProvider} failed, trying next fallback:`, lastError)
-    }
-  }
-
-  console.error('[AI Regen] All providers failed. Last error:', lastError)
-  return {
-    success: false,
-    error: `Regeneration failed — ${humanizeProviderError(lastError)}`,
-  }
+  // Chunks are generated independently, so their merged imports can collide
+  // with names another chunk declared.
+  return { success: true, code: repairGeneratedCode(assembledCode), provider: activeProvider }
 }

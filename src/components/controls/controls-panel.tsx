@@ -1,17 +1,19 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-
 import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { useAI } from '@/hooks/use-ai'
+import { PromptComposer } from './prompt-composer'
+import { BriefCard } from './brief-card'
+import { SectionList } from './section-list'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { RegionIntentChips } from './region-intent-chips'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Loader2, Sparkles, Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2, Square, Circle, PenTool, Navigation } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Wand2, AlertCircle, Eye, EyeOff, Layers, Trash2, Square, Circle, PenTool, Navigation, Group, Ungroup } from 'lucide-react'
 
 // Helper to get shape icon
 const getShapeIcon = (type: string, color: string) => {
@@ -34,58 +36,40 @@ export default function ControlsPanel() {
   const toggleVisibility = useCanvasStore((s) => s.toggleVisibility)
   const deleteRegions = useCanvasStore((s) => s.deleteRegions)
   const updateRegionIntent = useCanvasStore((s) => s.updateRegionIntent)
+  const groups = useCanvasStore((s) => s.groups)
+  const groupSelection = useCanvasStore((s) => s.groupSelection)
+  const ungroup = useCanvasStore((s) => s.ungroup)
+  const updateGroupIntent = useCanvasStore((s) => s.updateGroupIntent)
+  const renameGroup = useCanvasStore((s) => s.renameGroup)
 
-  const prompt = useWorkflowStore((s) => s.prompt)
-  const setPrompt = useWorkflowStore((s) => s.setPrompt)
-  const status = useWorkflowStore((s) => s.status)
+  const groupMembers = (groupId: string) => regions.filter((r) => r.groupId === groupId)
+
+  // A group is "active" when the whole selection sits inside it, so clicking a
+  // group chip (or marquee-selecting its shapes) opens that group's editor.
+  const activeGroup = (() => {
+    if (selectedRegionIds.length === 0) return null
+    const selected = regions.filter((r) => selectedRegionIds.includes(r.id))
+    const groupId = selected[0]?.groupId
+    if (!groupId || !selected.every((r) => r.groupId === groupId)) return null
+    return groups.find((g) => g.id === groupId) ?? null
+  })()
+
+  const ungroupedRegions = regions.filter((r) => !r.groupId)
+
+  // The prompt, model picker and Generate button live in <PromptComposer />, so
+  // typing no longer re-renders this panel's layer list on every keystroke.
   const errorMessage = useWorkflowStore((s) => s.error)
   const clearError = () => useWorkflowStore.getState().setError(null)
-  
-  const aiProvider = useWorkflowStore((s) => s.aiProvider)
-  const setAiProvider = useWorkflowStore((s) => s.setAiProvider)
-  const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
-  const setNvidiaModelId = useWorkflowStore((s) => s.setNvidiaModelId)
 
-  const [availableModels, setAvailableModels] = useState<string[]>([])
-  const [isLoadingModels, setIsLoadingModels] = useState(false)
-
-  // Fetch NVIDIA models dynamically
-  useEffect(() => {
-    if (aiProvider === 'nvidia' && availableModels.length === 0 && !isLoadingModels) {
-      setIsLoadingModels(true)
-      fetch('/api/models')
-        .then(r => r.json())
-        .then(data => {
-          if (data.success && data.models) {
-            setAvailableModels(data.models)
-          }
-        })
-        .catch(console.error)
-        .finally(() => setIsLoadingModels(false))
-    }
-  }, [aiProvider, availableModels.length, isLoadingModels])
-
-  const { isGenerating, generateCode } = useAI()
-
+  const { isGenerating } = useAI()
   const isLoading = isGenerating
-  const canGenerate = prompt.trim().length > 0 && !isLoading
-
-  const handleGenerate = async () => {
-    clearError()
-    await generateCode()
-  }
 
   return (
-    <Card className="h-full flex flex-col glass-panel border-white/10 bg-card/40 backdrop-blur-md">
-      <CardHeader className="pb-3 border-b border-white/5">
-        <CardTitle className="text-lg flex items-center gap-2 font-display">
-          <Wand2 className="h-5 w-5 text-primary" />
-          Controls
-        </CardTitle>
-        <CardDescription>Layers & prompt</CardDescription>
-      </CardHeader>
-
-      <CardContent className="flex-1 flex flex-col space-y-4 overflow-y-auto overflow-x-hidden pt-4 pb-6">
+    <Card className="h-full flex flex-col glass-panel border-white/10 bg-card/40">
+      {/* The header used to read "Controls / Layers & prompt" — two lines that
+          named the panel you were already looking at. The vertical space is
+          better spent on the layer list. */}
+      <CardContent className="flex-1 flex flex-col space-y-4 overflow-y-auto overflow-x-hidden pt-5 pb-6">
         {/* Layer Panel */}
         <div className="flex-shrink-0">
           <div className="flex items-center justify-between mb-2">
@@ -99,10 +83,12 @@ export default function ControlsPanel() {
           </div>
 
           {regions.length === 0 ? (
-            <div className="border-2 border-dashed border-white/10 rounded-xl p-4 text-center text-muted-foreground text-sm bg-black/20">
-              Draw shapes on the canvas to create layers.
-              <br />
-              <span className="text-xs mt-1 block opacity-70">Or just write a prompt!</span>
+            <div className="rounded-xl border border-dashed border-white/10 bg-black/20 px-4 py-5 text-center">
+              <Wand2 className="mx-auto mb-2 h-5 w-5 text-primary/40" />
+              <p className="text-sm text-muted-foreground">Draw shapes to place things precisely.</p>
+              <p className="mt-1 text-xs text-muted-foreground/60">
+                Optional — a prompt alone works too.
+              </p>
             </div>
           ) : (
             <div className="border border-white/10 rounded-xl overflow-hidden bg-black/20">
@@ -198,30 +184,86 @@ export default function ControlsPanel() {
                 className="mt-2 min-h-[54px] resize-none text-xs bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
                 disabled={isLoading}
               />
-              <p className="text-xs mt-1.5 text-muted-foreground/70">
-                Tip: You can also reference &quot;Region {selectedRegion.regionNumber}&quot; in the main prompt below.
-              </p>
+              <div className="mt-3">
+                <RegionIntentChips regionNumbers={[selectedRegion.regionNumber]} disabled={isLoading} />
+              </div>
             </div>
           )
         })()}
         {selectedRegionIds.length > 1 && (
-          <div 
+          <div
             className="flex-shrink-0 p-3 rounded-xl border border-white/10 bg-black/20"
           >
             <p className="font-medium text-sm text-primary">
               {selectedRegionIds.length} regions selected
             </p>
             <p className="text-xs mt-1 text-muted-foreground">
-              Multiple shapes selected
+              {activeGroup
+                ? `All in "${activeGroup.name}"`
+                : 'Group them to describe all of them with one prompt'}
             </p>
-            <Button 
-              variant="outline" 
+            {!activeGroup && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-2 w-full text-xs h-7 border-primary/30 hover:bg-primary/10 text-primary/90"
+                onClick={() => groupSelection()}
+                disabled={isLoading}
+              >
+                <Group className="h-3 w-3 mr-1.5" />
+                Group {selectedRegionIds.length} shapes
+              </Button>
+            )}
+            <div className="mt-3">
+              <RegionIntentChips
+                regionNumbers={regions.filter((r) => selectedRegionIds.includes(r.id)).map((r) => r.regionNumber)}
+                disabled={isLoading}
+                compact
+              />
+            </div>
+            <Button
+              variant="outline"
               size="sm"
               className="mt-2 w-full text-xs h-7 border-destructive/30 hover:bg-destructive/10 hover:text-destructive text-destructive/80"
               onClick={() => deleteRegions(selectedRegionIds)}
             >
               <Trash2 className="h-3 w-3 mr-1.5" />
               Delete {selectedRegionIds.length} regions
+            </Button>
+          </div>
+        )}
+
+        {/* Group editor — one description for every shape in the group */}
+        {activeGroup && (
+          <div className="flex-shrink-0 p-3 rounded-xl border border-primary/20 bg-primary/5">
+            <div className="flex items-center gap-2">
+              <Group className="h-4 w-4 text-primary flex-shrink-0" />
+              <Input
+                value={activeGroup.name}
+                onChange={(e) => renameGroup(activeGroup.id, e.target.value)}
+                className="h-7 text-sm bg-black/20 border-white/10 focus:border-primary/50"
+                disabled={isLoading}
+              />
+            </div>
+            <p className="text-xs mt-1.5 text-muted-foreground">
+              {groupMembers(activeGroup.id).map(r => `R${r.regionNumber}`).join(', ')}
+            </p>
+            <Textarea
+              value={activeGroup.intent}
+              onChange={(e) => updateGroupIntent(activeGroup.id, e.target.value)}
+              placeholder={`What is this group? Describe all ${groupMembers(activeGroup.id).length} shapes at once — e.g. "an animated neon background", "the pricing table"`}
+              className="mt-2 min-h-[64px] resize-none text-xs bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+              disabled={isLoading}
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              className="mt-2 w-full text-xs h-7 text-muted-foreground hover:text-foreground"
+              onClick={() => ungroup(activeGroup.id)}
+              disabled={isLoading}
+            >
+              <Ungroup className="h-3 w-3 mr-1.5" />
+              Ungroup
             </Button>
           </div>
         )}
@@ -244,81 +286,64 @@ export default function ControlsPanel() {
 
         <Separator className="bg-white/5" />
 
-        {/* Prompt Input */}
-        <div className="flex-1 flex flex-col min-h-0">
-          <h4 className="text-sm font-medium mb-2 text-foreground/90">Prompt</h4>
-          <Textarea
-            value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            placeholder={
-              regions.length > 0
-                ? `Describe your design...\n\nExamples:\n• "Region 1 is a hero with gradient"\n• "Create a landing page with my layout"\n• "Region 2 has feature cards"`
-                : `Describe your design...\n\nExamples:\n• "Create a SaaS landing page"\n• "Build a portfolio site"\n• "Design a signup form"`
-            }
-            className="flex-1 min-h-[100px] resize-none text-sm bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
-            disabled={isLoading}
-          />
-        </div>
+        {/* Chips: click a group or region to describe it on its own, instead of
+            writing "region 3 is ..." into the main prompt. */}
+        {regions.length > 0 && (
+          <div className="flex-shrink-0">
+            <h4 className="text-sm font-medium mb-2 text-foreground/90">
+              Describe a part
+            </h4>
+            <div className="flex flex-wrap gap-1.5">
+              {groups.map((group) => {
+                const members = groupMembers(group.id)
+                if (members.length === 0) return null
+                const isActive = activeGroup?.id === group.id
+                return (
+                  <button
+                    key={group.id}
+                    onClick={() => selectRegions(members.map((r) => r.id))}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                      isActive
+                        ? 'border-primary/50 bg-primary/15 text-primary'
+                        : 'border-white/10 bg-black/20 text-foreground/70 hover:bg-white/5'
+                    }`}
+                  >
+                    <Group className="h-3 w-3" />
+                    {group.name}
+                    <span className="opacity-60">{members.length}</span>
+                    {group.intent.trim() && <span className="text-primary">•</span>}
+                  </button>
+                )
+              })}
 
-        {/* AI Provider Selection */}
-        <div className="flex-shrink-0 pt-2">
-          <Select value={aiProvider} onValueChange={(v) => setAiProvider(v as 'gemini' | 'groq' | 'nvidia')}>
-            <SelectTrigger className="w-full bg-black/20 border-white/10 text-sm h-10">
-              <SelectValue placeholder="Select AI Provider" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="gemini">Gemini Pro (Google)</SelectItem>
-              <SelectItem value="groq">Groq (GPT-OSS 120B)</SelectItem>
-              <SelectItem value="nvidia">NIM Llama 3.1 (NVIDIA)</SelectItem>
-            </SelectContent>
-          </Select>
-        </div>
-
-        {/* NVIDIA Specific Model Selection */}
-        {aiProvider === 'nvidia' && (
-          <div className="flex-shrink-0 pt-2">
-            <Select value={nvidiaModelId} onValueChange={setNvidiaModelId}>
-              <SelectTrigger className="w-full bg-black/20 border-white/10 text-xs h-9">
-                <SelectValue placeholder={isLoadingModels ? "Loading models..." : "Select NIM Model"} />
-              </SelectTrigger>
-              <SelectContent className="max-h-60">
-                {availableModels.length === 0 ? (
-                  <SelectItem value="nvidia/nemotron-3.5-lightning-30b-a3b">nvidia/nemotron-3.5-lightning-30b-a3b</SelectItem>
-                ) : (
-                  availableModels.map(model => (
-                    <SelectItem key={model} value={model}>{model}</SelectItem>
-                  ))
-                )}
-              </SelectContent>
-            </Select>
+              {ungroupedRegions.map((region) => {
+                const isActive =
+                  selectedRegionIds.length === 1 && selectedRegionIds[0] === region.id
+                return (
+                  <button
+                    key={region.id}
+                    onClick={() => selectRegions([region.id])}
+                    className={`flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs transition-colors ${
+                      isActive
+                        ? 'border-primary/50 bg-primary/15 text-primary'
+                        : 'border-white/10 bg-black/20 text-foreground/70 hover:bg-white/5'
+                    }`}
+                  >
+                    R{region.regionNumber}
+                    {region.intent.trim() && <span className="text-primary">•</span>}
+                  </button>
+                )
+              })}
+            </div>
+            <p className="text-xs mt-1.5 text-muted-foreground/70">
+              Select several shapes on the canvas to group them and describe them together.
+            </p>
           </div>
         )}
 
-        {/* Generate Button */}
-        <div className="flex-shrink-0 space-y-2 pt-2">
-          <Button
-            onClick={handleGenerate}
-            disabled={!canGenerate}
-            className={`w-full h-12 rounded-xl transition-all duration-300 font-medium ${
-              canGenerate 
-                ? 'shadow-[0_0_20px_rgba(200,150,50,0.4)] hover:shadow-[0_0_35px_rgba(200,150,50,0.6)] hover-lift bg-primary text-primary-foreground' 
-                : 'opacity-50'
-            }`}
-            size="lg"
-          >
-            {isGenerating ? (
-              <>
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                Generating...
-              </>
-            ) : (
-              <>
-                <Sparkles className="mr-2 h-5 w-5" />
-                Generate Design
-              </>
-            )}
-          </Button>
-        </div>
+        <PromptComposer />
+        <SectionList />
+        <BriefCard />
       </CardContent>
     </Card>
   )

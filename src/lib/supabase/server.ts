@@ -13,6 +13,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { cookies } from 'next/headers'
 import type { Database } from './types'
+import { DEV_USER, authBypassed } from '@/lib/auth/bypass'
 
 export async function createClient() {
   const cookieStore = await cookies()
@@ -40,13 +41,12 @@ export async function createClient() {
     }
   )
 
-  client.auth.getUser = async () => {
-    return {
-      data: {
-        user: { id: '10b15cad-04b2-42b0-89db-829e905a5b95', email: 'dev@intentdraw.local' } as any
-      },
-      error: null
-    }
+  // Development only — see lib/auth/bypass.ts. Never active in a production build.
+  if (authBypassed()) {
+    client.auth.getUser = (async () => ({
+      data: { user: DEV_USER },
+      error: null,
+    })) as unknown as typeof client.auth.getUser
   }
 
   return client

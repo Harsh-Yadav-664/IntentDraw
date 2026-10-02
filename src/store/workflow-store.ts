@@ -4,10 +4,20 @@
 // =============================================================================
 
 import { create } from 'zustand'
+import type { AIProvider } from '@/types'
+import type { DesignBrief } from '@/lib/ai/brief'
+import { parseSavedParts, type PageParts } from '@/lib/ai/page-parts'
 
 // =============================================================================
 // Types
 // =============================================================================
+
+/** What the generator is doing right now, shown while a staged run is in flight. */
+export interface GenerationProgress {
+  label: string
+  done: number
+  total: number
+}
 
 export type WorkflowStatus =
   | 'idle'
@@ -28,17 +38,29 @@ export interface WorkflowState {
 
   // Workflow state
   status: WorkflowStatus
+  /** Live progress of a staged generation, so a long run never looks stalled. */
+  generationProgress: GenerationProgress | null
   error: string | null
 
   // Content
   prompt: string
   globalTheme: string
   previewCode: string
-  // Frozen bitmap of the last generation, shown as the Design-canvas backdrop
-  // so we don't run a live compiling iframe behind the drawing surface.
-  // In-memory only — never persisted or sent to the save payload.
-  previewSnapshot: string | null
-  aiProvider: 'gemini' | 'groq' | 'nvidia'
+  // What the understanding stage made of the last request — shown to the user
+  // so a misread drawing is visible instead of silently shaping the output.
+  // In-memory only for now.
+  brief: DesignBrief | null
+  /**
+   * The pieces the last generation was assembled from, so one section can be
+   * rebuilt without regenerating the page. Saved inside canvas_data as
+   * `pageParts`, and restored only if they still reproduce the saved page.
+   */
+  pageParts: PageParts | null
+  /** The section being rebuilt right now, if any. */
+  rebuildingSection: string | null
+  /** Why the last rebuild failed, shown on that section's row. */
+  rebuildError: { section: string; message: string } | null
+  aiProvider: AIProvider
   nvidiaModelId: string
 
   // Save state
@@ -59,18 +81,22 @@ export interface WorkflowActions {
     prompt?: string | null
     generated_code?: string | null
     global_theme?: string | null
+    canvas_data?: unknown
   }) => void
 
   // Workflow
   setStatus: (status: WorkflowStatus) => void
+  setGenerationProgress: (progress: GenerationProgress | null) => void
   setError: (error: string | null) => void
 
   // Content
   setPrompt: (prompt: string) => void
   setGlobalTheme: (theme: string) => void
   setPreviewCode: (code: string) => void
-  setPreviewSnapshot: (snapshot: string | null) => void
-  setAiProvider: (provider: 'gemini' | 'groq' | 'nvidia') => void
+  setBrief: (brief: DesignBrief | null) => void
+  setPageParts: (parts: PageParts | null) => void
+  setRebuild: (rebuildingSection: string | null, rebuildError?: { section: string; message: string } | null) => void
+  setAiProvider: (provider: AIProvider) => void
   setNvidiaModelId: (modelId: string) => void
 
   // Save
@@ -90,11 +116,15 @@ const initialState: WorkflowState = {
   projectId: null,
   projectName: 'Untitled Project',
   status: 'idle',
+  generationProgress: null,
   error: null,
   prompt: '',
   globalTheme: '',
   previewCode: '',
-  previewSnapshot: null,
+  brief: null,
+  pageParts: null,
+  rebuildingSection: null,
+  rebuildError: null,
   aiProvider: 'gemini',
   nvidiaModelId: 'nvidia/nemotron-3.5-lightning-30b-a3b',
   saveStatus: 'saved',
@@ -150,11 +180,21 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
       projectName: project.name,
       prompt: project.prompt ?? '',
       previewCode: project.generated_code ?? '',
-      previewSnapshot: null,
+      brief: null,
+      // Older projects have none; stale or malformed parts are dropped.
+      pageParts: parseSavedParts(
+        project.canvas_data && typeof project.canvas_data === 'object' && !Array.isArray(project.canvas_data)
+          ? (project.canvas_data as { pageParts?: unknown }).pageParts
+          : null,
+        project.generated_code
+      ),
+      rebuildingSection: null,
+      rebuildError: null,
       globalTheme: project.global_theme ?? '',
       saveStatus: 'saved',
       lastSavedAt: new Date(),
       status: 'idle',
+      generationProgress: null,
       error: null,
     })
   },
@@ -162,6 +202,8 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
   // ─── Workflow ─────────────────────────────────────────────────────────────
 
   setStatus: (status) => set({ status }),
+
+  setGenerationProgress: (generationProgress) => set({ generationProgress }),
 
   setError: (error) => set({ error, status: error ? 'error' : 'idle' }),
 
@@ -176,12 +218,14 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
   },
 
   setPreviewCode: (previewCode) => {
-    // New code invalidates the cached backdrop snapshot — it gets recaptured
-    // the next time the Design canvas mounts the preview.
-    set({ previewCode, previewSnapshot: null, saveStatus: 'unsaved' })
+    set({ previewCode, saveStatus: 'unsaved' })
   },
 
-  setPreviewSnapshot: (previewSnapshot) => set({ previewSnapshot }),
+  setBrief: (brief) => set({ brief }),
+
+  setPageParts: (pageParts) => set({ pageParts }),
+
+  setRebuild: (rebuildingSection, rebuildError = null) => set({ rebuildingSection, rebuildError }),
 
   setAiProvider: (aiProvider) => {
     set({ aiProvider })
@@ -224,12 +268,20 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
 
     set({ saveStatus: 'saving' })
 
+    // The generation's parts ride along inside canvas_data (no migration), so
+    // a section can still be rebuilt after a reload.
+    const canvasData = getCanvasData()
+    const canvas_data =
+      state.pageParts && canvasData && typeof canvasData === 'object' && !Array.isArray(canvasData)
+        ? { ...canvasData, pageParts: state.pageParts }
+        : canvasData
+
     const success = await performSave(state.projectId, {
       name: state.projectName,
       prompt: state.prompt,
       generated_code: state.previewCode,
       global_theme: state.globalTheme,
-      canvas_data: getCanvasData(),
+      canvas_data,
     })
 
     if (success) {

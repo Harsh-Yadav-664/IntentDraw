@@ -32,3 +32,13 @@ security.md
 
 # custom work suggestion
 AGENTS.md
+
+# local preview-runtime check written by scripts/preview-harness.ts
+public/preview-harness.html
+# Debug renders written by scripts/diagnose-scene.ts
+public/_*.svg
+public/_*.html
+
+# Build artifacts that were tracked by mistake
+tsconfig.tsbuildinfo
+.system_generated/

@@ -16,6 +16,8 @@ import type Konva from 'konva'
 import { useCanvasStore, REGION_COLORS } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { wrapReactForPreview } from '@/lib/utils/sanitize'
+import { PAGE_CONFIG, pageCountFor } from '@/lib/canvas/pages'
+import PageRail from '@/components/canvas/page-rail'
 import { Wand2 } from 'lucide-react'
 import type { Region, RegionGeometry, CanvasTool } from '@/types'
 
@@ -49,7 +51,9 @@ export default function DrawingCanvas() {
 
   const [stageSize, setStageSize] = useState({ width: 800, height: 500 })
   const [drawing, setDrawing] = useState<DrawingState | null>(null)
-  const [iframeHeight, setIframeHeight] = useState(1000)
+  // Backdrop only — see the IFRAME_HEIGHT note in the message handler.
+  const [backdropHeight, setBackdropHeight] = useState<number | null>(null)
+  const acceptedHeight = useRef(false)
 
   const regions = useCanvasStore((s) => s.regions)
   const activeTool = useCanvasStore((s) => s.activeTool)
@@ -61,8 +65,11 @@ export default function DrawingCanvas() {
   const toggleRegionSelection = useCanvasStore((s) => s.toggleRegionSelection)
   const setStageInstance = useCanvasStore((s) => s.setStageInstance)
   const previewCode = useWorkflowStore((s) => s.previewCode)
-  const previewSnapshot = useWorkflowStore((s) => s.previewSnapshot)
-  const setPreviewSnapshot = useWorkflowStore((s) => s.setPreviewSnapshot)
+  const isGenerating = useWorkflowStore((s) => s.status === 'generating' || s.status === 'analyzing')
+
+  // Pages the user added explicitly with the rail's "Add page" (session only —
+  // anything drawn there keeps the page alive through `pageCountFor`).
+  const [requestedPages, setRequestedPages] = useState(0)
 
   const [selectionBox, setSelectionBox] = useState<{ startX: number; startY: number; currentX: number; currentY: number; active: boolean } | null>(null)
 
@@ -97,11 +104,24 @@ export default function DrawingCanvas() {
     observer.observe(container)
 
     const handleMessage = (e: MessageEvent) => {
-      if (e.data && e.data.type === 'IFRAME_HEIGHT' && typeof e.data.height === 'number') {
-        setIframeHeight(e.data.height)
+      // The FIRST height report per backdrop, and only to trim the backdrop —
+      // never the Konva stage, whose height comes from the drawing alone.
+      //
+      // This is the loop that produced "I scrolled for ten seconds through empty
+      // background": `min-h-screen` inside the generated page resolves against
+      // the frame, so sizing the frame from the page's own height grows the page,
+      // which regrows the frame, forever. It is safe here only because the
+      // runtime posts the height once on load (the ResizeObserver that re-posted
+      // on every body resize is gone) and because `acceptedHeight` latches.
+      if (e.data?.type === 'IFRAME_HEIGHT' && typeof e.data.height === 'number') {
+        if (!acceptedHeight.current) {
+          acceptedHeight.current = true
+          setBackdropHeight(Math.max(400, Math.round(e.data.height)))
+        }
+        return
       }
-      if (e.data && e.data.type === 'IFRAME_SNAPSHOT' && typeof e.data.dataUrl === 'string') {
-        setPreviewSnapshot(e.data.dataUrl)
+      if (e.data && e.data.type === 'IFRAME_ERROR') {
+        console.warn(`[preview backdrop] ${e.data.message}`)
       }
     }
     window.addEventListener('message', handleMessage)
@@ -110,7 +130,7 @@ export default function DrawingCanvas() {
       observer.disconnect()
       window.removeEventListener('message', handleMessage)
     }
-  }, [setPreviewSnapshot])
+  }, [])
 
   useEffect(() => {
     if (stageRef.current) setStageInstance(stageRef.current)
@@ -130,20 +150,76 @@ export default function DrawingCanvas() {
     tr.getLayer()?.batchDraw()
   }, [selectedRegionIds, regions])
 
-  const BASE_WIDTH = 1280 // Match typical desktop width for generation
+  // Must equal the preview's 1280 logical width — see PAGE_CONFIG.
+  const BASE_WIDTH = PAGE_CONFIG.pageWidth
   const scale = stageSize.width > 0 ? stageSize.width / BASE_WIDTH : 1
-  
-  const maxShapeY = regions.reduce((max, r) => Math.max(max, r.geometry.y + r.geometry.height), 0)
-  // Base logical height of 1000, or the iframe's reported height. Grow as needed.
-  const logicalHeight = Math.max(Math.max(1000, iframeHeight), maxShapeY + 400)
+
+  // Height follows the drawing only — never the backdrop iframe (see above).
+  // It is a whole number of pages: at least the default, the lowest shape's
+  // page plus one spare, capped at maxPages.
+  const pageCount = useMemo(() => pageCountFor(regions, requestedPages), [regions, requestedPages])
+  const logicalHeight = pageCount * PAGE_CONFIG.pageHeight
   const physicalStageHeight = Math.max(stageSize.height, logicalHeight * scale)
+  const addPage = useCallback(() => {
+    setRequestedPages(Math.min(PAGE_CONFIG.maxPages, pageCount + 1))
+  }, [pageCount])
+
+  // Page boundaries as non-interactive guides, drawn beneath every shape.
+  // A dark under-stroke plus a light dash keeps them readable over both the
+  // empty canvas and the generated-site backdrop. Rebuilt only when the page
+  // count or the canvas size changes — scrolling never touches the stage.
+  const pageGuides = useMemo(() => {
+    const H = PAGE_CONFIG.pageHeight
+    const inv = scale > 0 ? 1 / scale : 1
+    const guides = []
+    for (let i = 0; i < pageCount; i++) {
+      const y = i * H
+      guides.push(
+        <Group key={`page-${i}`} y={y}>
+          {i > 0 && (
+            <>
+              <Line points={[0, 0, BASE_WIDTH, 0]} stroke="rgba(0,0,0,0.45)" strokeWidth={3} strokeScaleEnabled={false} />
+              <Line points={[0, 0, BASE_WIDTH, 0]} stroke="rgba(250,204,21,0.7)" strokeWidth={1} dash={[10, 8]} strokeScaleEnabled={false} />
+            </>
+          )}
+          {/* Label sized in screen pixels (÷ scale) so it stays legible when
+              the canvas is scaled down in a narrow panel. */}
+          <Group x={8 * inv} y={8 * inv} scaleX={inv} scaleY={inv}>
+            <Rect width={54} height={20} fill="rgba(13,13,15,0.8)" stroke="rgba(255,255,255,0.14)" strokeWidth={1} cornerRadius={5} />
+            <KonvaText
+              width={54}
+              height={20}
+              text={`Page ${i + 1}`}
+              fontSize={11}
+              fontFamily="Inter, system-ui, sans-serif"
+              fontStyle="600"
+              fill="rgba(250,204,21,0.92)"
+              align="center"
+              verticalAlign="middle"
+            />
+          </Group>
+        </Group>
+      )
+    }
+    return guides
+  }, [pageCount, BASE_WIDTH, scale])
 
   const srcDoc = useMemo(() => {
     if (!previewCode) return null
-    // captureSnapshot: this transient iframe screenshots itself once and posts
-    // the bitmap back; we then render that frozen image instead (no live frame).
-    return wrapReactForPreview(previewCode, { captureSnapshot: true })
-  }, [previewCode])
+    // Staged generation pushes new code after every batch. Rebuilding this
+    // backdrop each time meant a full CDN + Babel run per stage, on the same
+    // thread as the canvas — for something behind the drawing that nobody is
+    // looking at mid-run. Only the Output preview repaints live.
+    if (isGenerating) return null
+    // freeze: render once, then stop every animation so sitting behind the
+    // canvas costs nothing per frame.
+    return wrapReactForPreview(previewCode, { freeze: true })
+  }, [previewCode, isGenerating])
+
+  // A new backdrop gets to report its height once.
+  useEffect(() => {
+    acceptedHeight.current = false
+  }, [srcDoc])
 
   const getPointerPos = useCallback((): { x: number; y: number } | null => {
     const pos = stageRef.current?.getPointerPosition()
@@ -612,44 +688,54 @@ export default function DrawingCanvas() {
   }
 
   return (
+    <div className="w-full h-full flex">
+    <PageRail
+      scrollRef={containerRef}
+      pageCount={pageCount}
+      pageHeightPx={PAGE_CONFIG.pageHeight * scale}
+      canAddPage={pageCount < PAGE_CONFIG.maxPages}
+      onAddPage={addPage}
+    />
     <div
       ref={containerRef}
-      className="w-full h-full overflow-y-auto overflow-x-hidden relative"
+      className="flex-1 min-w-0 h-full overflow-y-auto overflow-x-hidden relative"
       style={{ cursor: CURSOR_MAP[activeTool] }}
     >
-      {/* Background layer: Generated Website or Empty State */}
-      <div 
-        className="absolute top-0 left-0 bg-[#0A0A0B]"
+      {/* Background layer: Generated Website or Empty State.
+          Clipped to the page canvas: the backdrop iframe is sized from the
+          generated page's own height and would otherwise stretch the scroll
+          area past the last page — the canvas's extent comes from the pages. */}
+      <div
+        className="absolute top-0 left-0 bg-[#0A0A0B] overflow-hidden"
         style={{
           width: BASE_WIDTH,
-          height: Math.max(1000, physicalStageHeight / scale),
+          height: physicalStageHeight / scale,
           transform: `scale(${scale})`,
           transformOrigin: 'top left',
           zIndex: 0,
         }}
       >
         {previewCode ? (
-          previewSnapshot ? (
-            // Frozen backdrop — a static bitmap of the generated site, so there
-            // is no live compiling iframe running behind the drawing surface.
-            // eslint-disable-next-line @next/next/no-img-element -- data-URL snapshot; next/image can't optimize this
-            <img
-              src={previewSnapshot}
-              alt="Generated preview"
-              draggable={false}
-              className="w-full block select-none pointer-events-none bg-white"
-            />
-          ) : (
-            // Transient live frame: renders once, screenshots itself, and is
-            // then swapped out for the <img> above once the snapshot arrives.
-            <iframe
-              srcDoc={srcDoc || ''}
-              sandbox="allow-scripts"
-              className="w-full h-full border-0 bg-white"
-            />
-          )
+          // The generated site, rendered once and then frozen (see
+          // `wrapReactForPreview`'s `freeze`). It is a real frame rather than a
+          // bitmap because a sandboxed opaque-origin iframe cannot screenshot
+          // itself; freezing gets the same "costs nothing to sit there" result.
+          // `key` on the code keeps React from reusing the frame across changes.
+          <iframe
+            key={srcDoc ? 'backdrop' : 'none'}
+            srcDoc={srcDoc || ''}
+            sandbox="allow-scripts"
+            tabIndex={-1}
+            aria-hidden="true"
+            style={{ height: backdropHeight ?? '100%' }}
+            className="w-full border-0 bg-transparent pointer-events-none"
+          />
         ) : regions.length === 0 ? (
-          <div className="w-full h-full flex flex-col items-center justify-center border border-white/5 border-dashed">
+          // Centred on the first page, not the whole multi-page canvas.
+          <div
+            className="w-full flex flex-col items-center justify-center border border-white/5 border-dashed"
+            style={{ height: PAGE_CONFIG.pageHeight }}
+          >
             <div className="h-16 w-16 rounded-2xl bg-white/5 border border-white/10 flex items-center justify-center mb-4 shadow-xl">
                <Wand2 className="h-8 w-8 text-primary/50" />
             </div>
@@ -695,6 +781,8 @@ export default function DrawingCanvas() {
         <Layer scaleX={scale} scaleY={scale}>
           {/* We rely on the parent container's transparent/dark background now instead of a white rect */}
 
+          <Group listening={false}>{pageGuides}</Group>
+
           {regions.map((region, index) => renderRegion(region, index))}
           {renderDrawingPreview()}
           {renderSelectionBox()}
@@ -724,6 +812,7 @@ export default function DrawingCanvas() {
           )}
         </Layer>
       </Stage>
+    </div>
     </div>
   )
 }

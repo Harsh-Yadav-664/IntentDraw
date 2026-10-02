@@ -8,6 +8,7 @@
 import { createServerClient } from '@supabase/ssr'
 import { NextResponse, type NextRequest } from 'next/server'
 import type { Database } from './types'
+import { DEV_USER, authBypassed } from '@/lib/auth/bypass'
 
 export async function updateSession(request: NextRequest) {
   // Create an unmodified response that we'll potentially update
@@ -46,7 +47,10 @@ export async function updateSession(request: NextRequest) {
   // IMPORTANT: DO NOT add any logic between createServerClient and
   // supabase.auth.getUser(). A simple mistake could cause random logouts.
 
-  let user = { id: '10b15cad-04b2-42b0-89db-829e905a5b95', email: 'dev@intentdraw.local' } as any;
+  // Development only — see lib/auth/bypass.ts. Never active in a production build.
+  const user = authBypassed()
+    ? DEV_USER
+    : (await supabase.auth.getUser()).data.user
 
 
   return { user, supabaseResponse, supabase }

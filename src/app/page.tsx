@@ -1,88 +1,176 @@
 import Link from 'next/link'
 import { Button } from '@/components/ui/button'
-import { ArrowRight, Sparkles, Layers, PenTool } from 'lucide-react'
+import { ArrowRight, Brain, Download, PenTool, RefreshCw, Share2, Sparkles } from 'lucide-react'
+import { HeroDemo } from '@/components/marketing/hero-demo'
+import { authBypassed } from '@/lib/auth/bypass'
+
+/**
+ * The marketing page. Its job is to show, in the first screen, the one thing
+ * no other site generator does: read a drawing — as layout AND as a picture —
+ * and build around it. The demo is real output, not a mock-up.
+ *
+ * Deliberately free of blur and blend layers: the editor lagged badly from
+ * exactly those, and a landing page that stutters is the worst possible advert
+ * for a design tool.
+ */
+
+const STEPS = [
+  {
+    icon: PenTool,
+    title: 'Draw, if you like',
+    body: 'Boxes place sections exactly. Strokes become pictures — two ridges and a river become mountains and a river. Or skip it: a prompt alone works.',
+  },
+  {
+    icon: Brain,
+    title: 'It works out what you meant',
+    body: 'Before building anything it writes a brief: who the site is for, what it needs, what your drawing depicts, and a concept of its own — and shows it to you.',
+  },
+  {
+    icon: Sparkles,
+    title: 'You get a real site',
+    body: 'A complete, animated page with its own palette and structure, built section by section while you watch.',
+  },
+]
+
+const DIFFERENT = [
+  {
+    icon: PenTool,
+    title: 'Your drawing is read, not traced',
+    body: 'Strokes are measured — ridges, arcs, the two banks of a river — and rendered as finished art, so what you sketch is what appears.',
+  },
+  {
+    icon: RefreshCw,
+    title: 'Fix one part, keep the rest',
+    body: 'Rebuild a single section with a note like “make it a comparison table” instead of regenerating the whole page.',
+  },
+  {
+    icon: Download,
+    title: 'It’s yours',
+    body: 'Download a single HTML file that runs anywhere, or the React source for your own project.',
+  },
+  {
+    icon: Share2,
+    title: 'Share it in one click',
+    body: 'Publish a link to the finished site. Your drawing and prompt stay private.',
+  },
+]
 
 export default function HomePage() {
-  return (
-    <main className="min-h-screen bg-background relative overflow-hidden">
-      {/* Dynamic Background Effects */}
-      <div className="absolute inset-0 z-0 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] bg-primary/20 rounded-full blur-[120px] mix-blend-screen animate-pulse" />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-amber-900/10 rounded-full blur-[150px] mix-blend-screen" />
-      </div>
+  // In development there is no sign-in (lib/auth/bypass.ts), so every call to
+  // action opens the app directly. Production sends people to sign up.
+  const signIn = authBypassed() ? '/dashboard' : '/login'
+  const signUp = authBypassed() ? '/dashboard' : '/signup'
 
-      <nav className="glass-panel sticky top-4 z-50 mx-4 mt-4 mb-16 max-w-7xl md:mx-auto px-6 py-3 rounded-full flex justify-between items-center">
-        <div className="text-2xl font-display font-bold tracking-tight glow-text">
+  return (
+    <main className="relative min-h-screen overflow-hidden bg-[#0A0A0B]">
+      {/* Static light — a gradient, not a blurred element, so it costs nothing to paint. */}
+      <div
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage:
+            'radial-gradient(900px circle at 50% -10%, rgba(250,204,21,0.10), transparent 60%),' +
+            'radial-gradient(700px circle at 100% 40%, rgba(250,204,21,0.04), transparent 60%)',
+        }}
+      />
+
+      <nav className="relative z-10 mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+        <span className="font-display text-xl font-bold tracking-tight">
           Intent<span className="text-primary">Draw</span>
-        </div>
-        <div className="flex gap-4 items-center">
-          <Button variant="ghost" className="hover:text-primary transition-colors hidden sm:inline-flex" asChild>
-            <Link href="/login">Sign In</Link>
+        </span>
+        <div className="flex items-center gap-2">
+          <Button variant="ghost" className="hidden sm:inline-flex" asChild>
+            <Link href={signIn}>Sign in</Link>
           </Button>
-          <Button className="rounded-full font-medium shadow-[0_0_15px_rgba(200,150,50,0.3)] hover:shadow-[0_0_25px_rgba(200,150,50,0.5)] transition-shadow" asChild>
-            <Link href="/dashboard">Get Started</Link>
+          <Button className="rounded-full" asChild>
+            <Link href={signUp}>Start free</Link>
           </Button>
         </div>
       </nav>
 
-      <section className="relative z-10 pt-16 pb-32 px-4">
-        <div className="max-w-5xl mx-auto text-center">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full border border-primary/30 bg-primary/10 text-primary text-sm font-medium mb-8 hover-lift">
-            <Sparkles className="w-4 h-4" />
-            <span>The future of spatial design</span>
-          </div>
-          
-          <h1 className="text-6xl sm:text-7xl font-display font-bold text-foreground mb-8 leading-[1.1] tracking-tight">
-            Design with <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary via-amber-400 to-primary">Intent.</span>
+      <section className="relative z-10 mx-auto grid max-w-6xl items-center gap-12 px-6 pb-24 pt-10 lg:grid-cols-[0.85fr_1.25fr] lg:pt-16">
+        <div>
+          <p className="mb-5 text-sm font-medium text-primary">Sketch-to-site, for people who think visually</p>
+          <h1 className="font-display text-5xl font-bold leading-[1.05] tracking-tight sm:text-6xl">
+            Sketch what you mean.
             <br />
-            Let AI do the rest.
+            <span className="text-primary">Get the site you meant.</span>
           </h1>
-
-          <p className="text-xl sm:text-2xl text-muted-foreground mb-12 max-w-3xl mx-auto font-light leading-relaxed">
-            Draw your layout visually. Describe your vision in plain text. Watch as AI translates your spatial map into stunning, production-ready code.
+          <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted-foreground">
+            Draw a rough layout — or a picture — and describe it in a sentence. IntentDraw understands both and builds
+            a complete website around them. Draw two mountains and a river; get a site with two mountains and a river.
           </p>
-
-          <div className="flex flex-col sm:flex-row gap-6 justify-center items-center">
-            <Button size="lg" className="h-14 px-8 text-lg rounded-full shadow-[0_0_20px_rgba(200,150,50,0.4)] hover:shadow-[0_0_35px_rgba(200,150,50,0.6)] hover-lift" asChild>
-              <Link href="/dashboard">
-                Start Designing Free
-                <ArrowRight className="ml-2 w-5 h-5" />
+          <div className="mt-9 flex flex-wrap items-center gap-4">
+            <Button size="lg" className="h-12 rounded-full px-7 text-base" asChild>
+              <Link href={signUp}>
+                Start designing free
+                <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
             </Button>
+            <span className="text-sm text-muted-foreground">No drawing skills needed. A prompt alone works too.</span>
           </div>
         </div>
+
+        <HeroDemo />
       </section>
 
-      <section className="relative z-10 py-32 bg-black/20 border-y border-white/5 backdrop-blur-sm">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="text-center mb-20">
-            <h2 className="text-4xl md:text-5xl font-display font-bold mb-6">How IntentDraw Works</h2>
-            <p className="text-lg text-muted-foreground max-w-2xl mx-auto">No generic templates. No rigid grids. Just draw what you want, where you want it.</p>
-          </div>
-          
-          <div className="grid md:grid-cols-3 gap-8 relative">
-            {/* Connecting line for desktop */}
-            <div className="hidden md:block absolute top-12 left-[20%] right-[20%] h-[1px] bg-gradient-to-r from-transparent via-primary/30 to-transparent" />
-
-            {[
-              { icon: PenTool, title: '1. Draw Regions', desc: 'Sketch rough shapes to define your layout zones directly on the infinite canvas.' },
-              { icon: Layers, title: '2. Assign Intent', desc: 'Tell the AI what each drawn region means. A box could be a hero section, a pricing table, or a video player.' },
-              { icon: Sparkles, title: '3. Generate', desc: 'Get bespoke, high-quality HTML & Tailwind CSS that perfectly matches your spatial layout and intent.' },
-            ].map((step, i) => (
-              <div key={step.title} className="glass-panel p-8 rounded-3xl hover-lift relative group">
-                <div className="w-16 h-16 rounded-2xl bg-primary/10 border border-primary/20 flex items-center justify-center mb-8 group-hover:scale-110 transition-transform duration-300">
-                  <step.icon className="w-8 h-8 text-primary" />
+      <section className="relative z-10 border-y border-white/5 bg-white/[0.02]">
+        <div className="mx-auto max-w-6xl px-6 py-20">
+          <h2 className="font-display text-3xl font-bold tracking-tight sm:text-4xl">How it works</h2>
+          <ol className="mt-10 grid gap-8 md:grid-cols-3">
+            {STEPS.map((step, i) => (
+              <li key={step.title} className="relative">
+                <span className="font-display text-sm font-semibold text-primary">0{i + 1}</span>
+                <div className="mt-3 flex items-center gap-2.5">
+                  <step.icon className="h-5 w-5 text-foreground/70" />
+                  <h3 className="text-lg font-semibold">{step.title}</h3>
                 </div>
-                <h3 className="text-2xl font-display font-semibold mb-4 text-foreground/90">{step.title}</h3>
-                <p className="text-muted-foreground leading-relaxed">{step.desc}</p>
-              </div>
+                <p className="mt-2 leading-relaxed text-muted-foreground">{step.body}</p>
+              </li>
             ))}
-          </div>
+          </ol>
         </div>
       </section>
-      
-      <footer className="relative z-10 py-12 text-center text-muted-foreground text-sm">
-        <p>© 2026 IntentDraw. Design freely.</p>
+
+      <section className="relative z-10 mx-auto max-w-6xl px-6 py-20">
+        <h2 className="max-w-2xl font-display text-3xl font-bold tracking-tight sm:text-4xl">
+          Built for the part other generators skip.
+        </h2>
+        <div className="mt-10 grid gap-px overflow-hidden rounded-2xl border border-white/10 bg-white/10 sm:grid-cols-2">
+          {DIFFERENT.map(item => (
+            <div key={item.title} className="bg-[#0D0D0F] p-7">
+              <item.icon className="h-5 w-5 text-primary" />
+              <h3 className="mt-4 text-lg font-semibold">{item.title}</h3>
+              <p className="mt-2 leading-relaxed text-muted-foreground">{item.body}</p>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="relative z-10 mx-auto max-w-6xl px-6 pb-24">
+        <div className="flex flex-col items-start justify-between gap-6 rounded-2xl border border-primary/20 bg-primary/[0.06] p-10 md:flex-row md:items-center">
+          <div>
+            <h2 className="font-display text-2xl font-bold sm:text-3xl">Your next site starts as a sketch.</h2>
+            <p className="mt-2 text-muted-foreground">Free to start. Your first site takes a few minutes.</p>
+          </div>
+          <Button size="lg" className="h-12 rounded-full px-7 text-base" asChild>
+            <Link href={signUp}>
+              Start designing free
+              <ArrowRight className="ml-2 h-4 w-4" />
+            </Link>
+          </Button>
+        </div>
+      </section>
+
+      <footer className="relative z-10 border-t border-white/5">
+        <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6 text-sm text-muted-foreground">
+          <span className="font-display font-semibold text-foreground/80">
+            Intent<span className="text-primary">Draw</span>
+          </span>
+          <div className="flex gap-5">
+            <Link href={signIn} className="hover:text-foreground">Sign in</Link>
+            <Link href={signUp} className="hover:text-foreground">Create account</Link>
+          </div>
+        </div>
       </footer>
     </main>
   )
