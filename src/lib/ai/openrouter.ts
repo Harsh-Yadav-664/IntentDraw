@@ -18,30 +18,27 @@
  * ---------------------------------------------------------------------------
  */
 
-/** Primary: MoE coding/reasoning model (13B active / 284B total), 1M context. */
-export const OPENROUTER_DEFAULT_MODEL = 'deepseek/deepseek-v4-flash-0731:free'
-
 /**
- * Alternates, in the order to try them by hand if the primary degrades:
- *  - z-ai/glm-5.2:free      — strongest of the free set at project-level
- *                             software engineering; 32k context, so it is the
- *                             one at risk on very large prompts.
- *  - qwen/qwen3.8-27b:free  — coding-capable AND accepts image input, so it is
- *                             the only free option that can see the drawing.
+ * Free text models, best first, sent as one `models` list: OpenRouter falls
+ * back down the list by itself on rate limits and downtime, in one request.
+ * The API accepts at most 3 entries (a longer list is a 400).
+ * Re-verified 2026-10-02 — the previous pair (deepseek-v4-flash:free,
+ * glm-5.2:free) had been removed from the free catalogue, so every OpenRouter
+ * call was failing.
  */
-export const OPENROUTER_ALTERNATE_MODELS = [
-  'z-ai/glm-5.2:free',
-  'qwen/qwen3.8-27b:free',
+export const OPENROUTER_TEXT_MODELS = [
+  'nvidia/nemotron-3-ultra-550b-a55b:free',
+  'nvidia/nemotron-3-super-120b-a12b:free',
+  'poolside/laguna-s-2.1:free',
 ] as const
+export const OPENROUTER_DEFAULT_MODEL: string = OPENROUTER_TEXT_MODELS[0]
 
-/**
- * Free models that accept image input. The primary is text-only, so when a
- * drawing snapshot is attached we transparently switch to the vision model
- * rather than silently dropping the image (the geometry still reaches every
- * model as text, so this only adds signal).
- */
-const VISION_MODEL = 'qwen/qwen3.8-27b:free'
-const VISION_CAPABLE = new Set<string>([VISION_MODEL, 'google/gemma-4-31b-it:free'])
+/** Free models that accept image input (catalogue `input_modalities` includes "image"). */
+export const OPENROUTER_VISION_MODELS = [
+  'qwen/qwen3.8-27b:free',
+  'google/gemma-4-31b-it:free',
+  'google/gemma-4-26b-a4b-it:free',
+] as const
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions'
 
@@ -140,9 +137,10 @@ export async function openrouterGenerate(
   }
 
   const { imageBase64 } = options
-  // Sending an image to a text-only model is silently dropped upstream, so pick
-  // a model that can actually read it instead.
-  const model = imageBase64 && !VISION_CAPABLE.has(modelId) ? VISION_MODEL : modelId
+  // Sending an image to a text-only model is silently dropped upstream, so an
+  // image means the vision list. A caller's explicit pick goes first.
+  const preferred: readonly string[] = imageBase64 ? OPENROUTER_VISION_MODELS : OPENROUTER_TEXT_MODELS
+  const models = [...new Set([...(preferred.includes(modelId) ? [modelId] : []), ...preferred])].slice(0, 3)
 
   const userContent: OpenRouterMessage['content'] = imageBase64
     ? [
@@ -174,7 +172,7 @@ export async function openrouterGenerate(
           'X-Title': process.env.NEXT_PUBLIC_APP_NAME || 'IntentDraw',
         },
         body: JSON.stringify({
-          model,
+          models,
           messages,
           temperature: 0.2,
           top_p: 0.7,

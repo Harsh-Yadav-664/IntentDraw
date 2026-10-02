@@ -38,20 +38,33 @@ const DEFAULT_GEMINI_MODELS = ['gemini-3.8-flash', 'gemini-3.7-flash', 'gemini-3
 if (GEMINI_MODELS.length === 0) GEMINI_MODELS.push(...DEFAULT_GEMINI_MODELS)
 
 /**
- * Models known to be unusable right now (daily quota spent, or retired), with
- * when to try them again. Skipping them costs nothing; asking would spend a
- * round trip — and a retry wait — on a guaranteed refusal. Per server instance.
+ * Models known to be unusable right now (daily quota spent, retired, or
+ * overloaded), with when to try them again. Skipping them costs nothing; asking
+ * would spend a round trip on a guaranteed refusal. Per server instance.
  */
 const unavailableUntil = new Map<string, number>()
 const QUOTA_RECHECK_MS = 60 * 60 * 1000 // daily quotas reset once a day; re-check hourly
 const RETIRED_RECHECK_MS = 24 * 60 * 60 * 1000
-const OVERLOAD_RECHECK_MS = 2 * 60 * 1000
+// "High demand" 503s on the free tier last minutes, not seconds (2026-10-02:
+// 3.8, 3.7 and 3.6 all overloaded for an afternoon). Waiting and retrying the
+// same model spent ~4 minutes per generation and still failed.
+const OVERLOAD_RECHECK_MS = 3 * 60 * 1000
 
-function usableModels(): string[] {
-  const now = Date.now()
+/** The model that answered most recently — tried first next time. */
+let lastGood: string | null = null
+
+export function usableModels(now = Date.now()): string[] {
   const usable = GEMINI_MODELS.filter(m => (unavailableUntil.get(m) ?? 0) <= now)
   // Never return nothing: if everything is marked, try them all again.
-  return usable.length > 0 ? usable : GEMINI_MODELS
+  const list = usable.length > 0 ? usable : [...GEMINI_MODELS]
+  if (lastGood && list.includes(lastGood)) return [lastGood, ...list.filter(m => m !== lastGood)]
+  return list
+}
+
+/** Test hook: forget every remembered failure and success. */
+export function resetGeminiState(): void {
+  unavailableUntil.clear()
+  lastGood = null
 }
 
 /**
@@ -69,91 +82,86 @@ export function getProModel() {
 
 /**
  * Parse Gemini's RetryInfo `retryDelay` ("9s" / "9.18s") out of a 429 error
- * message → milliseconds, with a small cushion and a hard cap. Falls back to
- * exponential backoff (4s → 8s → 16s) when the field is absent.
+ * message → milliseconds, with a small cushion and a hard cap.
  */
-function parseRetryDelayMs(errorMessage: string, attempt: number): number {
-  const m = errorMessage.match(/retryDelay["']?\s*[:=]\s*["']?(\d+(?:\.\d+)?)\s*s/i)
-  if (m) {
-    const secs = parseFloat(m[1])
-    // +0.75s cushion so we clear the window edge; cap at 20s to stay in budget.
-    return Math.min(Math.ceil((secs + 0.75) * 1000), 20000)
-  }
-  return Math.min(4000 * 2 ** attempt, 20000)
+function parseRetryDelayMs(errorMessage: string): number {
+  const m = errorMessage.match(/retryDelay["']?s*[:=]s*["']?(d+(?:.d+)?)s*s/i)
+  if (m) return Math.min(Math.ceil((parseFloat(m[1]) + 0.75) * 1000), 20000)
+  return 5000
 }
 
-type Failure = 'daily-quota' | 'retired' | 'transient' | 'fatal'
+type Failure = 'daily-quota' | 'retired' | 'overloaded' | 'rate-limited' | 'fatal'
 
 /** What a Gemini error means for what to do next. */
 export function classifyGeminiError(message: string): Failure {
   // A per-DAY quota won't recover by waiting seconds: move to the next model.
-  if (/PerDay|per day|daily/i.test(message) && /\b429\b|quota|resource_exhausted/i.test(message)) return 'daily-quota'
-  if (/\b404\b|no longer available|not found|is not supported/i.test(message)) return 'retired'
-  // Per-minute limits and "high demand" 503s recover in seconds: wait and retry.
-  if (/\b429\b|too many requests|resource_exhausted|rate.?limit|\bquota\b|\b503\b|service unavailable|high demand|overloaded/i.test(message)) {
-    return 'transient'
-  }
+  if (/PerDay|per day|daily/i.test(message) && /429|quota|resource_exhausted/i.test(message)) return 'daily-quota'
+  if (/404|no longer available|not found|is not supported/i.test(message)) return 'retired'
+  // Capacity problems on Google's side — the next model has its own capacity.
+  if (/503|500|service unavailable|high demand|overloaded|internal error|timed out|aborted/i.test(message)) return 'overloaded'
+  // A per-minute limit clears in seconds: one short wait is worth it.
+  if (/429|too many requests|resource_exhausted|rate.?limit|quota/i.test(message)) return 'rate-limited'
   return 'fatal'
 }
 
 /**
  * Generate with Gemini across the model chain.
  *
- * Per model: a transient failure (per-minute 429, 503 "high demand") waits —
- * honouring the server's retryDelay — and retries the same model; if it is
- * still failing after the retries, the next Gemini model is tried rather than
- * leaving Gemini for a weaker, often text-only provider. A spent daily quota or
- * a retired model moves on immediately. Unusable models are remembered so
- * later calls skip them for free. Only a real error (bad request, auth) — or
- * every model failing — is thrown for the provider chain to handle.
+ * - overloaded (503 "high demand", 500, a hung request): skip this model for a
+ *   few minutes and try the next one immediately
+ * - per-minute 429: one wait (the server's own retryDelay, capped), then move on
+ * - spent daily quota / retired model: remembered, next model immediately
+ * - anything else (bad request, auth): thrown for the provider chain
+ *
+ * `deadlineMs` bounds the whole walk. Without it a busy afternoon spent the
+ * entire request budget on overloaded models and the chain never reached a
+ * provider that would have answered.
  *
  * Never set maxOutputTokens here: these are thinking models, and thinking
  * tokens consume the cap before any visible output (see CLAUDE.md).
  */
 export async function geminiGenerate(
   contentParts: Part[],
-  opts?: { perAttemptTimeoutMs?: number; maxRetries?: number }
+  opts?: { perAttemptTimeoutMs?: number; deadlineMs?: number }
 ): Promise<string> {
   const perAttemptTimeoutMs = opts?.perAttemptTimeoutMs ?? 120000
-  const maxRetries = opts?.maxRetries ?? 2
+  const deadline = Date.now() + (opts?.deadlineMs ?? 150000)
   const client = getClient()
 
-  let lastErr: unknown
+  let lastErr: unknown = new Error('Gemini: no model attempted')
   for (const modelName of usableModels()) {
     const model = client.getGenerativeModel({ model: modelName })
 
-    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const remaining = deadline - Date.now()
+      if (remaining < 5000) throw lastErr
       try {
         const result = await model.generateContent(contentParts, {
-          signal: AbortSignal.timeout(perAttemptTimeoutMs),
+          signal: AbortSignal.timeout(Math.min(perAttemptTimeoutMs, remaining)),
         })
+        lastGood = modelName
         return result.response.text()
       } catch (err) {
         lastErr = err
         const msg = err instanceof Error ? err.message : String(err)
         const kind = classifyGeminiError(msg)
-
-        if (kind === 'daily-quota' || kind === 'retired') {
-          unavailableUntil.set(modelName, Date.now() + (kind === 'retired' ? RETIRED_RECHECK_MS : QUOTA_RECHECK_MS))
-          console.warn(`[Gemini] ${modelName}: ${kind === 'retired' ? 'unavailable' : 'daily quota spent'} — trying the next model`)
-          break // next model
-        }
         if (kind === 'fatal') throw err
-        if (attempt === maxRetries) {
-          // Still overloaded/limited after waiting: the next Gemini model has
-          // its own capacity and is far better than leaving Gemini for a
-          // text-only provider. Skip this one briefly — "high demand" tends to
-          // last minutes, and every call would otherwise re-spend the waits.
-          unavailableUntil.set(modelName, Date.now() + OVERLOAD_RECHECK_MS)
-          console.warn(`[Gemini] ${modelName}: still unavailable after retries — trying the next model`)
-          break
+
+        if (kind === 'rate-limited' && attempt === 0) {
+          const waitMs = Math.min(parseRetryDelayMs(msg), Math.max(0, deadline - Date.now() - 5000))
+          console.warn(`[Gemini] ${modelName}: rate-limited (429); retrying once in ${Math.round(waitMs / 1000)}s`)
+          await new Promise(res => setTimeout(res, waitMs))
+          continue
         }
 
-        const waitMs = parseRetryDelayMs(msg, attempt)
-        console.warn(
-          `[Gemini] ${modelName}: ${/\b503\b|high demand|overloaded|unavailable/i.test(msg) ? 'overloaded (503)' : 'rate-limited (429)'}; retrying in ${Math.round(waitMs / 1000)}s (attempt ${attempt + 1}/${maxRetries})`
-        )
-        await new Promise(res => setTimeout(res, waitMs))
+        const recheck =
+          kind === 'retired' ? RETIRED_RECHECK_MS
+          : kind === 'daily-quota' ? QUOTA_RECHECK_MS
+          : OVERLOAD_RECHECK_MS
+        unavailableUntil.set(modelName, Date.now() + recheck)
+        if (lastGood === modelName) lastGood = null
+        console.warn(`[Gemini] ${modelName}: ${kind} — trying the next model`)
+        break
       }
     }
   }

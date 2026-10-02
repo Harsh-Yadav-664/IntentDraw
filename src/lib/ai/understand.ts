@@ -30,7 +30,8 @@ export interface UnderstandContext {
 function understandingChain(provider: ProviderName, hasImage: boolean): ProviderName[] {
   const chain = buildFallbackChain(provider)
   if (!hasImage) return chain
-  const canSee = (p: ProviderName) => p === 'gemini' || p === 'openrouter'
+  // Groq reads images through its vision model (groq.ts).
+  const canSee = (p: ProviderName) => p === 'gemini' || p === 'groq' || p === 'openrouter'
   return [...chain.filter(canSee), ...chain.filter(p => !canSee(p))]
 }
 
@@ -47,7 +48,10 @@ export async function understandRequest(context: UnderstandContext): Promise<Des
     try {
       const text = await callProvider(current, UNDERSTAND_SYSTEM_PROMPT, message, {
         nvidiaModelId,
-        imageBase64: hasImage && (current === 'gemini' || current === 'openrouter') ? imageBase64 : undefined,
+        imageBase64: hasImage && current !== 'nvidia' ? imageBase64 : undefined,
+        // Understanding is the first thing the user waits on; Gemini gets ~90s
+        // before a provider that answers in seconds takes over.
+        geminiDeadlineMs: 90000,
       })
       const brief = normalizeBrief(parseJsonObject(text), regions, prompt)
       // A brief with no concept and no plan is the model failing quietly —

@@ -92,8 +92,11 @@ export async function callProvider(
   p: ProviderName,
   systemPrompt: string,
   userMessage: string,
-  options: { nvidiaModelId?: string; openrouterModelId?: string; imageBase64?: string } = {}
+  options: { nvidiaModelId?: string; openrouterModelId?: string; imageBase64?: string; geminiDeadlineMs?: number } = {}
 ): Promise<string> {
+  // How long Gemini may spend walking its model chain before the next provider
+  // gets a turn. geminiGenerate stops on its own; the backstop is a safety net.
+  const geminiDeadlineMs = options.geminiDeadlineMs ?? 150000
   const {
     nvidiaModelId = DEFAULT_NVIDIA_MODEL,
     openrouterModelId = OPENROUTER_DEFAULT_MODEL,
@@ -107,7 +110,8 @@ export async function callProvider(
 
   const call = async (): Promise<string> => {
     if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId)
-    if (p === 'groq') return groqGenerate(systemPrompt, userMessage)
+    // Groq switches to its vision model when an image is attached.
+    if (p === 'groq') return groqGenerate(systemPrompt, userMessage, { imageBase64 })
     // OpenRouter swaps to a vision-capable free model on its own when an image
     // is attached, so the drawing isn't silently dropped.
     if (p === 'openrouter') {
@@ -120,13 +124,13 @@ export async function callProvider(
     }
     // geminiGenerate retries free-tier 429s (honoring the server's
     // retryDelay) before giving up and letting the chain fall through.
-    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini })
+    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini, deadlineMs: geminiDeadlineMs })
   }
 
   // Gemini and OpenRouter both retry through free-tier 429s in-band (honoring
   // the server's delay), so their backstop has to allow for those waits too.
   const backstopMs = p === 'gemini'
-    ? PROVIDER_TIMEOUT_MS.gemini + 45000
+    ? geminiDeadlineMs + 10000
     : p === 'openrouter'
       ? PROVIDER_TIMEOUT_MS.openrouter + 45000
       : PROVIDER_TIMEOUT_MS[p] + 5000
@@ -154,9 +158,11 @@ function openrouterConfigured(): boolean {
 export function buildFallbackChain(provider: ProviderName): ProviderName[] {
   const tail = openrouterConfigured() ? (['openrouter'] as ProviderName[]) : []
   if (provider === 'openrouter') return ['openrouter', 'gemini', 'groq', 'nvidia']
+  // NVIDIA goes last: its free endpoints routinely take longer than a request
+  // budget allows (vision models didn't answer within 90s on 2026-10-02).
   if (provider === 'nvidia') return ['nvidia', 'gemini', 'groq', ...tail]
-  if (provider === 'groq') return ['groq', 'gemini', 'nvidia', ...tail]
-  return ['gemini', 'groq', 'nvidia', ...tail]
+  if (provider === 'groq') return ['groq', 'gemini', ...tail, 'nvidia']
+  return ['gemini', 'groq', ...tail, 'nvidia']
 }
 
 export { humanizeProviderError }

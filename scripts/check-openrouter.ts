@@ -39,14 +39,14 @@ async function main(): Promise<void> {
 
   // Imported after the env is populated: the module reads process.env at call
   // time, but keeping the order explicit avoids a future footgun.
-  const { openrouterGenerate, OPENROUTER_DEFAULT_MODEL, OPENROUTER_ALTERNATE_MODELS } =
+  const { openrouterGenerate, OPENROUTER_DEFAULT_MODEL, OPENROUTER_TEXT_MODELS } =
     await import('../src/lib/ai/openrouter')
 
   const model = process.argv[2] || OPENROUTER_DEFAULT_MODEL
 
   console.log('OpenRouter smoke test')
   console.log('  model     :', model)
-  console.log('  alternates:', OPENROUTER_ALTERNATE_MODELS.join(', '))
+  console.log('  fallbacks :', OPENROUTER_TEXT_MODELS.join(', '))
   console.log('  key set   :', process.env.OPENROUTER_API_KEY ? 'yes' : 'NO')
   console.log()
 
