@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { Button } from '@/components/ui/button'
 import { ArrowRight, Brain, Download, PenTool, RefreshCw, Share2, Sparkles } from 'lucide-react'
 import { HeroDemo } from '@/components/marketing/hero-demo'
+import { authBypassed } from '@/lib/auth/bypass'
 
 /**
  * The marketing page. Its job is to show, in the first screen, the one thing
@@ -55,6 +56,11 @@ const DIFFERENT = [
 ]
 
 export default function HomePage() {
+  // In development there is no sign-in (lib/auth/bypass.ts), so every call to
+  // action opens the app directly. Production sends people to sign up.
+  const signIn = authBypassed() ? '/dashboard' : '/login'
+  const signUp = authBypassed() ? '/dashboard' : '/signup'
+
   return (
     <main className="relative min-h-screen overflow-hidden bg-[#0A0A0B]">
       {/* Static light — a gradient, not a blurred element, so it costs nothing to paint. */}
@@ -73,10 +79,10 @@ export default function HomePage() {
         </span>
         <div className="flex items-center gap-2">
           <Button variant="ghost" className="hidden sm:inline-flex" asChild>
-            <Link href="/login">Sign in</Link>
+            <Link href={signIn}>Sign in</Link>
           </Button>
           <Button className="rounded-full" asChild>
-            <Link href="/signup">Start free</Link>
+            <Link href={signUp}>Start free</Link>
           </Button>
         </div>
       </nav>
@@ -95,7 +101,7 @@ export default function HomePage() {
           </p>
           <div className="mt-9 flex flex-wrap items-center gap-4">
             <Button size="lg" className="h-12 rounded-full px-7 text-base" asChild>
-              <Link href="/signup">
+              <Link href={signUp}>
                 Start designing free
                 <ArrowRight className="ml-2 h-4 w-4" />
               </Link>
@@ -147,7 +153,7 @@ export default function HomePage() {
             <p className="mt-2 text-muted-foreground">Free to start. Your first site takes a few minutes.</p>
           </div>
           <Button size="lg" className="h-12 rounded-full px-7 text-base" asChild>
-            <Link href="/signup">
+            <Link href={signUp}>
               Start designing free
               <ArrowRight className="ml-2 h-4 w-4" />
             </Link>
@@ -161,8 +167,8 @@ export default function HomePage() {
             Intent<span className="text-primary">Draw</span>
           </span>
           <div className="flex gap-5">
-            <Link href="/login" className="hover:text-foreground">Sign in</Link>
-            <Link href="/signup" className="hover:text-foreground">Create account</Link>
+            <Link href={signIn} className="hover:text-foreground">Sign in</Link>
+            <Link href={signUp} className="hover:text-foreground">Create account</Link>
           </div>
         </div>
       </footer>
