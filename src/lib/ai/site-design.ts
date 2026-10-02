@@ -204,9 +204,13 @@ const DENSITY_RULES: Record<Density, string> = {
 
 const HEADING_RULES: Record<HeadingStyle, string> = {
   oversized: 'Headings are huge and tight — hero text-7xl to text-9xl, leading-[0.9], tracking-tight — and dominate their section.',
-  editorial: 'Headings are refined: text-5xl to text-7xl, normal tracking, with an italic or lighter-weight word for emphasis inside the heading.',
+  // No accented word inside a heading: one italic or coloured word in a headline is
+  // one of the commonest tells of a generated page (frontend-design / avoid-ai-design, SD5).
+  editorial: 'Headings are refined: text-5xl to text-7xl, normal tracking, in one weight and one colour; hierarchy comes from size and generous space, not from accenting a word.',
   compact: 'Headings are restrained (hero text-5xl, sections text-3xl); hierarchy comes from weight and colour, not size.',
-  uppercase: 'Headings are uppercase with wide tracking (tracking-[0.08em] large, tracking-[0.25em] for small labels).',
+  // Uppercase headings, but no tracked-out ALL-CAPS labels above them — that
+  // template chrome reads as AI-made (SD4/T5).
+  uppercase: 'Headings are uppercase with slight tracking (tracking-[0.04em]); every other line of text is sentence case — no small ALL-CAPS labels or eyebrows.',
 }
 
 /** Classes no site may use, whatever its design: the generic-template signature. */

@@ -23,9 +23,9 @@ import { simplifyToBudget } from './shape-path'
  * third of the rendered page.
  */
 
-export type SceneForm = 'silhouette' | 'band' | 'disc' | 'rays' | 'shape' | 'line'
+export type SceneForm = 'silhouette' | 'band' | 'disc' | 'rays' | 'shape' | 'line' | 'sphere'
 
-export const SCENE_FORMS: readonly SceneForm[] = ['silhouette', 'band', 'disc', 'rays', 'shape', 'line']
+export const SCENE_FORMS: readonly SceneForm[] = ['silhouette', 'band', 'disc', 'rays', 'shape', 'line', 'sphere']
 
 export const CANVAS_WIDTH = 1280
 
@@ -305,7 +305,106 @@ export function buildSceneShape(
       const d = members.map(m => toPathData(simplified(m, budget))).filter(Boolean)
       return d.length ? { svg: d.map(path => `<path d="${path}" />`).join(' '), paint: 'stroke' } : null
     }
+    case 'sphere': {
+      // Rendered as a live 3D component (scene-render.ts); as a static shape it
+      // is its body's disc.
+      const geo = sphereGeometry(element.regionNumbers, regions)
+      return geo ? { svg: `<circle cx="${r0(geo.cx)}" cy="${r0(geo.cy)}" r="${r0(geo.r)}" />`, paint: 'fill' } : null
+    }
   }
+}
+
+/** A point on the unit sphere: x right, y down, z toward the viewer. */
+export type SpherePoint = [number, number, number]
+
+export interface SphereGeometry {
+  cx: number
+  cy: number
+  r: number
+  /** Each drawn mark, as points on the sphere's front face. */
+  strokes: SpherePoint[][]
+  /** Where marks start and end — the knots of a drawn network. */
+  nodes: SpherePoint[]
+}
+
+const round3 = (n: number) => Math.round(n * 1000) / 1000
+
+/** Adds points so no two neighbours are more than `step` apart — curves stay curved once wrapped round a sphere. */
+function densify(points: Point[], step: number): Point[] {
+  const out: Point[] = []
+  points.forEach((p, i) => {
+    if (i > 0) {
+      const prev = points[i - 1]
+      const n = Math.floor(Math.hypot(p.x - prev.x, p.y - prev.y) / step)
+      for (let k = 1; k < n; k++) out.push({ x: prev.x + ((p.x - prev.x) * k) / n, y: prev.y + ((p.y - prev.y) * k) / n })
+    }
+    out.push(p)
+  })
+  return out
+}
+
+/**
+ * A round body plus the marks drawn on it, mapped onto a 3D sphere.
+ *
+ * The body is the drawn circle (or the roundest member, or failing both the
+ * group's bounds). Every other member is a mark: each of its points is lifted
+ * onto the sphere's front face by inverse orthographic projection
+ * (z = √(1 − u² − v²)), so at rest the sphere shows exactly what was drawn,
+ * and as it turns the marks travel round it as if drawn on a globe.
+ */
+export function sphereGeometry(regionNumbers: number[], regions: Region[]): SphereGeometry | null {
+  const members = regionNumbers
+    .map(n => regions.find(r => r.regionNumber === n))
+    .filter((r): r is Region => !!r)
+  if (members.length === 0) return null
+
+  const body = members.find(m => m.geometry.type === 'circle') ?? members.find(m => isRound(m))
+  let cx: number
+  let cy: number
+  let r: number
+  if (body?.geometry.type === 'circle') {
+    const g = body.geometry
+    cx = g.x + g.width / 2
+    cy = g.y + g.height / 2
+    r = (g.width + g.height) / 4
+  } else {
+    const fit = body ? fitCircle(absolutePoints(body)) : null
+    if (fit) {
+      ;({ cx, cy, r } = fit)
+    } else {
+      const xs = members.flatMap(m => [m.geometry.x, m.geometry.x + m.geometry.width])
+      const ys = members.flatMap(m => [m.geometry.y, m.geometry.y + m.geometry.height])
+      cx = (Math.min(...xs) + Math.max(...xs)) / 2
+      cy = (Math.min(...ys) + Math.max(...ys)) / 2
+      r = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys)) / 2
+    }
+  }
+  if (!(r > 4)) return null
+
+  const lift = (p: Point): SpherePoint => {
+    let u = (p.x - cx) / r
+    let v = (p.y - cy) / r
+    const d = Math.hypot(u, v)
+    // Marks drawn past the rim are pulled onto it rather than dropped.
+    if (d > 0.97) {
+      u *= 0.97 / d
+      v *= 0.97 / d
+    }
+    return [round3(u), round3(v), round3(Math.sqrt(Math.max(0, 1 - u * u - v * v)))]
+  }
+
+  const strokes = members
+    .filter(m => m !== body)
+    .map(m => densify(simplified(m, 40), Math.max(4, r / 14)).map(lift))
+    .filter(s => s.length >= 2)
+
+  const nodes: SpherePoint[] = []
+  for (const s of strokes) {
+    for (const end of [s[0], s[s.length - 1]]) {
+      if (!nodes.some(n => Math.hypot(n[0] - end[0], n[1] - end[1]) < 0.08)) nodes.push(end)
+    }
+  }
+  return { cx: r0(cx), cy: r0(cy), r: r0(r), strokes, nodes }
 }
 
 /** The lowest point any scene member reaches — where the scene meets the ground. */

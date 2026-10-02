@@ -7,6 +7,7 @@ import type { DesignTokenSet } from './design-tokens'
 import { describeScene, renderBrief, type BriefPalette, type DesignBrief } from './brief'
 import { MAX_SECTION_NOTE_CHARS } from './page-parts'
 import { pageIndexForRegion } from '@/lib/canvas/pages'
+import { describeDrawnSections } from './page-shell'
 import { PRODUCT_PRINCIPLE } from './principle'
 
 // =============================================================================
@@ -512,44 +513,8 @@ ${describeLayout(allRegions, canvasWidth, canvasHeight, groups)}`)
 }
 
 // =============================================================================
-// STAGED GENERATION — shell first, then sections
+// STAGED GENERATION — sections (the page shell is built in code: page-shell.ts)
 // =============================================================================
-
-export const STAGED_SHELL_SYSTEM_PROMPT = `You are IntentDraw's page-architecture engine.
-Your job: design the PAGE STRUCTURE only — the App component and its layout — and
-declare which sections a later pass will build.
-
-${PRODUCT_PRINCIPLE}
-
-${SPATIAL_RULES}
-
-${DESIGN_RULES}
-
-════════════════════════════════════════════
-YOUR OUTPUT — SHELL ONLY
-════════════════════════════════════════════
-
-1. The FIRST line must be a manifest listing every section component you reference:
-   /* SECTIONS: Hero, Features, Pricing, Footer */
-2. Then imports, then any full-page background layers, then
-   'export default function App()'.
-3. DO NOT define the section components. Reference them as <Hero />, <Features />.
-   A later pass generates them — defining them here wastes the whole run.
-4. If a LAYOUT SKELETON is provided, the sections ARE its <RegionX /> placeholders;
-   use exactly those names. Otherwise, if the DESIGN BRIEF has a section plan, use
-   exactly its names in its order. Only with neither, choose 4-7 sections yourself.
-5. Full-page background and decorative layers belong HERE — they span every section.
-   If there is an ILLUSTRATED SCENE block, YOU paint it, in full, exactly as it
-   specifies: it is the user's own drawing and the centrepiece of the page.
-6. Put the positioning/wrapper classes in the shell so each section drops straight in.
-7. The shell adds NO vertical space of its own between sections — no space-y-*,
-   no gap-* and no empty spacer divs on the section stack. Each section owns its
-   own padding. Stacked shell spacing plus section padding is what produces the
-   huge empty bands that make a page look machine-generated.
-8. Order the sections so the page has a rhythm (see the rules above): the first
-   screen carries real content, and dense sections alternate with sparse ones.
-
-Return ONLY the shell file. No markdown, no code fences, no explanation.`
 
 export const STAGED_SECTION_SYSTEM_PROMPT = `You are IntentDraw's section generation engine.
 You build a few named components that slot into a page shell written by another pass.
@@ -598,6 +563,16 @@ export function buildStagedSectionUserPrompt(
   const referenceSignal = brief ? `${userPrompt} ${brief.summary} ${brief.concept}` : userPrompt
   pushReferenceSection(sections, referenceSignal, tokens, 'section')
 
+  // Everything above and the next three blocks are the same for every section
+  // call in a run; only what follows them differs. Provider prompt caches match
+  // on the shared prefix, so the per-section part goes last (arXiv 2601.06007:
+  // 41-80% lower cost with dynamic content at the end).
+  sections.push(`THE PAGE YOUR COMPONENTS SLOT INTO (built by IntentDraw — do not reproduce it):
+${shellCode}`)
+  if (globalTheme) sections.push(`THEME: ${globalTheme}`)
+  sections.push(`USER PROMPT:\n${sanitized}`)
+
+  // ---- per-section from here ----
   sections.push(`BUILD EXACTLY THESE COMPONENTS: ${sectionNames.join(', ')}`)
 
   // What each requested component is FOR, from the brief — the difference
@@ -606,37 +581,21 @@ export function buildStagedSectionUserPrompt(
     const purposes = sectionNames
       .map(name => {
         const planned = brief.sections.find(s => s.name === name)
-        if (planned?.purpose) return `  ${name} — ${planned.purpose}`
-        const regionNumber = Number(name.match(/^Region(\d+)$/)?.[1])
-        const drawn = brief.drawing.elements.find(e => e.role === 'layout' && e.regions.includes(regionNumber))
-        return drawn ? `  ${name} — ${drawn.name}${drawn.render ? `: ${drawn.render}` : ''}` : null
+        return planned?.purpose ? `  ${name} — ${planned.purpose}` : null
       })
       .filter(Boolean)
     if (purposes.length > 0) sections.push(`WHAT EACH COMPONENT IS FOR:\n${purposes.join('\n')}`)
   }
 
-  // Region-backed sections carry real geometry the component must honour.
-  if (regions.length > 0) {
-    const relevant = buildRegionData(regions, groups).filter(rd =>
-      sectionNames.some(name => name === rd.label || name === `Region${rd.label.slice(1)}`)
-    )
-    if (relevant.length > 0) {
-      sections.push(`GEOMETRY FOR YOUR SECTIONS (positions/sizes are PERCENTAGES of the page, 0-100):
-${JSON.stringify(relevant, null, 2)}`)
-    }
-  }
-
-  sections.push(`THE SHELL YOUR COMPONENTS MUST FIT INTO (do not reproduce it):
-${shellCode}`)
-
-  if (globalTheme) sections.push(`THEME: ${globalTheme}`)
-  sections.push(`USER PROMPT:\n${sanitized}`)
+  // What the user drew inside these sections, with exact desktop placement.
+  const drawn = describeDrawnSections(sectionNames, brief, regions, groups)
+  if (drawn) sections.push(drawn)
 
   // A rebuild: the user saw this section and said what to change. Last, so it
   // reads as the final word on this component; capped because it is user input.
   const cleanNote = note ? sanitizeUserPrompt(note.replace(/\s+/g, ' ')).slice(0, MAX_SECTION_NOTE_CHARS).trim() : ''
   if (cleanNote) {
-    sections.push(`USER INSTRUCTION FOR ${sectionNames.join(', ')} (a rebuild of this section — follow it over the plan above where they conflict, but keep the palette, tokens and fit with the shell):
+    sections.push(`USER INSTRUCTION FOR ${sectionNames.join(', ')} (a rebuild of this section — follow it over the plan above where they conflict, but keep the palette, tokens and fit with the page):
 ${cleanNote}`)
   }
 

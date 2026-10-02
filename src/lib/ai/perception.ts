@@ -156,6 +156,50 @@ function wrapsAround(s: Stroke, arc: Arc): boolean {
  * One line of measured facts per stroke, keyed by region number. Shapes with no
  * stroke (rectangles, circles) get nothing — their type and box already say it.
  */
+/**
+ * A single stroke that is probably a written word: dense, wide, many up-down
+ * reversals (letters) with some backward travel (loops in a, e, o), and far
+ * longer than it is wide. Measured on a real cursive "Name": 124 points, 17
+ * vertical and 2 horizontal reversals, length 3.8× its width, 2.8:1 aspect.
+ * Before this, the same stroke was reported as "zig-zag with 8 spikes" — a
+ * fact that pushed models toward reading it as rays or a mountain range.
+ */
+export function looksHandwritten(region: Region): boolean {
+  const g = region.geometry
+  if (g.type !== 'freeform' || !g.path || g.path.length < 60) return false
+  const points = absolutePoints(region)
+  let xRev = 0
+  let yRev = 0
+  let length = 0
+  for (let i = 1; i < points.length; i++) {
+    length += Math.hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y)
+    if (i < 2) continue
+    const dx1 = points[i - 1].x - points[i - 2].x
+    const dx2 = points[i].x - points[i - 1].x
+    const dy1 = points[i - 1].y - points[i - 2].y
+    const dy2 = points[i].y - points[i - 1].y
+    if (dx1 * dx2 < 0 && Math.abs(dx2) > 1) xRev++
+    if (dy1 * dy2 < 0 && Math.abs(dy2) > 1) yRev++
+  }
+  const aspect = g.width / Math.max(1, g.height)
+  return yRev >= 10 && xRev >= 1 && length >= g.width * 3 && aspect >= 1.4 && aspect <= 10 && g.height <= 220
+}
+
+/** Share of a region's points inside another (closed) region's outline, ellipse or box. */
+function insideShare(inner: Region, outer: Region): number {
+  const o = outer.geometry
+  const points = absolutePoints(inner)
+  if (points.length === 0) return 0
+  const cx = o.x + o.width / 2
+  const cy = o.y + o.height / 2
+  const inside = points.filter(p =>
+    o.type === 'circle'
+      ? ((p.x - cx) / (o.width / 2)) ** 2 + ((p.y - cy) / (o.height / 2)) ** 2 <= 1.1
+      : p.x >= o.x - 4 && p.x <= o.x + o.width + 4 && p.y >= o.y - 4 && p.y <= o.y + o.height + 4
+  )
+  return inside.length / points.length
+}
+
 export function perceiveDrawing(regions: Region[]): Map<number, string> {
   const strokes = regions.map(toStroke).filter((s): s is Stroke => !!s)
   const arcs = new Map<number, Arc>()
@@ -167,8 +211,31 @@ export function perceiveDrawing(regions: Region[]): Map<number, string> {
   const facts = new Map<number, string[]>()
   const add = (n: number, fact: string) => facts.set(n, [...(facts.get(n) ?? []), fact])
 
+  // Things drawn inside a circle or box: a globe's markings, a card's contents.
+  // Stated on both sides, because "R1 and everything inside it" is exactly how
+  // people describe what they drew.
+  const containers = regions.filter(r => r.geometry.type === 'circle' || r.geometry.type === 'rectangle')
+  for (const outer of containers) {
+    const inside = regions.filter(
+      inner =>
+        inner !== outer &&
+        inner.geometry.width * inner.geometry.height < outer.geometry.width * outer.geometry.height &&
+        insideShare(inner, outer) >= 0.85
+    )
+    if (inside.length === 0) continue
+    add(outer.regionNumber, `contains ${inside.map(r => `R${r.regionNumber}`).join(', ')} — drawn inside it`)
+    inside.forEach(r => add(r.regionNumber, `drawn inside R${outer.regionNumber}`))
+  }
+
+  const handwritten = new Set(regions.filter(looksHandwritten).map(r => r.regionNumber))
+  for (const n of handwritten) {
+    add(n, 'probably HANDWRITTEN TEXT (a word or short label, not a shape) — read the word from the image; it is text the user wants on the site at this spot, or the label of what goes here')
+  }
+
   for (const s of strokes) {
     const n = s.region.regionNumber
+    // Its letters would read as spikes, peaks or arcs — all wrong.
+    if (handwritten.has(n)) continue
     const arc = arcs.get(n)
     if (s.closed) add(n, 'closed outline')
     if (arc) {
@@ -194,7 +261,7 @@ export function perceiveDrawing(regions: Region[]): Map<number, string> {
       const b = strokes[j].region.regionNumber
       // An arc and the stroke wrapped around it are already described as such,
       // and two ridges are two silhouettes, never the edges of one band.
-      if (arcs.has(a) || arcs.has(b)) continue
+      if (arcs.has(a) || arcs.has(b) || handwritten.has(a) || handwritten.has(b)) continue
       if (isRidge(strokes[i]) && isRidge(strokes[j])) continue
       const pair = bandPartner(strokes[i], strokes[j])
       if (!pair) continue

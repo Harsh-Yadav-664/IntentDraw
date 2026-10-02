@@ -1,6 +1,7 @@
 import type { Region } from '@/types'
 import type { BriefElement, BriefPalette } from './brief'
-import { CANVAS_WIDTH, buildSceneShape, sceneGround } from './scene'
+import { CANVAS_WIDTH, buildSceneShape, sceneGround, sphereGeometry, type SphereGeometry } from './scene'
+import { PAGE_CONFIG } from '@/lib/canvas/pages'
 
 /**
  * Renders the user's drawing as a finished React component, in code.
@@ -81,6 +82,108 @@ function circleOf(markup: string): { cx: number; cy: number; r: number } | null 
   return m ? { cx: +m[1], cy: +m[2], r: +m[3] } : null
 }
 
+/**
+ * A live 3D sphere carrying the user's marks: it turns slowly on its own, and
+ * follows the pointer, touch and scroll. Paths are rewritten through refs each
+ * frame — no React re-render — and the loop stops when the page is frozen as
+ * the editor's backdrop, or when the visitor prefers reduced motion (it still
+ * follows the pointer then, it just doesn't spin by itself).
+ */
+function sphereComponent(name: string, id: string, g: SphereGeometry, p: BriefPalette): string {
+  const body = mix(p.surface, p.background, 0.35)
+  return `/* ${name}: the user's marks on a sphere — turns with pointer, touch and scroll. */
+const ${name} = () => {
+  const front = React.useRef<SVGPathElement | null>(null);
+  const back = React.useRef<SVGPathElement | null>(null);
+  const grid = React.useRef<SVGPathElement | null>(null);
+  const dots = React.useRef<SVGPathElement | null>(null);
+  React.useEffect(() => {
+    const strokes: number[][][] = ${JSON.stringify(g.strokes)};
+    const nodes: number[][] = ${JSON.stringify(g.nodes)};
+    const CX = ${g.cx}, CY = ${g.cy}, R = ${g.r};
+    const rings: number[][][] = [];
+    for (let lat = -60; lat <= 60; lat += 30) {
+      const a = (lat * Math.PI) / 180, ring: number[][] = [];
+      for (let i = 0; i <= 48; i++) { const t = (i / 48) * Math.PI * 2; ring.push([Math.cos(a) * Math.cos(t), Math.sin(a), Math.cos(a) * Math.sin(t)]); }
+      rings.push(ring);
+    }
+    for (let lon = 0; lon < 180; lon += 30) {
+      const b = (lon * Math.PI) / 180, ring: number[][] = [];
+      for (let i = 0; i <= 48; i++) { const t = (i / 48) * Math.PI * 2; ring.push([Math.cos(t) * Math.cos(b), Math.sin(t), Math.cos(t) * Math.sin(b)]); }
+      rings.push(ring);
+    }
+    const still = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    let mx = 0, my = 0, spin = 0, yaw = 0, pitch = -0.25, last = performance.now(), raf = 0;
+    // A hidden frame can report a zero-sized window: never divide by it.
+    const aim = (x: number, y: number) => { mx = x / Math.max(1, window.innerWidth) - 0.5; my = y / Math.max(1, window.innerHeight) - 0.5; };
+    const onMouse = (e: MouseEvent) => aim(e.clientX, e.clientY);
+    const onTouch = (e: TouchEvent) => { const t = e.touches[0]; if (t) aim(t.clientX, t.clientY); };
+    window.addEventListener('mousemove', onMouse, { passive: true });
+    window.addEventListener('touchmove', onTouch, { passive: true });
+    const frame = () => {
+      const now = performance.now(), dt = Math.min(64, now - last);
+      last = now;
+      if (!still) spin += dt * 0.00025;
+      yaw += (spin + mx * 1.4 + (window.scrollY || 0) * 0.003 - yaw) * 0.08;
+      pitch += (-0.25 + my * 0.9 - pitch) * 0.08;
+      if (!Number.isFinite(yaw + pitch)) { yaw = 0; pitch = -0.25; }
+      const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
+      const at = (q: number[]) => {
+        const x1 = q[0] * cy + q[2] * sy, z1 = -q[0] * sy + q[2] * cy;
+        return [CX + R * x1, CY + R * (q[1] * cp - z1 * sp), q[1] * sp + z1 * cp];
+      };
+      const trace = (list: number[][][]) => {
+        let f = '', b = '';
+        for (const line of list) {
+          let prev: number[] | null = null;
+          for (const q of line) {
+            const c = at(q);
+            if (prev) {
+              const seg = 'M' + prev[0].toFixed(1) + ' ' + prev[1].toFixed(1) + 'L' + c[0].toFixed(1) + ' ' + c[1].toFixed(1);
+              if (prev[2] + c[2] >= 0) f += seg; else b += seg;
+            }
+            prev = c;
+          }
+        }
+        return [f, b];
+      };
+      const [sf, sb] = trace(strokes);
+      let d = '';
+      for (const n of nodes) {
+        const c = at(n);
+        if (c[2] >= 0) d += 'M' + (c[0] - 4.5).toFixed(1) + ' ' + c[1].toFixed(1) + 'a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0';
+      }
+      front.current?.setAttribute('d', sf);
+      back.current?.setAttribute('d', sb);
+      grid.current?.setAttribute('d', trace(rings)[0]);
+      dots.current?.setAttribute('d', d);
+      if (!(window as any).__intentdrawFrozen) raf = requestAnimationFrame(frame);
+    };
+    frame();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('mousemove', onMouse);
+      window.removeEventListener('touchmove', onTouch);
+    };
+  }, []);
+  return (
+    <g>
+      <defs>
+        <radialGradient id="${id}-body" cx="35%" cy="30%" r="80%"><stop offset="0%" stopColor="${mix(body, '#FFFFFF', 0.18)}" /><stop offset="65%" stopColor="${body}" /><stop offset="100%" stopColor="${mix(body, '#000000', 0.35)}" /></radialGradient>
+        <radialGradient id="${id}-halo"><stop offset="62%" stopColor="${p.accent}" stopOpacity="0.22" /><stop offset="100%" stopColor="${p.accent}" stopOpacity="0" /></radialGradient>
+      </defs>
+      <circle cx={${g.cx}} cy={${g.cy}} r={${Math.round(g.r * 1.4)}} fill="url(#${id}-halo)" />
+      <circle cx={${g.cx}} cy={${g.cy}} r={${g.r}} fill="url(#${id}-body)" />
+      <path ref={grid} fill="none" stroke="${p.text}" strokeOpacity={0.14} strokeWidth={1} />
+      <path ref={back} fill="none" stroke="${p.accent}" strokeOpacity={0.3} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+      <path ref={front} fill="none" stroke="${p.accent}" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" />
+      <path ref={dots} fill="${mix(p.accent, '#FFFFFF', 0.35)}" />
+      <circle cx={${g.cx}} cy={${g.cy}} r={${g.r}} fill="none" stroke="${p.accent}" strokeOpacity={0.4} strokeWidth={1.5} />
+    </g>
+  );
+};`
+}
+
 const jsxAttrs = (tag: string, attrs: string) => tag.replace(/\s*\/>$/, ` ${attrs} />`).replace('data-part="rays" ', '')
 
 /**
@@ -92,12 +195,26 @@ export function renderSceneComponent(
   regions: Region[],
   palette: BriefPalette | null
 ): string {
-  const art = elements.filter(e => e.role === 'illustration' || e.role === 'motion')
+  // Decorations are drawn too: with the page shell built in code, nothing else
+  // would paint the strokes the user drew as ornament, and they would vanish.
+  const art = elements
+    .filter(e => e.role === 'illustration' || e.role === 'motion' || e.role === 'decoration')
+    .map(e => (e.role === 'decoration' ? { ...e, form: e.form ?? ('line' as const) } : e))
   if (art.length === 0) return ''
   const p = palette ?? FALLBACK_PALETTE
 
   const members = regions.filter(r => art.some(e => e.regions.includes(r.regionNumber)))
   const ground = sceneGround(members)
+
+  // A landscape stands on the bottom edge of its frame — the ground line. Any
+  // other picture keeps its drawn position on the page it was drawn on, so a
+  // globe drawn top-right of page 1 sits top-right of the first screen.
+  const landscape = art.some(e => e.form === 'silhouette' || e.form === 'band')
+  const top = Math.min(...members.map(r => r.geometry.y))
+  const pageH = PAGE_CONFIG.pageHeight
+  const frameY = landscape ? 0 : Math.floor(top / pageH) * pageH
+  const frameH = landscape ? ground : Math.max(pageH, Math.ceil((ground - frameY) / pageH) * pageH)
+  const spheres: string[] = []
 
   // Sky bodies behind land behind water, then the model's own depth within each.
   const tier = (e: BriefElement) => (e.form === 'disc' || e.form === 'rays' ? 0 : e.form === 'band' || e.form === 'line' ? 2 : 1)
@@ -119,7 +236,7 @@ export function renderSceneComponent(
   const defs: string[] = [
     `<linearGradient id="is-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="${mix(p.background, p.accent, 0.22)}" /><stop offset="100%" stopColor="${p.background}" /></linearGradient>`,
   ]
-  const body: string[] = [`<rect width="${CANVAS_WIDTH}" height="${ground}" fill="url(#is-sky)" />`]
+  const body: string[] = [`<rect y="${frameY}" width="${CANVAS_WIDTH}" height="${frameH}" fill="url(#is-sky)" />`]
   const css: string[] = []
   let uid = 0
 
@@ -215,9 +332,24 @@ export function renderSceneComponent(
             body.push(`<path id="${id}-track" d="${d}" fill="none" stroke="none" />`)
             body.push(`<circle r="7" fill="${p.accent}"><animateMotion dur="8s" repeatCount="indefinite" rotate="auto"><mpath href="#${id}-track" /></animateMotion></circle>`)
           }
+        } else if (element.role === 'decoration') {
+          // Ornament in the accent colour; a moving one draws light along itself.
+          parts(shape.svg).forEach(s => {
+            body.push(jsxAttrs(s, `fill="none" stroke="${p.accent}" strokeOpacity={0.85} strokeWidth={3} strokeLinecap="round" strokeLinejoin="round"`))
+            if (moving) body.push(jsxAttrs(s, `fill="none" stroke="${mix(p.accent, '#FFFFFF', 0.6)}" strokeWidth={3} strokeLinecap="round" strokeDasharray="24 180" className="${id}-flow"`))
+          })
+          if (moving) css.push(`@keyframes ${id}-flow { to { stroke-dashoffset: -820 } }`, `.${id}-flow { animation: ${id}-flow 7s linear infinite }`)
         } else {
           parts(shape.svg).forEach(s => body.push(jsxAttrs(s, `fill="none" stroke="${mix(p.text, p.background, 0.2)}" strokeWidth={4} strokeLinecap="round" strokeLinejoin="round"`)))
         }
+        break
+      }
+      case 'sphere': {
+        const geo = sphereGeometry(element.regions, regions)
+        if (!geo) break
+        const name = `${SCENE_COMPONENT}Sphere${spheres.length}`
+        spheres.push(sphereComponent(name, id, geo, p))
+        body.push(label, `<${name} />`)
         break
       }
     }
@@ -229,11 +361,11 @@ export function renderSceneComponent(
   if (css.length > 0) css.push('@media (prefers-reduced-motion: reduce) { .intent-scene * { animation: none !important } }')
 
   const indent = (lines: string[], n: number) => lines.map(l => ' '.repeat(n) + l).join('\n')
-  return `/* ${SCENE_COMPONENT}: the user's drawing, rendered by IntentDraw — geometry, layering and colour are fixed. */
+  return `${spheres.map(c => c + '\n\n').join('')}/* ${SCENE_COMPONENT}: the user's drawing, rendered by IntentDraw — geometry, layering and colour are fixed. */
 const ${SCENE_COMPONENT} = ({ className = '' }: { className?: string }) => (
   <svg
-    viewBox="0 0 ${CANVAS_WIDTH} ${ground}"
-    preserveAspectRatio="xMidYMax slice"
+    viewBox="0 ${frameY} ${CANVAS_WIDTH} ${frameH}"
+    preserveAspectRatio="${landscape ? 'xMidYMax slice' : 'xMidYMid slice'}"
     aria-hidden="true"
     className={\`intent-scene block w-full h-full \${className}\`}
   >

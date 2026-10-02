@@ -95,8 +95,7 @@ export async function POST(request: Request) {
         provider: provider ?? 'gemini',
         nvidiaModelId,
         brief,
-      },
-      imageData
+      }
     )
 
     if (!result.success || !result.shellCode) {

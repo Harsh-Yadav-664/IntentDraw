@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import ts from 'typescript'
 import { contrast, mix, renderSceneComponent } from './scene-render'
-import { placeSceneBehind } from './staged'
 import type { BriefElement } from './brief'
 import type { Region } from '@/types'
 
@@ -38,6 +37,7 @@ const el = (name: string, regions: number[], form: BriefElement['form'], depth: 
   placement: 'page-background',
   render: null,
   motion,
+  section: null,
 })
 
 const arc = Array.from({ length: 20 }, (_, i): [number, number] => {
@@ -103,17 +103,6 @@ describe('renderSceneComponent', () => {
     const fill = code.match(/Mountain \*\/\}\s*<path[^>]*fill="url\(#(is[\d-]+)\)"/)![1]
     const top = code.match(new RegExp(`id="${fill}"[^>]*><stop offset="0%" stopColor="(#[0-9A-F]{6})"`))![1]
     expect(contrast(top, palette.background)).toBeGreaterThanOrEqual(3)
-  })
-})
-
-describe('placeSceneBehind', () => {
-  it('wraps a shell that forgot the scene, and the result still compiles', () => {
-    const shell = `import React from 'react';\nexport default function App() {\n  return <main><Hero /></main>;\n}`
-    const wrapped = placeSceneBehind(shell, '#F4EFE6')
-    expect(wrapped).toContain('function IntentDrawPage(')
-    expect(wrapped).toContain('<IntentScene />')
-    expect(wrapped.match(/export default/g)).toHaveLength(1)
-    expect(syntaxErrors(wrapped)).toEqual([])
   })
 })
 

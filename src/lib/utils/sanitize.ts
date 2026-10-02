@@ -184,6 +184,8 @@ export function wrapReactForPreview(
   const snapshotScript = options?.freeze
     ? `
     function __freeze() {
+      // Read by animation loops the runtime renders itself (IntentScene spheres).
+      window.__intentdrawFrozen = true;
       try { if (window.gsap) { window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.pause(); } } catch (e) {}
       try {
         if (window.ScrollTrigger && window.ScrollTrigger.getAll) {

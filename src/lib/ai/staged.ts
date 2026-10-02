@@ -8,17 +8,11 @@ import {
   humanizeProviderError,
   type ProviderName,
 } from './provider'
-import {
-  STAGED_SECTION_SYSTEM_PROMPT,
-  STAGED_SHELL_SYSTEM_PROMPT,
-  buildGenerationUserPrompt,
-  buildStagedSectionUserPrompt,
-} from './prompts'
+import { STAGED_SECTION_SYSTEM_PROMPT, buildStagedSectionUserPrompt } from './prompts'
 import { repairGeneratedCode } from './repair'
-import { batchSections, resolveSections } from './sections'
-import { SCENE_COMPONENT, renderSceneComponent } from './scene-render'
-import { enforceDesign, siteFonts } from './site-design'
-import { fontMarker } from '@/lib/design/fonts'
+import { renderSceneComponent } from './scene-render'
+import { enforceDesign } from './site-design'
+import { buildPageShell } from './page-shell'
 
 /**
  * Staged generation: one short call for the page shell, then one short call per
@@ -80,102 +74,23 @@ const RATE_LIMIT_BACKOFF_MS = [8000, 16000]
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 /**
- * Safety net for a shell that never referenced <IntentScene />: renames its
- * default export and wraps it with the scene fixed behind it. Best effort — a
- * page that paints its own opaque background will still cover the scene, which
- * is why the prompt asks the model to place it properly in the first place.
+ * Stage 1 — the page shell. Built in code from the brief (page-shell.ts): every
+ * planned section in order, the drawing's art layer behind the section it
+ * belongs to, and the site's font marker. No model call — see page-shell.ts for
+ * why the model-written shell was retired.
  */
-export function placeSceneBehind(shellCode: string, background?: string): string {
-  const match = shellCode.match(/export\s+default\s+function\s+([A-Za-z_$][\w$]*)?\s*\(/)
-  if (!match) return shellCode
-  const renamed = shellCode.replace(match[0], 'function IntentDrawPage(')
-  const bg = background ? ` style={{ backgroundColor: '${background}' }}` : ''
-  return `${renamed}
-
-export default function App() {
-  return (
-    <div className="relative min-h-screen"${bg}>
-      <div className="fixed inset-0 z-0 pointer-events-none"><${SCENE_COMPONENT} /></div>
-      <div className="relative z-10"><IntentDrawPage /></div>
-    </div>
-  );
-}
-`
-}
-
-/**
- * Stage 1 — the page shell: layout, full-page background, and a manifest of the
- * sections still to build.
- */
-export async function generateShellStage(
-  context: StageContext,
-  imageBase64?: string
-): Promise<ShellStageResult> {
-  const { regions, groups, prompt, tokens, globalTheme, provider, nvidiaModelId, brief } = context
-  const hasDrawingImage = regions.length > 0 && !!imageBase64
-
-  const userMessage = buildGenerationUserPrompt(
-    regions,
-    prompt,
-    tokens,
-    globalTheme,
-    hasDrawingImage,
-    groups,
-    brief
-  )
-
-  const errors: Record<string, string> = {}
-  const fallbacks = buildFallbackChain(provider)
-
-  for (const current of fallbacks) {
-    try {
-      const responseText = await callProvider(current, STAGED_SHELL_SYSTEM_PROMPT, userMessage, {
-        nvidiaModelId,
-        // Gemini and OpenRouter (which swaps to a vision model) can read the
-        // image; the drawing's geometry reaches the others as text.
-        imageBase64:
-          (current === 'gemini' || current === 'openrouter') && hasDrawingImage ? imageBase64 : undefined,
-      })
-
-      let shellCode = repairGeneratedCode(extractReact(responseText))
-      if (!shellCode || shellCode.length < 20) throw new Error('shell empty')
-      if (!shellCode.includes('export default')) throw new Error('shell truncated — no export default')
-
-      // The site's own typefaces travel inside the file, so the preview, a
-      // share link and an exported page all load them (lib/design/fonts.ts).
-      if (brief) shellCode = `${fontMarker(siteFonts(brief.design))}\n${enforceDesign(shellCode, brief.design)}`
-
-      // The drawing is rendered in code, not by the model; the shell only places
-      // it. If the model forgot to, place it ourselves rather than lose the one
-      // part of the page the user literally drew.
-      const sceneCode = brief && brief.source !== 'fallback'
-        ? renderSceneComponent(brief.drawing.elements, regions, brief.palette)
-        : ''
-      if (sceneCode && !shellCode.includes(`<${SCENE_COMPONENT}`)) {
-        shellCode = placeSceneBehind(shellCode, brief?.palette?.background)
-      }
-
-      // IntentScene is supplied, never generated — it must not become a section.
-      const sections = resolveSections(shellCode).filter(name => name !== SCENE_COMPONENT)
-      return {
-        success: true,
-        shellCode,
-        sceneCode: sceneCode || undefined,
-        sections,
-        batches: batchSections(sections),
-        provider: current,
-      }
-    } catch (err) {
-      errors[current] = err instanceof Error ? err.message : String(err)
-      console.warn(`[Staged shell] ${current} failed:`, errors[current])
-    }
-  }
-
+export async function generateShellStage(context: StageContext): Promise<ShellStageResult> {
+  const { regions, brief } = context
+  const sceneCode = brief && brief.source !== 'fallback'
+    ? renderSceneComponent(brief.drawing.elements, regions, brief.palette)
+    : ''
+  const shell = buildPageShell(brief, regions, !!sceneCode)
   return {
-    success: false,
-    error: `Could not build the page shell — ${fallbacks
-      .map(p => `${p}: ${humanizeProviderError(errors[p])}`)
-      .join(' | ')}`,
+    success: true,
+    shellCode: shell.shellCode,
+    sceneCode: sceneCode || undefined,
+    sections: shell.sections,
+    batches: shell.batches,
   }
 }
 
