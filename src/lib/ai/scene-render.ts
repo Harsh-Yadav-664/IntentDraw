@@ -1,6 +1,6 @@
 import type { Region } from '@/types'
 import type { BriefElement, BriefPalette } from './brief'
-import { CANVAS_WIDTH, buildSceneShape, sceneGround, sphereGeometry, type SphereGeometry } from './scene'
+import { CANVAS_WIDTH, buildSceneShape, sceneGround, sphereGeometry, type SceneForm, type SphereGeometry } from './scene'
 import { PAGE_CONFIG } from '@/lib/canvas/pages'
 
 /**
@@ -28,7 +28,7 @@ const FALLBACK_PALETTE: BriefPalette = {
   secondary: '#3F7F86',
 }
 
-function hexToRgb(hex: string): [number, number, number] {
+export function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   const full = h.length === 3 ? h.split('').map(c => c + c).join('') : h
   const n = parseInt(full, 16)
@@ -89,7 +89,7 @@ function circleOf(markup: string): { cx: number; cy: number; r: number } | null 
  * the editor's backdrop, or when the visitor prefers reduced motion (it still
  * follows the pointer then, it just doesn't spin by itself).
  */
-function sphereComponent(name: string, id: string, g: SphereGeometry, p: BriefPalette): string {
+export function sphereComponent(name: string, id: string, g: SphereGeometry, p: BriefPalette): string {
   const body = mix(p.surface, p.background, 0.35)
   return `/* ${name}: the user's marks on a sphere — turns with pointer, touch and scroll. */
 const ${name} = () => {
@@ -203,6 +203,8 @@ export function renderSceneComponent(
   const art = elements
     .filter(e => e.role === 'illustration' || e.role === 'motion' || e.role === 'decoration')
     .map(e => (e.role === 'decoration' ? { ...e, form: e.form ?? ('line' as const) } : e))
+    // Objects are built and placed by objects.ts, not painted here.
+    .filter((e): e is BriefElement & { form: SceneForm | null } => e.form !== 'cube')
   if (art.length === 0) return ''
   const p = palette ?? FALLBACK_PALETTE
 

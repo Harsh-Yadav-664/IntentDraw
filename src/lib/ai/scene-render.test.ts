@@ -38,6 +38,7 @@ const el = (name: string, regions: number[], form: BriefElement['form'], depth: 
   render: null,
   motion,
   section: null,
+  anchor: 'exact',
 })
 
 const arc = Array.from({ length: 20 }, (_, i): [number, number] => {

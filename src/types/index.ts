@@ -45,6 +45,15 @@ export interface CanvasData {
   groups: RegionGroup[]
 }
 
+/** What a shape is — the user's one-click answer, or the intent engine's (lib/ai/intent.ts). */
+export type IntentKind = 'content' | 'text' | 'picture' | 'object' | 'background' | 'decoration' | 'motion' | 'connector'
+/** Where it goes: exactly where drawn, anywhere in its part of the page, or behind the content. */
+export type IntentAnchor = 'exact' | 'anywhere' | 'behind'
+export interface RegionTag {
+  kind?: IntentKind
+  anchor?: IntentAnchor
+}
+
 export interface Region {
   id: string
   regionNumber: number
@@ -57,6 +66,9 @@ export interface Region {
   // For decorative regions: 'region' = confined to where it was drawn /
   // behind the region it overlaps; 'full' = whole-page background.
   backgroundScope?: 'region' | 'full'
+  // The user's one-click answer to 'what is this, and where does it go?' —
+  // final evidence for the intent engine, stored with the drawing.
+  tag?: RegionTag
   lockState: RegionLockState
   generatedCode: string | null
   createdAt: string

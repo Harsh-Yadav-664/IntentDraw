@@ -6,6 +6,7 @@ import { siteFonts } from './site-design'
 import { fontMarker } from '@/lib/design/fonts'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { looksHandwritten } from './perception'
+import { renderObjects, type PlacedObject } from './objects'
 
 /**
  * The page skeleton, built in code from the brief — not by a model.
@@ -45,6 +46,24 @@ export function sceneHost(brief: DesignBrief, regions: Region[], sections: strin
   return (first && elementSection(first, regions, sections)) || sectionForPage(0, sections) || sections[0]
 }
 
+const NAV_FIRST = /^(nav|navigation|navbar|header|topbar|menu)/i
+
+/**
+ * The navigation section that overlays the first drawn screen, if any.
+ *
+ * Page 1 of the canvas is the whole first screen. With the nav as its own
+ * section above the hero, every drawn position landed one nav-height too low —
+ * a real cube drawn 25% down the screen rendered ~200px lower. Laying the nav
+ * over the top of the hero (the classic transparent header) makes the hero the
+ * first screen, so drawn positions are exact.
+ */
+export function overlayNav(brief: DesignBrief | undefined, regions: Region[], sections: string[]): { nav: string; under: string } | null {
+  if (!brief || sections.length < 2 || !NAV_FIRST.test(sections[0])) return null
+  const under = sections[1]
+  const drawnOnFirst = brief.drawing.elements.some(e => elementSection(e, regions, sections) === under)
+  return drawnOnFirst ? { nav: sections[0], under } : null
+}
+
 /** Sections that hold something the user drew — each is built in its own call. */
 export function drawnSections(brief: DesignBrief | undefined, regions: Region[], sections: string[]): string[] {
   if (!brief) return []
@@ -56,7 +75,7 @@ export function drawnSections(brief: DesignBrief | undefined, regions: Region[],
   return sections.filter(s => names.has(s))
 }
 
-const SMALL_SECTION = /^(nav|navigation|navbar|header|topbar|menu|footer)/i
+const SMALL_SECTION = /nav|header|topbar|menu|footer/i
 
 /**
  * Batches for the section calls, in the order they run:
@@ -83,23 +102,50 @@ export interface PageShell {
   batches: string[][]
 }
 
-export function buildPageShell(brief: DesignBrief | undefined, regions: Region[], hasScene: boolean): PageShell {
+export function buildPageShell(
+  brief: DesignBrief | undefined,
+  regions: Region[],
+  hasScene: boolean,
+  objects: PlacedObject[] = []
+): PageShell {
   const sections = planSections(brief)
   const host = hasScene && brief ? sceneHost(brief, regions, sections) : null
   const p = brief?.palette
 
   const layer = (cls: string) =>
     `<div className="${cls} pointer-events-none" aria-hidden="true"><${SCENE_COMPONENT} /></div>`
-  const lines = sections.map(name =>
-    name === host
-      ? [
-          `        <div className="relative">`,
-          `          ${layer('absolute inset-0 z-0 overflow-hidden')}`,
-          `          <div className="relative z-10"><${name} /></div>`,
-          `        </div>`,
-        ].join('\n')
-      : `        <${name} />`
-  )
+
+  // Objects drawn "exactly here" are placed by the shell itself, above their
+  // section, at the drawn position — no model can move them. On phones they
+  // drop into the flow under the section. One instance either way.
+  const placed = (name: string) =>
+    objects
+      .filter(o => o.element.anchor === 'exact' && elementSection(o.element, regions, sections) === name)
+      .map(o => {
+        const at = placementOf(o.element, regions)
+        if (!at) return ''
+        const box = `lg:absolute lg:m-0 lg:left-[${pct(at.left)}] lg:top-[${vh(at.top)}] lg:w-[${pct(at.width)}] lg:h-[${vh(at.height)}]`
+        return `            <div className="pointer-events-auto relative mx-auto my-10 h-64 w-64 ${box}"><${o.name} /></div>`
+      })
+      .filter(Boolean)
+
+  const overlay = overlayNav(brief, regions, sections)
+  const lines = sections.flatMap(name => {
+    if (overlay && name === overlay.nav) return []
+    const own = placed(name)
+    const navOver = overlay && name === overlay.under
+    if (name !== host && own.length === 0 && !navOver) return [`        <${name} />`]
+    return [[
+      `        <div className="relative">`,
+      ...(name === host ? [`          ${layer('absolute inset-0 z-0 overflow-hidden')}`] : []),
+      ...(navOver ? [`          <div className="absolute inset-x-0 top-0 z-30"><${overlay.nav} /></div>`] : []),
+      `          <div className="relative z-10"><${name} /></div>`,
+      ...(own.length > 0
+        ? [`          <div className="pointer-events-none relative z-20 lg:absolute lg:inset-0">`, ...own, `          </div>`]
+        : []),
+      `        </div>`,
+    ].join('\n')]
+  })
   const colours = p ? ` bg-[${p.background}] text-[${p.text}]` : ''
 
   const shellCode = [
@@ -129,6 +175,8 @@ export function buildPageShell(brief: DesignBrief | undefined, regions: Region[]
 // =============================================================================
 
 const pct = (n: number) => `${Math.round(n * 10) / 10}%`
+/** Heights and tops in screen units: a drawn section is one screen tall (min-h-screen). */
+const vh = (n: number) => `${Math.round(n * 10) / 10}vh`
 
 /**
  * An element's drawn box, as a percentage of the screen (page) it was drawn on,
@@ -162,6 +210,7 @@ type Placed = NonNullable<ReturnType<typeof placementOf>>
 const ROLE_TEXT: Record<BriefElement['role'], string> = {
   layout: 'content',
   illustration: 'picture',
+  object: '3D object',
   decoration: 'decoration',
   motion: 'motion path',
   connector: 'arrow',
@@ -206,12 +255,20 @@ export function describeDrawnSections(
   sectionNames: string[],
   brief: DesignBrief | undefined,
   regions: Region[],
-  groups: RegionGroup[] = []
+  groups: RegionGroup[] = [],
+  objects: PlacedObject[] = []
 ): string {
   if (!brief || regions.length === 0) return ''
   const sections = planSections(brief)
-  const host = sceneHost(brief, regions, sections)
+  // Only a section with something painted behind it is told to stay transparent.
+  const host = brief.drawing.elements.some(isArt) ? sceneHost(brief, regions, sections) : null
   const blocks: string[] = []
+  const navOverlay = overlayNav(brief, regions, sections)
+  if (navOverlay && sectionNames.includes(navOverlay.nav)) {
+    blocks.push(`${navOverlay.nav} FLOATS OVER THE TOP OF ${navOverlay.under} (the first screen): give it a transparent or lightly translucent background — no solid full-width bar — and keep it about 64-80px tall. The page positions it; don't make it fixed or sticky yourself.`)
+  }
+  // Same names the shell used: rendering is deterministic for a given brief.
+  if (objects.length === 0) objects = renderObjects(brief.drawing.elements, regions, brief.palette).objects
 
   const notesFor = (e: BriefElement): string => {
     const own = regions
@@ -234,9 +291,11 @@ export function describeDrawnSections(
     if (own.length === 0) continue
     const lines: string[] = []
 
-    // Drawn content, as columns.
+    const built = (e: BriefElement) => objects.find(o => o.element.regions.join() === e.regions.join())
+
+    // Drawn content (and objects the section must build itself), as columns.
     const slots: Slot[] = own
-      .filter(x => x.e.role === 'layout')
+      .filter(x => (x.e.role === 'layout' || (x.e.role === 'object' && !built(x.e))) && x.e.anchor !== 'anywhere')
       .map(x => ({
         ...x,
         written: regions.filter(r => x.e.regions.includes(r.regionNumber)).every(looksHandwritten),
@@ -272,24 +331,40 @@ export function describeDrawnSections(
         const written = slot.written
           ? ' — the user HANDWROTE a word here: it marks the text that belongs at this spot (e.g. "Name" means the site\'s name, as the main heading). Its drawn width is just handwriting, not a size.'
           : ''
+        const builds = slot.e.role === 'object' ? ` — BUILD THIS OBJECT RIGHT HERE, at this size${slot.e.motion ? ` (${slot.e.motion})` : ''}; it is what the user drew this box for` : ''
         lines.push(
-          `  ${column.length > 1 ? `${i + 1}. ` : ''}"${slot.e.name}" (${ids(slot.e)}, ${slot.written ? 'text' : 'content'})${slot.e.render ? ` — ${slot.e.render}` : ''}${written}${notesFor(slot.e)}${sizing ? `\n     item className adds "${sizing}"` : ''}`
+          `  ${column.length > 1 ? `${i + 1}. ` : ''}"${slot.e.name}" (${ids(slot.e)}, ${slot.written ? 'text' : slot.e.role === 'object' ? 'an object' : 'content'})${builds}${slot.e.render ? ` — ${slot.e.render}` : ''}${written}${notesFor(slot.e)}${sizing ? `\n     item className adds "${sizing}"` : ''}`
         )
       })
     }
 
     for (const { e, at } of own) {
+      const object = built(e)
+      if (object && e.anchor === 'exact') {
+        lines.push(`- "${e.name}" (${ids(e)}, a 3D ${object.form}) at ${where(at)} — BUILT AND PLACED BY IntentDraw on top of this section, exactly there, and interactive. Do not build it, import it or reference it; keep that area clear of text, panels and images on desktop.`)
+        continue
+      }
+      if (object) {
+        lines.push(`- "${e.name}" (${ids(e)}, a 3D ${object.form}, interactive) — the user wants it somewhere in this section: place <${object.name} /> where it fits best, inside a wrapper like className="relative aspect-square w-full max-w-sm". It is already built — don't build your own.`)
+        continue
+      }
+      if (e.anchor === 'anywhere' && (e.role === 'layout' || e.role === 'object')) {
+        lines.push(`- "${e.name}" (${ids(e)})${e.render ? ` — ${e.render}` : ''}${notesFor(e)} — the user wants this somewhere in this section; place it where it fits best.`)
+        continue
+      }
       if (e.role === 'connector') {
         lines.push(`- "${e.name}" (${ids(e)}, an arrow) at ${where(at)}${e.render ? ` — ${e.render}` : ''}${notesFor(e)} — show the relationship it draws (a flow, a link, a sequence) between the things at its ends.`)
-      } else if (e.role !== 'layout') {
+      } else if (e.role !== 'layout' && e.role !== 'object') {
         lines.push(`- "${e.name}" (${ids(e)}, ${ROLE_TEXT[e.role]}) at ${where(at)}${e.render ? ` — ${e.render}` : ''} — ALREADY PAINTED behind this section by <${SCENE_COMPONENT} />. Do not draw it, import it or cover it: keep that area free of panels, cards and text.`)
       }
     }
 
     if (lines.length === 0) continue
-    const behind = name === host
+    const behind = (name === host
       ? `\nThe user's drawing is painted behind ${name}: give ${name} NO background colour or full-width overlay of its own. Keep text readable with a panel sized to the text, or a text shadow.`
-      : ''
+      : '') + (navOverlay?.under === name
+      ? `\nThe navigation bar floats over the top ~10% of ${name}: start ${name}'s own content below it (no extra spacer — just don't put anything in that strip).`
+      : '')
     blocks.push(
       `WHAT THE USER DREW IN ${name} — honour it exactly. ${name} is one full screen: its root is <section className="relative min-h-screen …">. Positions are % of that screen; on desktop (lg:) things sit exactly where they were drawn, on mobile everything stacks in reading order.\n${lines.join('\n')}${behind}`
     )

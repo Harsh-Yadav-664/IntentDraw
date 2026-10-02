@@ -3,6 +3,7 @@ import { PRESETS, resolveByKeywords, stablePresetFor } from './design-tokens'
 import { sanitizeUserPrompt } from './prompt-rules'
 import { simplifyToBudget } from './shape-path'
 import { insideShare, looksHandwritten, perceiveDrawing } from './perception'
+import { ANCHORS, describeIntentSignals, intentSignals, type Anchor, type IntentSignal } from './intent'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
 import { CORNERS, DENSITIES, HEADINGS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
@@ -35,17 +36,22 @@ import { PRODUCT_PRINCIPLE } from './principle'
  * style-preset call), so a generation makes fewer model calls than before.
  */
 
-export type ElementRole = 'layout' | 'illustration' | 'decoration' | 'motion' | 'connector'
+export type ElementRole = 'layout' | 'illustration' | 'object' | 'decoration' | 'motion' | 'connector'
+/** A 3D object IntentDraw builds itself (objects.ts). Other objects are built by the section, in place. */
+export type ObjectForm = 'cube' | 'sphere'
+const OBJECT_FORMS: readonly ObjectForm[] = ['cube', 'sphere']
 export type Placement = 'page-background' | 'hero-background' | 'section-background' | 'inline'
 
-const ROLES: readonly ElementRole[] = ['layout', 'illustration', 'decoration', 'motion', 'connector']
+const ROLES: readonly ElementRole[] = ['layout', 'illustration', 'object', 'decoration', 'motion', 'connector']
 const PLACEMENTS: readonly Placement[] = ['page-background', 'hero-background', 'section-background', 'inline']
 
 export interface BriefElement {
   name: string
   regions: number[]
   role: ElementRole
-  form: SceneForm | null
+  form: SceneForm | ObjectForm | null
+  /** Where it goes: exactly where drawn, anywhere in its section, or behind the content. */
+  anchor: Anchor
   depth: number
   placement: Placement
   render: string | null
@@ -115,14 +121,24 @@ Rules:
 - Familiar reads, ONLY when the shapes really look like this: a line rising to a peak and falling = a ridge (mountain, hill); a circle high up with separate or zig-zag marks around it = a sun and its rays; two roughly parallel strokes = the edges of one band (river, road, path); a circle with marks inside = a globe, planet, ball or emblem.
 Every shape number belongs to exactly one element.
 
+WHEN THE PROMPT SAYS LITTLE OR NOTHING ABOUT A SHAPE — decide from what was drawn; never ask for more words:
+- a plain box = content goes exactly there; a thin full-width box at the top = navigation, at the very bottom = footer; several equal boxes in a row = cards
+- a box or circle the prompt calls 3D, rotating, interactive or an object = "object", exactly there
+- something covering most of a screen = background ("behind")
+- strokes that depict something = a picture, painted where drawn; one long swoosh = decoration
+- a handwritten word = the text that goes there
+- where a shape is drawn is where it goes, unless the user says "anywhere" or "background"
+
 For each element:
-- role: "layout" | "illustration" | "decoration" | "motion" (a path something travels along) | "connector" (an arrow relating two things). Text is "layout".
+- role: "layout" (content goes here) | "object" (a thing that exists at that spot — usually 3D, animated or interactive: a rotating cube, a globe, a spinning badge, a product model) | "illustration" (a picture painted as art) | "decoration" | "motion" (a path something travels along) | "connector" (an arrow relating two things). Text is "layout".
+- form, object only: "cube" (a box shape or anything the user calls a cube/box) | "sphere" (a round shape, globe, planet, ball, orb) | null (some other object — the build makes it in place)
 - form, illustration only: "sphere" (a round body carrying the marks drawn on it, shown as a slowly turning 3D globe that follows the pointer, touch and scroll — use it when the user asks for 3D or for a globe, planet, ball or orb, or when marks inside a circle should wrap around it), "silhouette" (the solid area below a ridge or skyline), "band" (the area between two strokes), "disc" (a flat round body), "rays", "shape" (a closed outline to fill), "line" (keep as a drawn line)
 - depth, illustration only: 0 = farthest back … higher = nearer the viewer
 - placement: "page-background" | "hero-background" | "section-background" | "inline"
 - render: one sentence on how it should LOOK in this site's style — materials, fills, light. For text, what the words are.
 - motion: a short phrase if it should move or react, else null
 - section: the name of the planned section (from "sections" below) this element sits in
+- anchor: "exact" (exactly where and as big as drawn — the default for layout and objects) | "anywhere" (the user only wants it somewhere in that part of the page) | "behind" (behind the content, as a background)
 Name a layout element by its purpose ("Navigation", "Key achievements row") and put what goes in it in render.
 
 THE SITE AND ITS SECTIONS
@@ -162,7 +178,7 @@ The message may name a DESIGN LENS — a craft to borrow a way of seeing from. L
 drawing.reading is ONE plain sentence naming what the drawing shows and where, in the user's terms. No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":""}]}}`
+{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
 
 /**
  * Ordinary crafts with their own way of seeing, one handed to the understanding
@@ -240,6 +256,8 @@ export function buildUnderstandUserMessage(
     )
     const measured = perceiveDrawing(regions)
     parts.push(regions.map(r => shapeLine(r, budget, measured.get(r.regionNumber))).join('\n'))
+    const worked = describeIntentSignals(intentSignals(prompt, regions))
+    if (worked) parts.push(worked)
 
     const populated = groups.filter(g => regions.some(r => r.groupId === g.id))
     if (populated.length > 0) {
@@ -381,26 +399,29 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
     if (members.length === 0) continue
     members.forEach(n => claimed.add(n))
 
-    const form = role === 'illustration' || role === 'motion'
+    const form: BriefElement['form'] = role === 'illustration' || role === 'motion'
       ? (SCENE_FORMS.includes(e.form as SceneForm) ? (e.form as SceneForm) : 'line')
-      : null
+      : role === 'object'
+        ? (OBJECT_FORMS.includes(e.form as ObjectForm) ? (e.form as ObjectForm) : null)
+        : null
 
     const memberRegions = regions.filter(r => members.includes(r.regionNumber))
     const page = Math.min(...memberRegions.map(r => pageIndexForRegion(r)))
     const named = toComponentName(str(e.section, 60))
     let finalRole: ElementRole = role
-    let finalForm = form
+    let finalForm: BriefElement['form'] = form
     // Handwriting is text, whatever a model that couldn't read it decided.
     if ((role === 'decoration' || role === 'illustration') && memberRegions.length > 0 && memberRegions.every(looksHandwritten)) {
       finalRole = 'layout'
       finalForm = null
     }
-    // "a 3D object" + a circle with marks inside: that is a sphere, even when a
-    // weaker model picked a flat form.
+    // "a 3D object" + a circle with marks inside: that is a sphere object, even
+    // when a weaker model picked a flat form.
     if (
       finalRole === 'illustration' && finalForm !== 'sphere' && THREE_D.test(prompt) &&
       memberRegions.some(r => r.geometry.type === 'circle') && memberRegions.length > 1
     ) {
+      finalRole = 'object'
       finalForm = 'sphere'
     }
 
@@ -414,6 +435,7 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       render: str(e.render, 280) || null,
       motion: str(e.motion, 160) || null,
       section: named && sectionNames.includes(named) ? named : sectionForPage(page, sectionNames),
+      anchor: ANCHORS.includes(e.anchor as Anchor) ? (e.anchor as Anchor) : defaultAnchor(finalRole),
     })
   }
 
@@ -433,9 +455,84 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       render: null,
       motion: null,
       section: sectionForPage(pageIndexForRegion(region), sectionNames),
+      anchor: defaultAnchor(role),
     })
   }
-  return keepPagesTogether(mergeIntoSpheres(out, regions), regions, sectionNames)
+  const settled = reconcile(out, intentSignals(prompt, regions), regions)
+  return keepPagesTogether(mergeIntoSpheres(settled, regions), regions, sectionNames)
+}
+
+function defaultAnchor(role: ElementRole): Anchor {
+  return role === 'decoration' ? 'behind' : 'exact'
+}
+
+/**
+ * Applies what the user said — a one-click tag, or the prompt naming a shape —
+ * over the model's reading. The model is good at WHAT a drawing depicts; it
+ * is unreliable at keeping the user's explicit instructions attached to the
+ * right shapes (a real run read "region 1 … a 3d rotating cube" correctly and
+ * still filed it as a flat painted shape). Each firm signal becomes one
+ * element covering exactly its regions, taken out of whatever held them.
+ */
+function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region[]): BriefElement[] {
+  let out = els
+  // Tags last: they are the user's final word, over anything the prompt implied.
+  const order = [...signals].sort((x, y) => (x.source === 'tag' ? 1 : 0) - (y.source === 'tag' ? 1 : 0))
+  for (const sig of order) {
+    if (sig.source === 'geometry' || sig.confidence < 0.85) continue
+    const holders = out.filter(e => e.regions.some(n => sig.regions.includes(n)))
+    if (holders.length === 0) continue
+    const base = [...holders].sort((a, b) =>
+      b.regions.filter(n => sig.regions.includes(n)).length - a.regions.filter(n => sig.regions.includes(n)).length
+    )[0]
+    const members = regions.filter(r => sig.regions.includes(r.regionNumber))
+    const closed = members.some(r => r.geometry.type === 'rectangle' || r.geometry.type === 'circle' || (r.geometry.type === 'freeform' && r.geometry.path && r.geometry.path.length > 3))
+
+    let role = base.role
+    let form = base.form
+    let placement = base.placement
+    switch (sig.kind) {
+      case 'object':
+        role = 'object'
+        form = sig.object ?? (base.form === 'sphere' || base.form === 'cube' ? base.form : null)
+        break
+      case 'content':
+      case 'text':
+        role = 'layout'
+        form = null
+        break
+      case 'picture':
+        role = 'illustration'
+        form = base.role === 'illustration' && base.form ? base.form : closed ? 'shape' : 'line'
+        break
+      case 'background':
+        role = base.role === 'decoration' ? 'decoration' : 'illustration'
+        form = base.role === 'illustration' && base.form ? base.form : closed ? 'shape' : 'line'
+        placement = 'section-background'
+        break
+      case 'decoration':
+        role = 'decoration'
+        form = null
+        break
+      case 'motion':
+        role = 'motion'
+        form = 'line'
+        break
+      case 'connector':
+        role = 'connector'
+        form = null
+        break
+    }
+    const anchor: Anchor = sig.anchor ?? (sig.kind ? defaultAnchor(role) : base.anchor)
+    const motion = base.motion ?? (sig.animated || sig.interactive ? 'turns slowly; follows the pointer, drag and scroll' : null)
+    const settled: BriefElement = { ...base, regions: [...sig.regions], role, form, placement, anchor, motion }
+
+    out = out
+      .map(e => (holders.includes(e) ? { ...e, regions: e.regions.filter(n => !sig.regions.includes(n)) } : e))
+      .filter(e => e.regions.length > 0)
+    out.push(settled)
+  }
+  return out
 }
 
 /**

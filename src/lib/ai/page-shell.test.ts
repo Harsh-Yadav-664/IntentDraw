@@ -6,6 +6,7 @@ import { normalizeBrief, sectionForPage } from './brief'
 import { batchPlan, buildPageShell, describeDrawnSections, planSections } from './page-shell'
 import { looksHandwritten, perceiveDrawing } from './perception'
 import { renderSceneComponent } from './scene-render'
+import { renderObjects } from './objects'
 import { sphereGeometry } from './scene'
 
 // The owner's real drawing (2026-10-02): handwritten "Name" (R10), a key-points
@@ -52,7 +53,7 @@ describe('the misread brief from the failed run, corrected by code', () => {
 describe('the page shell, built in code', () => {
   const brief = normalizeBrief(misread, regions, prompt)
   const scene = renderSceneComponent(brief.drawing.elements, regions, brief.palette)
-  const shell = buildPageShell(brief, regions, !!scene)
+  const shell = buildPageShell(brief, regions, !!scene, renderObjects(brief.drawing.elements, regions, brief.palette).objects)
 
   it('renders every planned section in order — the failed run rendered one of five', () => {
     expect(shell.sections).toEqual(['HeroSection', 'AboutSection', 'ProjectsSection', 'HighlightsSection', 'ContactSection'])
@@ -65,8 +66,11 @@ describe('the page shell, built in code', () => {
     expect(shell.shellCode).not.toMatch(/FirstSection/)
   })
 
-  it('puts the drawing behind the section it was drawn in, and carries the fonts', () => {
-    expect(shell.shellCode).toMatch(/<IntentScene \/><\/div>\s*<div className="relative z-10"><HeroSection \/>/)
+  it('places the 3D globe the user asked for exactly where it was drawn, and carries the fonts', () => {
+    // "region 1 and all regions inside it … animated 3d object" → an object,
+    // placed by the shell on top of the hero at R1's drawn box.
+    expect(shell.shellCode).toMatch(/<div className="relative z-10"><HeroSection \/><\/div>\s*<div className="pointer-events-none relative z-20 lg:absolute lg:inset-0">/)
+    expect(shell.shellCode).toMatch(/lg:left-\[64.6%\] lg:top-\[22.4vh\] lg:w-\[26.1%\] lg:h-\[37.9vh\]"><IntentObject1 \/>/)
     expect(shell.shellCode).toMatch(/SITE-FONTS: display=/)
   })
 
@@ -84,7 +88,7 @@ describe('the page shell, built in code', () => {
     expect(block).toMatch(/lg:mt-16 lg:w-\[85.2%\]/) // R11, a modest step below the name — not 23vh, which overflowed the fold
     expect(block).toMatch(/must fit on the first screen/)
     expect(block).toMatch(/HANDWROTE/)
-    expect(block).toMatch(/ALREADY PAINTED behind this section/)
+    expect(block).toMatch(/BUILT AND PLACED BY IntentDraw on top of this section, exactly there/)
     expect(describeDrawnSections(['AboutSection'], brief, regions)).toBe('')
   })
 })
@@ -103,14 +107,17 @@ describe('the sphere', () => {
     expect(geo.nodes.length).toBeGreaterThan(4)
   })
 
-  it('renders as a live component that stops when the page is frozen', () => {
+  it('renders as a live, placed object that stops when the page is frozen', () => {
     const brief = normalizeBrief(misread, regions, prompt)
-    const scene = renderSceneComponent(brief.drawing.elements, regions, brief.palette)
-    expect(scene).toMatch(/const IntentSceneSphere0 = \(\) =>/)
-    expect(scene).toMatch(/<IntentSceneSphere0 \/>/)
-    expect(scene).toMatch(/__intentdrawFrozen/)
-    expect(scene).toMatch(/prefers-reduced-motion/)
-    expect(scene).toMatch(/Math\.max\(1, window\.innerWidth\)/)
+    const { code, objects } = renderObjects(brief.drawing.elements, regions, brief.palette)
+    expect(objects.map(o => o.form)).toEqual(['sphere'])
+    expect(code).toMatch(/const IntentObject1Globe = \(\) =>/)
+    expect(code).toMatch(/<IntentObject1Globe \/>/)
+    expect(code).toMatch(/__intentdrawFrozen/)
+    expect(code).toMatch(/prefers-reduced-motion/)
+    expect(code).toMatch(/Math\.max\(1, window\.innerWidth\)/)
+    // Not painted into the background scene as well.
+    expect(renderSceneComponent(brief.drawing.elements, regions, brief.palette)).toBe('')
   })
 })
 

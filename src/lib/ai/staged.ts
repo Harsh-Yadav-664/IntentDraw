@@ -13,6 +13,7 @@ import { repairGeneratedCode } from './repair'
 import { renderSceneComponent } from './scene-render'
 import { enforceDesign } from './site-design'
 import { buildPageShell } from './page-shell'
+import { renderObjects } from './objects'
 
 /**
  * Staged generation: one short call for the page shell, then one short call per
@@ -84,11 +85,15 @@ export async function generateShellStage(context: StageContext): Promise<ShellSt
   const sceneCode = brief && brief.source !== 'fallback'
     ? renderSceneComponent(brief.drawing.elements, regions, brief.palette)
     : ''
-  const shell = buildPageShell(brief, regions, !!sceneCode)
+  // 3D objects the user drew are built here too, and travel in the same block
+  // as the scene — assembled ahead of every section, so none can replace them.
+  const objects = brief ? renderObjects(brief.drawing.elements, regions, brief.palette) : { code: '', objects: [] }
+  const shell = buildPageShell(brief, regions, !!sceneCode, objects.objects)
+  const art = [sceneCode, objects.code].filter(Boolean).join('\n\n')
   return {
     success: true,
     shellCode: shell.shellCode,
-    sceneCode: sceneCode || undefined,
+    sceneCode: art || undefined,
     sections: shell.sections,
     batches: shell.batches,
   }
