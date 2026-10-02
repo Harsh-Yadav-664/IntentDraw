@@ -29,13 +29,49 @@ function emptyImports(): ParsedImports {
 }
 
 /**
- * Splits code into its import statements and everything else.
- * Only single-line imports are recognised, which is what these models emit.
+ * Joins import statements that span several lines into one line each.
+ *
+ * Models do write `import {\n  Terminal,\n  Github,\n} from 'lucide-react'`.
+ * Parsed line by line, that statement was never recognised, stayed in the
+ * middle of the assembled file, and re-declared the `Terminal` the shell had
+ * already imported — a fatal compile error. Only a run of lines that together
+ * form one valid import is joined; anything else is left exactly as it was.
  */
+const IMPORT_START = /^\s*import\b(?!\s*\()/
+const MAX_IMPORT_LINES = 80
+
+function joinMultilineImports(lines: string[]): string[] {
+  const out: string[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    if (!IMPORT_START.test(line) || IMPORT_LINE.test(line)) {
+      out.push(line)
+      continue
+    }
+    let joined = line.trim()
+    let end = -1
+    for (let j = i + 1; j < lines.length && j < i + MAX_IMPORT_LINES; j++) {
+      joined += ' ' + lines[j].trim()
+      if (/\bfrom\s*['"][^'"]+['"]/.test(lines[j])) {
+        end = j
+        break
+      }
+    }
+    if (end !== -1 && IMPORT_LINE.test(joined)) {
+      out.push(joined)
+      i = end
+    } else {
+      out.push(line)
+    }
+  }
+  return out
+}
+
+/** Splits code into its import statements and everything else. */
 function splitImports(code: string, into: ParsedImports): string {
   const body: string[] = []
 
-  for (const line of code.split('\n')) {
+  for (const line of joinMultilineImports(code.split(/\r?\n/))) {
     const match = line.match(IMPORT_LINE)
     if (!match) {
       body.push(line)

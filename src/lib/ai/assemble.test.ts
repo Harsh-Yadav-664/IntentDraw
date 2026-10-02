@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assembleFile } from './assemble'
+import { assembleFile, normalizeImports } from './assemble'
 
 const SHELL = `import React from 'react';
 import { Menu } from 'lucide-react';
@@ -135,5 +135,46 @@ export default function App() { return <Wrapper><Hero /></Wrapper>; }`
 
     expect(code.match(/function Hero\b/g)).toHaveLength(1)
     expect(code).toContain('const Pricing')
+  })
+})
+
+describe('multi-line imports', () => {
+  // A real run: the shell imported Terminal on one line, a section imported it
+  // again over several lines. The multi-line statement was never recognised,
+  // stayed mid-file, and declared Terminal twice.
+  const shell = `import React from 'react';
+import { Terminal, Cpu } from 'lucide-react';
+
+/* SECTIONS: Contact */
+export default function App() {
+  return <main><Terminal /><Contact /></main>;
+}`
+  const section = `import {
+  Terminal,
+  Github,
+  Copy,
+} from 'lucide-react';
+
+export function Contact() {
+  return <section><Terminal /><Github /><Copy /></section>;
+}`
+
+  it('merges a multi-line import with the shell imports', () => {
+    const { code } = assembleFile(shell, [section])
+    expect(code.match(/\bimport\b[^;]*from 'lucide-react'/g)).toHaveLength(1)
+    expect(code).toMatch(/import \{ Terminal, Cpu, Github, Copy \} from 'lucide-react';/)
+    expect(code).not.toMatch(/^\s*Terminal,\s*$/m)
+  })
+
+  it('repairs an already-saved file at render time', () => {
+    const saved = `${shell}\n\n${section}`
+    const fixed = normalizeImports(saved)
+    expect(fixed.match(/\bTerminal\b(?=[,\s}]*[^<])/g)?.length).toBeGreaterThan(0)
+    expect(fixed.match(/from 'lucide-react'/g)).toHaveLength(1)
+  })
+
+  it('leaves code that only starts with the word import alone', () => {
+    const code = `const x = 1\nimport.meta\nconst y = 2`
+    expect(normalizeImports(code)).toContain('import.meta')
   })
 })
