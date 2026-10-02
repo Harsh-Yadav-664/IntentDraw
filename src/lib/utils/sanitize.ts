@@ -219,8 +219,8 @@ export function wrapReactForPreview(
     : '';
 
   // Imports are rewritten to the UMD globals loaded above. Anything not in this
-  // map is stripped, which is why an unsupported library fails as
-  // "X is not defined" at runtime rather than as a compile error.
+  // map becomes a harmless stand-in (window.__intentdrawStub), so an
+  // unsupported library costs one effect, never the whole page.
   const babelScript = `
     const originalCode = \`${code.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
 
@@ -231,8 +231,84 @@ export function wrapReactForPreview(
       'gsap': null,
       'gsap/all': null,
       'gsap/MotionPathPlugin': null,
-      'gsap/ScrollTrigger': null
+      'gsap/ScrollTrigger': null,
+      'gsap/ScrollToPlugin': null,
+      'gsap/TextPlugin': null,
+      'gsap/SplitText': null,
+      'gsap/CustomEase': null,
+      'gsap/DrawSVGPlugin': null,
+      'gsap/Observer': null,
+      'gsap/Flip': null,
+      // framer-motion has no UMD build of its React API; this shim renders the
+      // plain elements so content still appears (motion props are dropped).
+      'framer-motion': '__intentdrawMotion',
+      'motion/react': '__intentdrawMotion'
     };
+
+    // A stand-in for anything imported from a library the preview can't load.
+    // Rendering it gives nothing, calling it gives nothing, reading from it
+    // gives another stand-in — so one unsupported import costs one effect
+    // instead of the whole page ("X is not defined" used to blank everything).
+    window.__intentdrawStub = function(name) {
+      if (!window.__intentdrawMissing) window.__intentdrawMissing = {};
+      if (!window.__intentdrawMissing[name]) {
+        window.__intentdrawMissing[name] = true;
+        console.warn('[IntentDraw] "' + name + '" comes from a library this preview does not load; it renders as nothing.');
+      }
+      var fn = function() { return null; };
+      return new Proxy(fn, {
+        get: function(target, key) {
+          if (key === '__intentdrawStub') return true;
+          // React probes components for these; a stand-in has none.
+          if (key === 'defaultProps' || key === 'contextTypes' || key === 'propTypes' || key === 'contextType' || key === 'getDerivedStateFromProps' || key === '$typeof' || key === 'displayName' || key === 'then') return undefined;
+          if (key === 'prototype' || key === 'call' || key === 'apply' || key === 'bind') return target[key];
+          if (key === Symbol.toPrimitive) return function() { return ''; };
+          return window.__intentdrawStub(name + '.' + String(key));
+        }
+      });
+    };
+
+    (function() {
+      var MOTION_PROPS = ['initial', 'animate', 'exit', 'transition', 'variants', 'whileHover', 'whileTap', 'whileInView', 'whileFocus', 'whileDrag', 'viewport', 'layout', 'layoutId', 'drag', 'dragConstraints', 'onAnimationComplete', 'custom'];
+      var cache = {};
+      var motion = new Proxy({}, {
+        get: function(_, tag) {
+          if (!cache[tag]) {
+            cache[tag] = React.forwardRef(function(props, ref) {
+              var clean = {};
+              for (var k in props) if (MOTION_PROPS.indexOf(k) === -1) clean[k] = props[k];
+              clean.ref = ref;
+              return React.createElement(tag, clean);
+            });
+          }
+          return cache[tag];
+        }
+      });
+      var value = function(v) { return { get: function() { return v; }, set: function() {}, on: function() { return function() {}; }, onChange: function() { return function() {}; } }; };
+      window.__intentdrawMotion = {
+        motion: motion,
+        m: motion,
+        AnimatePresence: function(props) { return React.createElement(React.Fragment, null, props.children); },
+        LayoutGroup: function(props) { return React.createElement(React.Fragment, null, props.children); },
+        useInView: function() { return true; },
+        useAnimation: function() { return { start: function() { return Promise.resolve(); }, stop: function() {}, set: function() {} }; },
+        useAnimate: function() { return [React.useRef(null), function() { return Promise.resolve(); }]; },
+        useScroll: function() { return { scrollY: value(0), scrollYProgress: value(0), scrollX: value(0), scrollXProgress: value(0) }; },
+        useTransform: function() { return value(0); },
+        useMotionValue: function(v) { return value(v); },
+        useSpring: function(v) { return typeof v === 'object' ? v : value(v); },
+        useReducedMotion: function() { return true; }
+      };
+    })();
+
+    // Plugins that resolved to stand-ins must not reach GSAP's registry.
+    if (window.gsap && window.gsap.registerPlugin) {
+      var __register = window.gsap.registerPlugin.bind(window.gsap);
+      window.gsap.registerPlugin = function() {
+        var real = Array.prototype.filter.call(arguments, function(p) { return p && !p.__intentdrawStub; });
+        return real.length ? __register.apply(null, real) : undefined;
+      };
+    }
 
     // Register custom Babel plugin to handle imports/exports robustly via AST
     Babel.registerPlugin('intentdraw-transform', function(babel) {
@@ -241,7 +317,23 @@ export function wrapReactForPreview(
         visitor: {
           ImportDeclaration(path) {
             const source = path.node.source.value;
-            if (!(source in MODULE_GLOBALS)) { path.remove(); return; }
+            if (!(source in MODULE_GLOBALS)) {
+              // CSS and other side-effect imports have nothing to bind.
+              if (path.node.specifiers.length === 0) { path.remove(); return; }
+              path.replaceWith(t.variableDeclaration('const', path.node.specifiers.map(function(spec) {
+                // A plugin that exists on window after all (a GSAP plugin we do
+                // load, imported from an unexpected path) is used for real.
+                const name = spec.local.name;
+                return t.variableDeclarator(
+                  t.identifier(name),
+                  t.logicalExpression('||',
+                    t.memberExpression(t.identifier('window'), t.identifier(name)),
+                    t.callExpression(t.memberExpression(t.identifier('window'), t.identifier('__intentdrawStub')), [t.stringLiteral(name)])
+                  )
+                );
+              })));
+              return;
+            }
 
             const globalName = MODULE_GLOBALS[source];
             const namespace = globalName
@@ -384,6 +476,15 @@ if (typeof window.__RenderComponent !== "undefined") {
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/gsap.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/MotionPathPlugin.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/ScrollTrigger.min.js"></script>
+  <!-- The other plugins models reach for. A real run imported ScrollToPlugin,
+       which wasn't loaded, and the whole page died on "not defined". -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/ScrollToPlugin.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/TextPlugin.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/SplitText.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/CustomEase.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/DrawSVGPlugin.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/Observer.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.15.0/Flip.min.js"></script>
 
   <!-- Use Lucide UMD -->
   <script src="https://unpkg.com/lucide@latest"></script>

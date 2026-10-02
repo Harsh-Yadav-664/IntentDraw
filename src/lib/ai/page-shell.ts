@@ -256,14 +256,17 @@ export function describeDrawnSections(
 
       lines.push(
         column.length > 1
-          ? `- A column at ${where(first.at)} → wrapper className="${wrapper}". Its items stay in normal flow, top to bottom, so a tall heading pushes the next item down instead of overlapping it:`
+          ? `- A column at ${where(first.at)} → wrapper className="${wrapper}". Its items stay in normal flow, top to bottom, so a tall heading pushes the next item down instead of overlapping it. The whole column must fit on the first screen:`
           : `- At ${where(first.at)} → wrapper className="${wrapper}":`
       )
       column.forEach((slot, i) => {
         const prev = column[i - 1]
         const gap = prev ? Math.max(0, slot.at.top - (prev.at.top + prev.at.height)) : 0
         const sizing = [
-          i > 0 && gap > 1 ? `lg:mt-[${Math.round(gap)}vh]` : '',
+          // A modest step, not the drawn distance in vh: the model adds lines (a
+          // tagline, buttons) between drawn items, and an exact 23vh on top of them
+          // pushed a real run's stats strip below the fold.
+          i > 0 ? (gap > 15 ? 'lg:mt-16' : gap > 5 ? 'lg:mt-10' : 'lg:mt-6') : '',
           !slot.written && column.length > 1 ? `lg:w-[${pct(Math.min(100, (slot.at.width / width) * 100))}]` : '',
         ].filter(Boolean).join(' ')
         const written = slot.written

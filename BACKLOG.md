@@ -20,6 +20,12 @@
 - Providers: Gemini model chain that skips overloaded models in seconds, Groq vision fallback (`qwen3.8-27b`), OpenRouter with current free models, NVIDIA last.
 - Export (.html/.tsx), share links (sandboxed), rebuild one section with a note, page rail, landing page, production auth, dev mode without sign-in or limits, route warm-up for a fast dev server.
 
+**Live results on the owner's drawing (2026-10-02, same drawing + prompt, Gemini 2.5-flash — 3.x was overloaded)**
+- Run 1: drawing read correctly for the first time, all 7 sections built, name and globe where drawn. Problems → fixed: the box drawn under the hero got its own empty screen; nav and hero invented different names; globe spun its drawing away; no side gutters; design lens leaked into copy.
+- Run 2: all fixes held (one name, everything on page 1 in the hero). Problems → fixed: model split the globe into a blank sphere + 8 flat lines; huge name collided with the stats band; "// LABEL" and ALL-CAPS chrome.
+- Run 3: correct reading, globe with all marks, Fraunces/Hanken palette unlike runs 1–2 (no-repeat works). It died on an unloaded `ScrollToPlugin` → runtime now loads the common GSAP plugins and turns any unsupported import into a harmless stand-in; re-rendered fine. Stats strip sat just below the fold → drawn columns now use modest fixed gaps.
+- Each run: ~3.5–6 minutes, ~5 model requests (1 understanding + 4 section batches).
+
 **Known weak spots right now**
 - **Free-tier capacity.** On 2026-10-02 Gemini 3.x was overloaded all afternoon; generations ran on 2.5-flash. Quality follows the model that answered.
 - **No visual check of the result.** Nothing looks at the rendered page before the user does (see R7 below).
@@ -125,6 +131,8 @@ Folder: `D:\CODE\PROJECTS\intentdraw-research` — `repos/` (18 shallow clones, 
 - **Per-site design** (fonts actually loaded, corners/surfaces/density/headings, enforced classes, no repeats) and the owner's product principle in every agent prompt.
 - Multi-line imports no longer leave duplicate declarations (the `Terminal` crash); `pnpm dev` warms every route (8–13s first clicks → ~0.06s); dev mode skips sign-in pages.
 - Research: 18 repos + 33 papers downloaded and reviewed (§5).
+- Preview runtime: common GSAP plugins loaded; unsupported imports become stand-ins; framer-motion shimmed (a missing plugin used to blank the page).
+- Drawn content grouped into columns that keep their drawn position but stack in normal flow (no collisions); marks inside a sphere's circle merged into the sphere; "// LABEL" and ALL-CAPS body text stripped.
 
 **2026-09-19 — shipping pieces**
 - Export (.html / .tsx), share links (`/p/<id>`, sandboxed), rebuild one section, page rail, landing page from real output, sign-in pages in the app's look.

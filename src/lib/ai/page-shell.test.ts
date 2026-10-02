@@ -81,7 +81,8 @@ describe('the page shell, built in code', () => {
     // scribble's width), then the box drawn under it, in normal flow so a tall
     // heading pushes it down instead of overlapping it (a real run collided).
     expect(block).toMatch(/className="lg:absolute lg:left-\[4.4%\] lg:top-\[22.9%\] lg:w-\[58.2%\] lg:flex lg:flex-col"/)
-    expect(block).toMatch(/lg:mt-\[23vh\] lg:w-\[85.2%\]/) // R11, 23% of a screen below the name
+    expect(block).toMatch(/lg:mt-16 lg:w-\[85.2%\]/) // R11, a modest step below the name — not 23vh, which overflowed the fold
+    expect(block).toMatch(/must fit on the first screen/)
     expect(block).toMatch(/HANDWROTE/)
     expect(block).toMatch(/ALREADY PAINTED behind this section/)
     expect(describeDrawnSections(['AboutSection'], brief, regions)).toBe('')
