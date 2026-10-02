@@ -4,6 +4,8 @@ import { sanitizeUserPrompt } from './prompt-rules'
 import { simplifyToBudget } from './shape-path'
 import { perceiveDrawing } from './perception'
 import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
+import { CORNERS, DENSITIES, HEADINGS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
+import { PRODUCT_PRINCIPLE } from './principle'
 
 /**
  * The design brief: what the understanding pass (understand.ts) produces, and
@@ -67,6 +69,8 @@ export interface DesignBrief {
   avoid: string[]
   palette: BriefPalette | null
   styleId: string
+  /** This site's own visual system — see site-design.ts. */
+  design: SiteDesign
   sections: Array<{ name: string; purpose: string }>
   drawing: {
     reading: string
@@ -82,6 +86,8 @@ export interface DesignBrief {
 // =============================================================================
 
 export const UNDERSTAND_SYSTEM_PROMPT = `You are IntentDraw's creative director. Before anything is built, you work out what the user actually wants — including what their drawing is a picture of — and write a brief that a separate build step follows literally.
+
+${PRODUCT_PRINCIPLE}
 
 You receive the user's prompt and, when they drew something, every shape as data (number, type, box in canvas pixels on a 1280px-wide canvas, and freeform strokes as SVG paths in those pixels), often with an image of the drawing.
 
@@ -118,12 +124,23 @@ MAKING IT UNLIKE ANY TEMPLATE
 - signature: one specific element no template has.
 - avoid: 3 clichés this kind of site usually falls into.
 - palette: 5 hex colours that belong to the concept. Don't default to Tailwind's stock blue/purple/slate unless the concept demands them.
-- styleId: the closest base style — "neosleek" (stark, sharp, brutalist), "playful_pop" (rounded, bright, friendly), "elegant_serif" (editorial, refined), "glassmorphism" (dark, luminous, translucent).
+- styleId: the closest base style, used only to pick structural references — "neosleek" (stark, sharp), "playful_pop" (rounded, bright), "elegant_serif" (editorial, refined), "glassmorphism" (dark, luminous).
+
+THIS SITE'S DESIGN — you design it; there is no default theme
+Choose each independently, from the concept, the audience and the drawing — never from habit. The build follows these exactly.
+- design.displayFont: the face for headings, logo and big numbers. design.bodyFont: the face for everything else. Pick from:
+${fontMenu()}
+  Pair for contrast (a serif with a grotesk, a poster face with a quiet text face, a mono with a humanist). Never use the same face twice.
+- design.corners: ${CORNERS.map(c => `"${c}"`).join(' | ')}
+- design.surfaces: ${SURFACES.map(c => `"${c}"`).join(' | ')} — how cards and panels separate from the page
+- design.density: ${DENSITIES.map(c => `"${c}"`).join(' | ')}
+- design.headings: ${HEADINGS.map(c => `"${c}"`).join(' | ')}
+If the user lists designs from their recent sites, do NOT reuse those typefaces, and don't repeat the same combination of corners and surfaces.
 
 drawing.reading is ONE plain sentence naming what the drawing shows ("A sun rising between two mountains, with a river flowing toward the viewer."). No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null}]}}`
+{"summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null}]}}`
 
 /** Stroke detail for reading — enough to tell a ridge from a wave, cheap enough for free tiers. */
 function readingBudget(strokes: number): number {
@@ -150,9 +167,16 @@ export function buildUnderstandUserMessage(
   prompt: string,
   regions: Region[],
   groups: RegionGroup[],
-  hasImage: boolean
+  hasImage: boolean,
+  recentDesigns: SiteDesign[] = []
 ): string {
   const parts: string[] = []
+  if (recentDesigns.length > 0) {
+    parts.push(
+      "THE USER'S RECENT SITES — this one must not look related to any of them:\n" +
+        recentDesigns.map(d => `- ${describeDesign(d)}`).join('\n')
+    )
+  }
   const keywordStyle = resolveByKeywords(prompt)
   if (keywordStyle) {
     parts.push(`STYLE SIGNAL: the prompt's own words point to "${keywordStyle.id}" — prefer it unless the concept clearly needs another.`)
@@ -362,6 +386,7 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
     avoid: strList(b.avoid, 4, 140),
     palette: palette(b.palette),
     styleId,
+    design: normalizeDesign(b.design, prompt, styleId),
     sections: sections(b.sections),
     drawing: {
       reading: str(drawing.reading, 400),

@@ -103,6 +103,16 @@ Load-bearing details:
 - `extractJson` in `lib/utils` tries `[...]` before `{...}`, which truncates any object containing an array to that array. Briefs use `parseJsonObject()` instead.
 - The client shows the brief in `<BriefCard />` as soon as it lands, so a misread drawing is visible rather than silently shaping the output.
 
+### Every site designs its own look (`site-design.ts`, `lib/design/fonts.ts`, `principle.ts`)
+
+The owner's rule: **each generated site is one of a kind — there is no default theme.** The four presets in `design-tokens.ts` were exactly that, a default theme recoloured (every "glassmorphism" site got the same blurred rounded cards), so they no longer decide how a staged site looks:
+- The understanding agent chooses a `design` per site: `displayFont` + `bodyFont` (from ~48 curated Google Fonts — Inter, Roboto, Poppins and other generic faces deliberately absent), `corners`, `surfaces`, `density`, `headings`. `normalizeDesign()` validates every field against fixed lists, so nothing arbitrary reaches a prompt even though the brief crosses the client.
+- `designTokens()` turns those choices into the concrete rules and **banned classes** the build prompts carry; `enforceDesign()` then strips what can be removed safely from `className` values only (font-family classes always, rounding on a sharp design, drop shadows on flat/outlined/layered/hard-shadow designs — never `drop-shadow-*`).
+- **Fonts actually load now.** Before this, nothing loaded a font: presets *named* Playfair or Space Grotesk and every site rendered in the system font. The shell carries a `/* SITE-FONTS: display=…; body=… */` marker; `fontHead()` in the preview runtime reads it and loads both faces from Google Fonts, sets the body face, and defines `.font-display` for headings — so previews, share links and exported HTML all match. Every font and weight was checked against the live css2 API; css2 rejects the **whole** request if one weight is missing, so never add one unchecked.
+- **No repeats across a user's sites.** `recent-designs.ts` reads the designs of the user's last few projects (a JSON path, fail-open, 3s timeout); the agent is told not to resemble them and `freshDesign()` guarantees the display face isn't reused. The current project is excluded, so regenerating it may keep its look.
+- `PRODUCT_PRINCIPLE` (`principle.ts`) — the owner's statement of what the tool is for — heads the understanding, shell and section system prompts. It states intent; the mechanisms above are what enforce it.
+- `styleId` survives only to pick structural reference sketches. The legacy single-call `POST /api/generate` still uses presets.
+
 ### Drawings as pictures — rendered in code (`scene.ts`, `scene-render.ts`)
 
 Exact geometry handed to the model was not enough: across real runs, models still painted the sun in front of the mountains, faded the picture into the page, or turned fills back into outlines. So the picture is rendered **entirely in code** as a ready-made `<IntentScene />` component; the model is told it is supplied, places it, and designs the site around it.

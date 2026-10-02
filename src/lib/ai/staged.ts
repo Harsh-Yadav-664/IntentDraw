@@ -17,6 +17,8 @@ import {
 import { repairGeneratedCode } from './repair'
 import { batchSections, resolveSections } from './sections'
 import { SCENE_COMPONENT, renderSceneComponent } from './scene-render'
+import { enforceDesign, siteFonts } from './site-design'
+import { fontMarker } from '@/lib/design/fonts'
 
 /**
  * Staged generation: one short call for the page shell, then one short call per
@@ -139,6 +141,10 @@ export async function generateShellStage(
       if (!shellCode || shellCode.length < 20) throw new Error('shell empty')
       if (!shellCode.includes('export default')) throw new Error('shell truncated — no export default')
 
+      // The site's own typefaces travel inside the file, so the preview, a
+      // share link and an exported page all load them (lib/design/fonts.ts).
+      if (brief) shellCode = `${fontMarker(siteFonts(brief.design))}\n${enforceDesign(shellCode, brief.design)}`
+
       // The drawing is rendered in code, not by the model; the shell only places
       // it. If the model forgot to, place it ourselves rather than lose the one
       // part of the page the user literally drew.
@@ -211,7 +217,8 @@ export async function generateSectionStage(
           nvidiaModelId,
         })
 
-        const code = repairGeneratedCode(extractReact(responseText))
+        const repaired = repairGeneratedCode(extractReact(responseText))
+        const code = brief ? enforceDesign(repaired, brief.design) : repaired
         if (!code || code.length < 10) throw new Error('section empty')
 
         // A response that doesn't declare what was asked for would leave the

@@ -3,6 +3,7 @@ import { checkRateLimit } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
 import { applyBriefToRegions } from '@/lib/ai/brief'
 import { understandRequest } from '@/lib/ai/understand'
+import { recentDesigns } from '@/lib/ai/recent-designs'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
@@ -38,13 +39,14 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json()
-    const { regions, groups, prompt, provider, nvidiaModelId, imageData } = body as {
+    const { regions, groups, prompt, provider, nvidiaModelId, imageData, projectId } = body as {
       regions?: Region[]
       groups?: RegionGroup[]
       prompt?: string
       provider?: AIProvider
       nvidiaModelId?: string
       imageData?: string
+      projectId?: string
     }
 
     if (!prompt || typeof prompt !== 'string' || prompt.trim().length === 0) {
@@ -62,6 +64,11 @@ export async function POST(request: Request) {
       provider: provider ?? 'gemini',
       nvidiaModelId,
       imageBase64: imageData,
+      // Other projects only: regenerating this one may keep its own look.
+      recentDesigns: await recentDesigns(
+        user.id,
+        typeof projectId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(projectId) ? projectId : undefined
+      ),
     })
 
     return NextResponse.json({

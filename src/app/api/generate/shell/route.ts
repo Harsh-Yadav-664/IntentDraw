@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { checkRateLimit, getUsageStats, incrementUsage } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
-import { PRESETS } from '@/lib/ai/design-tokens'
+import { designTokens } from '@/lib/ai/site-design'
+import { recentDesigns } from '@/lib/ai/recent-designs'
 import { applyBriefToRegions, normalizeBrief } from '@/lib/ai/brief'
 import { understandRequest } from '@/lib/ai/understand'
 import { generateShellStage } from '@/lib/ai/staged'
@@ -77,10 +78,12 @@ export async function POST(request: Request) {
           provider: provider ?? 'gemini',
           nvidiaModelId,
           imageBase64: imageData,
+          recentDesigns: await recentDesigns(userId),
         })
 
     const validRegions = applyBriefToRegions(rawRegions, brief)
-    const tokens = PRESETS[brief.styleId] ?? PRESETS.neosleek
+    // This site's own visual system, not one of a fixed set of themes.
+    const tokens = designTokens(brief.design, brief.styleId)
 
     const result = await generateShellStage(
       {

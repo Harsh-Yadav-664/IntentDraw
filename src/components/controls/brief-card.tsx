@@ -108,6 +108,15 @@ export function BriefCard() {
             </div>
           )}
 
+          {/* Older saved briefs predate per-site design. */}
+          {brief.design && (
+            <p className="text-muted-foreground/80">
+              <span className="text-foreground/70">Design: </span>
+              {brief.design.displayFont} + {brief.design.bodyFont} · {brief.design.corners} corners ·{' '}
+              {brief.design.surfaces} · {brief.design.density}
+            </p>
+          )}
+
           {brief.sections.length > 0 && (
             <p className="text-muted-foreground/60">
               {brief.sections.map((s) => s.name).join(' → ')}

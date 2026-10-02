@@ -3,6 +3,7 @@ import { createClient } from '@/lib/supabase/server'
 import { PRESETS } from '@/lib/ai/design-tokens'
 import { generateSectionStage } from '@/lib/ai/staged'
 import { normalizeBrief } from '@/lib/ai/brief'
+import { designTokens } from '@/lib/ai/site-design'
 import { MAX_SECTION_NOTE_CHARS } from '@/lib/ai/page-parts'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
@@ -55,11 +56,17 @@ export async function POST(request: Request) {
       return NextResponse.json({ success: false, error: 'Prompt is required' }, { status: 400 })
     }
 
-    // The client round-trips only a preset id, never a token object, so nothing
-    // arbitrary can be injected into the prompt's style constraints.
-    const tokens = (tokenId && PRESETS[tokenId]) || PRESETS.neosleek
-
     const validRegions = Array.isArray(regions) ? regions : []
+    // Re-validated: it came back through the client. normalizeBrief checks the
+    // design's fonts and enums against fixed lists, so nothing arbitrary can
+    // reach the prompt's style constraints.
+    const validBrief = brief ? normalizeBrief(brief, validRegions, prompt) : undefined
+
+    // The site's own design when there is a brief; a preset id only for
+    // callers that predate it.
+    const tokens = validBrief
+      ? designTokens(validBrief.design, validBrief.styleId)
+      : (tokenId && PRESETS[tokenId]) || PRESETS.neosleek
 
     const result = await generateSectionStage(
       {
@@ -70,8 +77,7 @@ export async function POST(request: Request) {
         globalTheme,
         provider: provider ?? 'gemini',
         nvidiaModelId,
-        // Re-validated: it came back through the client.
-        brief: brief ? normalizeBrief(brief, validRegions, prompt) : undefined,
+        brief: validBrief,
       },
       sectionNames.slice(0, 6).map(String),
       shellCode.slice(0, MAX_SHELL_CHARS),

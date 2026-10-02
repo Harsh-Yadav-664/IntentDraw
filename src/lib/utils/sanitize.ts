@@ -1,6 +1,7 @@
 import { normalizeImports } from '@/lib/ai/assemble'
 import { softenSceneOverlays } from '@/lib/ai/repair'
 import { rewriteImageUrl } from './image-url'
+import { fontHead } from '@/lib/design/fonts'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -390,6 +391,9 @@ if (typeof window.__RenderComponent !== "undefined") {
     body { margin: 0; padding: 0; font-family: system-ui, -apple-system, sans-serif; }
     #root { min-height: 100vh; }
   </style>
+  <!-- The site's own typefaces (lib/design/fonts.ts). After the base style so
+       its body font wins. -->
+  ${fontHead(code)}
   <script>${systemScript}${snapshotScript}</script>
 </head>
 <body>

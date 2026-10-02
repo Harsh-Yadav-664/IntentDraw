@@ -8,6 +8,7 @@ import {
   type DesignBrief,
 } from './brief'
 import type { Region, RegionGroup } from '@/types'
+import { freshDesign, type SiteDesign } from './site-design'
 
 /**
  * Runs the understanding pass against the provider chain. See brief.ts for what
@@ -21,6 +22,8 @@ export interface UnderstandContext {
   provider: ProviderName
   nvidiaModelId?: string
   imageBase64?: string
+  /** Designs of the user's recent sites, which this one must not resemble. */
+  recentDesigns?: SiteDesign[]
 }
 
 /** Providers that can actually see the drawing go first when there is one. */
@@ -33,8 +36,12 @@ function understandingChain(provider: ProviderName, hasImage: boolean): Provider
 
 export async function understandRequest(context: UnderstandContext): Promise<DesignBrief> {
   const { prompt, regions, groups, provider, nvidiaModelId, imageBase64 } = context
+  const recent = context.recentDesigns ?? []
   const hasImage = regions.length > 0 && !!imageBase64
-  const message = buildUnderstandUserMessage(prompt, regions, groups, hasImage)
+  const message = buildUnderstandUserMessage(prompt, regions, groups, hasImage, recent)
+
+  // The agent is asked not to repeat a recent typeface; this guarantees it.
+  const fresh = (brief: DesignBrief): DesignBrief => ({ ...brief, design: freshDesign(brief.design, recent, prompt) })
 
   for (const current of understandingChain(provider, hasImage)) {
     try {
@@ -46,12 +53,12 @@ export async function understandRequest(context: UnderstandContext): Promise<Des
       // A brief with no concept and no plan is the model failing quietly —
       // worth one more provider before settling for it.
       if (!brief.concept && brief.sections.length === 0) throw new Error('empty brief')
-      return brief
+      return fresh(brief)
     } catch (err) {
       console.warn(`[Understand] ${current} failed:`, err instanceof Error ? err.message : err)
     }
   }
 
-  return fallbackBrief(prompt, regions)
+  return fresh(fallbackBrief(prompt, regions))
 }
 

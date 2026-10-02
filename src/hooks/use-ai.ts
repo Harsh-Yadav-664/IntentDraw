@@ -78,7 +78,7 @@ export function useAI() {
       const understandRes = await fetch('/api/generate/understand', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...shared, imageData }),
+        body: JSON.stringify({ ...shared, imageData, projectId: useWorkflowStore.getState().projectId }),
       })
       const understood = await understandRes.json()
       if (!understood.success) {

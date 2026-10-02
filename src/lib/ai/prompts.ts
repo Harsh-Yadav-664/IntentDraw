@@ -7,6 +7,7 @@ import type { DesignTokenSet } from './design-tokens'
 import { describeScene, renderBrief, type BriefPalette, type DesignBrief } from './brief'
 import { MAX_SECTION_NOTE_CHARS } from './page-parts'
 import { pageIndexForRegion } from '@/lib/canvas/pages'
+import { PRODUCT_PRINCIPLE } from './principle'
 
 // =============================================================================
 // GENERATION SYSTEM PROMPT
@@ -165,6 +166,8 @@ You will receive:
   2. A CONCRETE LAYOUT SKELETON that you MUST use
   3. A user prompt describing what each region should contain and look like
   4. Optional design tokens (hard style constraints)
+
+${PRODUCT_PRINCIPLE}
 
 ${SPATIAL_RULES}
 
@@ -516,6 +519,8 @@ export const STAGED_SHELL_SYSTEM_PROMPT = `You are IntentDraw's page-architectur
 Your job: design the PAGE STRUCTURE only — the App component and its layout — and
 declare which sections a later pass will build.
 
+${PRODUCT_PRINCIPLE}
+
 ${SPATIAL_RULES}
 
 ${DESIGN_RULES}
@@ -548,6 +553,8 @@ Return ONLY the shell file. No markdown, no code fences, no explanation.`
 
 export const STAGED_SECTION_SYSTEM_PROMPT = `You are IntentDraw's section generation engine.
 You build a few named components that slot into a page shell written by another pass.
+
+${PRODUCT_PRINCIPLE}
 
 ${SPATIAL_RULES}
 
