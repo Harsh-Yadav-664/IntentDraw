@@ -48,7 +48,7 @@ This is a solo project. The owner's stated goals, in priority order:
 
 ## Commands
 
-- `pnpm dev` — dev server (Next.js App Router, port 3000)
+- `pnpm dev` — dev server (Next.js App Router, port 3000), via `scripts/dev.mjs`: once the server is up it requests every page and API route once, so each is compiled before the first click. Next compiles a route on first request, and on this machine that was 8–13s per click ("Get started", "New project", first Generate). `pnpm dev:raw` is plain `next dev`.
 - `pnpm build` / `pnpm start` — production build / run
 - `pnpm lint` — ESLint (flat config, `eslint-config-next`)
 - `pnpm typecheck` — `tsc --noEmit`. Run after any AI-pipeline change.
