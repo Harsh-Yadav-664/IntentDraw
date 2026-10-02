@@ -123,8 +123,11 @@ const ${name} = () => {
     const frame = () => {
       const now = performance.now(), dt = Math.min(64, now - last);
       last = now;
-      if (!still) spin += dt * 0.00025;
-      yaw += (spin + mx * 1.4 + (window.scrollY || 0) * 0.003 - yaw) * 0.08;
+      // Sway rather than spin: the user's marks are drawn on the front, so a
+      // full turn would spend half its time showing an empty back. Pointer and
+      // scroll turn it further.
+      if (!still) spin += dt * 0.0004;
+      yaw += (Math.sin(spin) * 0.55 + mx * 1.3 + (window.scrollY || 0) * 0.0018 - yaw) * 0.08;
       pitch += (-0.25 + my * 0.9 - pitch) * 0.08;
       if (!Number.isFinite(yaw + pitch)) { yaw = 0; pitch = -0.25; }
       const cy = Math.cos(yaw), sy = Math.sin(yaw), cp = Math.cos(pitch), sp = Math.sin(pitch);
@@ -151,7 +154,7 @@ const ${name} = () => {
       let d = '';
       for (const n of nodes) {
         const c = at(n);
-        if (c[2] >= 0) d += 'M' + (c[0] - 4.5).toFixed(1) + ' ' + c[1].toFixed(1) + 'a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0';
+        if (c[2] >= 0) d += 'M' + (c[0] - 5.5).toFixed(1) + ' ' + c[1].toFixed(1) + 'a5.5 5.5 0 1 0 11 0a5.5 5.5 0 1 0 -11 0';
       }
       front.current?.setAttribute('d', sf);
       back.current?.setAttribute('d', sb);
@@ -176,7 +179,7 @@ const ${name} = () => {
       <circle cx={${g.cx}} cy={${g.cy}} r={${g.r}} fill="url(#${id}-body)" />
       <path ref={grid} fill="none" stroke="${p.text}" strokeOpacity={0.14} strokeWidth={1} />
       <path ref={back} fill="none" stroke="${p.accent}" strokeOpacity={0.3} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
-      <path ref={front} fill="none" stroke="${p.accent}" strokeWidth={3.2} strokeLinecap="round" strokeLinejoin="round" />
+      <path ref={front} fill="none" stroke="${p.accent}" strokeWidth={4.5} strokeLinecap="round" strokeLinejoin="round" />
       <path ref={dots} fill="${mix(p.accent, '#FFFFFF', 0.35)}" />
       <circle cx={${g.cx}} cy={${g.cy}} r={${g.r}} fill="none" stroke="${p.accent}" strokeOpacity={0.4} strokeWidth={1.5} />
     </g>

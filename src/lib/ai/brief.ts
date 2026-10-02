@@ -71,6 +71,8 @@ export interface DesignBrief {
   signature: string
   /** The template version of this site, named so the build can steer away from it. */
   generic: string
+  /** The one name the whole site uses — sections are built in separate calls and used to invent different ones. */
+  brand: string
   avoid: string[]
   palette: BriefPalette | null
   styleId: string
@@ -131,6 +133,7 @@ Plan 5-8 sections as PascalCase component names in page order, each with a one-l
 - A navigation bar, when the site needs one, is its own first section; the footer its own last section.
 
 MAKING IT UNLIKE ANY TEMPLATE
+- brand: the name shown on the site — the person's or business's name, exactly as the user gave it; if they didn't, invent one believable, specific name (never "Your Name", "John Doe", "Creator's Name", "Company"). Every section uses this same name.
 - generic: first, one sentence describing the template version of this site — what any AI site builder would produce for this prompt (its usual palette, fonts and hero). Every choice below must differ from it.
 - concept: one sentence — the idea the whole site is built around, tied to this business and, if there is one, to the drawing. An idea, not a style adjective.
 - signature: one specific element no template has.
@@ -154,12 +157,12 @@ ${fontMenu()}
 - design.density: ${DENSITIES.map(c => `"${c}"`).join(' | ')}
 - design.headings: ${HEADINGS.map(c => `"${c}"`).join(' | ')}
 If the user lists designs from their recent sites, do NOT reuse those typefaces, and don't repeat the same combination of corners and surfaces.
-The message may name a DESIGN LENS — a craft to borrow a way of seeing from. Let it shape the concept, palette and type; never mention it on the site.
+The message may name a DESIGN LENS — a craft to borrow a way of seeing from. Let it shape the palette, type and layout only — never the concept's vocabulary or any copy, and never mention it on the site.
 
 drawing.reading is ONE plain sentence naming what the drawing shows and where, in the user's terms. No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":""}]}}`
+{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":""}]}}`
 
 /**
  * Ordinary crafts with their own way of seeing, one handed to the understanding
@@ -432,7 +435,45 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       section: sectionForPage(pageIndexForRegion(region), sectionNames),
     })
   }
-  return out
+  return keepPagesTogether(out, regions, sectionNames)
+}
+
+/**
+ * Everything drawn on one page is one screen of the site, so it all goes to
+ * one section — the one most of that page's elements were assigned to.
+ *
+ * A real run put the name and the globe in Hero but moved the key-points box
+ * drawn under them into a section of its own: it would have rendered 56% of the
+ * way down an otherwise empty screen. Pages also keep their order — page 2
+ * never lands in a section above page 1's.
+ */
+function keepPagesTogether(els: BriefElement[], regions: Region[], names: string[]): BriefElement[] {
+  if (names.length === 0) return els
+  const pageOf = (e: BriefElement) =>
+    Math.min(...regions.filter(r => e.regions.includes(r.regionNumber)).map(r => pageIndexForRegion(r)))
+
+  const byPage = new Map<number, BriefElement[]>()
+  for (const e of els) {
+    const page = pageOf(e)
+    if (Number.isFinite(page)) byPage.set(page, [...(byPage.get(page) ?? []), e])
+  }
+
+  const chosen = new Map<number, string>()
+  let floor = -1
+  for (const page of [...byPage.keys()].sort((a, b) => a - b)) {
+    const votes = new Map<string, number>()
+    for (const e of byPage.get(page)!) if (e.section) votes.set(e.section, (votes.get(e.section) ?? 0) + 1)
+    let pick: string | undefined = [...votes].sort((a, b) => b[1] - a[1] || names.indexOf(a[0]) - names.indexOf(b[0]))[0]?.[0]
+    if (!pick || names.indexOf(pick) <= floor) pick = sectionForPage(page, names) ?? undefined
+    if (pick && names.indexOf(pick) <= floor) pick = names[floor + 1]
+    if (!pick) continue
+    chosen.set(page, pick)
+    floor = names.indexOf(pick)
+  }
+  return els.map(e => {
+    const section = chosen.get(pageOf(e))
+    return section ? { ...e, section } : e
+  })
 }
 
 function drawingKind(els: BriefElement[]): DesignBrief['drawing']['kind'] {
@@ -467,6 +508,7 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
     concept: str(b.concept, 320),
     signature: str(b.signature, 280),
     generic: str(b.generic, 240),
+    brand: str(b.brand, 60),
     avoid: strList(b.avoid, 4, 140),
     palette: palette(b.palette),
     styleId,
@@ -584,6 +626,8 @@ export function renderBrief(brief: DesignBrief, mode: 'shell' | 'section'): stri
     brief.tone.length > 0 && `Tone: ${brief.tone.join(', ')}.`,
   ].filter(Boolean)
   if (site.length > 0) lines.push(site.join(' '))
+  if (brief.brand) lines.push(`Name on the site: ${brief.brand} — use exactly this wherever a name appears (logo, headings, footer, copy).`)
+  lines.push('Write real content only: no placeholder names or text ("Your Name", "John Doe", "Creator\'s Name", "Lorem ipsum", "Company"), no generic filler lines.')
   if (brief.concept) lines.push(`Concept: ${brief.concept}`)
   if (brief.signature) lines.push(`Signature element (must appear, executed well): ${brief.signature}`)
   if (brief.avoid.length > 0) lines.push(`Avoid these clichés: ${brief.avoid.join('; ')}`)

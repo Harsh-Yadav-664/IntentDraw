@@ -129,3 +129,15 @@ describe('parseRecentDesigns', () => {
     expect(parseRecentDesigns(rows)).toEqual([SHARP])
   })
 })
+
+describe('template chrome', () => {
+  it('turns tracked-out ALL-CAPS small labels back into plain labels', () => {
+    const code = `<p className="text-xs uppercase tracking-widest text-[#00C4CC]">Exhibition registry</p>`
+    expect(enforceDesign(code, { ...SHARP, corners: 'pill' })).toBe(`<p className="text-xs text-[#00C4CC]">Exhibition registry</p>`)
+  })
+
+  it('leaves uppercase headings alone', () => {
+    const code = `<h1 className="text-8xl uppercase tracking-tight">Initiate</h1>`
+    expect(enforceDesign(code, { ...SHARP, corners: 'pill' })).toBe(code)
+  })
+})

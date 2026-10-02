@@ -130,3 +130,27 @@ describe('section plumbing', () => {
     expect(planSections(normalizeBrief({}, [], 'a bakery')).length).toBeGreaterThanOrEqual(4)
   })
 })
+
+describe('one drawn page, one section', () => {
+  it('keeps a box drawn under the hero in the hero, as a real run tried to split it out', () => {
+    const brief = normalizeBrief(
+      {
+        sections: [
+          { name: 'Navigation', purpose: '' }, { name: 'Hero', purpose: '' }, { name: 'KeyAchievements', purpose: '' },
+          { name: 'Portfolio', purpose: '' }, { name: 'Footer', purpose: '' },
+        ],
+        drawing: {
+          reading: 'x',
+          elements: [
+            { name: 'Name', regions: [10], role: 'layout', section: 'Hero' },
+            { name: 'Key achievements', regions: [11], role: 'layout', section: 'KeyAchievements' },
+            { name: 'Sphere', regions: [1, 2, 3, 4, 5, 6, 7, 8, 9], role: 'illustration', form: 'sphere', section: 'Hero' },
+          ],
+        },
+      },
+      regions,
+      prompt
+    )
+    expect(new Set(brief.drawing.elements.map(e => e.section))).toEqual(new Set(['Hero']))
+  })
+})

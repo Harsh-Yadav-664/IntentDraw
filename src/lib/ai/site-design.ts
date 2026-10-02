@@ -197,9 +197,9 @@ const SURFACE_RULES: Record<Surfaces, { rule: string; banned: string[] }> = {
 }
 
 const DENSITY_RULES: Record<Density, string> = {
-  airy: 'Generous: sections py-24, content max-w-6xl, gaps of 12-16, few items per row.',
-  balanced: 'Sections py-16 to py-20, content max-w-7xl, gaps of 8-10.',
-  dense: 'Information-rich: sections py-12 to py-16, content max-w-7xl, gaps of 4-6, more items per row, smaller supporting text.',
+  airy: 'Generous: sections py-24, content in mx-auto max-w-6xl px-6 md:px-10, gaps of 12-16, few items per row.',
+  balanced: 'Sections py-16 to py-20, content in mx-auto max-w-7xl px-6 md:px-12, gaps of 8-10.',
+  dense: 'Information-rich: sections py-12 to py-16, content in mx-auto max-w-7xl px-5 md:px-10, gaps of 4-6, more items per row, smaller supporting text.',
 }
 
 const HEADING_RULES: Record<HeadingStyle, string> = {
@@ -309,6 +309,12 @@ export function enforceDesign(code: string, design: SiteDesign): string {
       removed = true
       return lead
     })
+    // Small, tracked-out ALL-CAPS labels are the commonest "template chrome"
+    // tell (avoid-ai-design T5/SD4): keep the text, drop the costume.
+    if (/\buppercase\b/.test(value) && /\btracking-(?:widest|wider|\[0?\.(?:[1-9]\d*)em\])/.test(value) && /\btext-(?:xs|sm|\[(?:9|1[0-3])px\])\b/.test(value)) {
+      value = value.replace(/(^|[\s"'`])uppercase(?=$|[\s"'`])/, '$1').replace(/(^|[\s"'`])tracking-(?:widest|wider|\[[^\]]+\])(?=$|[\s"'`])/, '$1')
+      removed = true
+    }
     if (removed) {
       // Tidy the gap a removal leaves. Inside {…} only doubled spaces go: a
       // space at a string's edge there may be what separates two classes
