@@ -11,6 +11,7 @@ const SHARP: SiteDesign = {
   surfaces: 'outlined',
   density: 'airy',
   headings: 'editorial',
+  hero: 'split',
 }
 
 describe('normalizeDesign', () => {
@@ -48,7 +49,13 @@ describe('freshDesign', () => {
   })
 
   it('leaves a design alone when nothing repeats', () => {
-    expect(freshDesign(SHARP, [{ ...SHARP, displayFont: 'Syne' }], 'seed')).toBe(SHARP)
+    expect(freshDesign(SHARP, [{ ...SHARP, displayFont: 'Syne', hero: 'statement' }], 'seed')).toBe(SHARP)
+  })
+
+  it('never repeats the first-screen composition of the last two sites', () => {
+    const d = freshDesign(SHARP, [{ ...SHARP, displayFont: 'Syne' }, { ...SHARP, displayFont: 'Anton', hero: 'statement' }], 'seed')
+    expect(['split', 'statement']).not.toContain(d.hero)
+    expect(d.displayFont).toBe('Fraunces')
   })
 })
 
@@ -117,16 +124,18 @@ describe('the brief carries a design', () => {
     expect(UNDERSTAND_SYSTEM_PROMPT).toContain('Every site is one of a kind')
     expect(UNDERSTAND_SYSTEM_PROMPT).toContain('Bricolage Grotesque')
     expect(UNDERSTAND_SYSTEM_PROMPT).not.toMatch(/\bInter\b|Roboto|Poppins/)
-    const message = buildUnderstandUserMessage('a studio', [], [], false, [SHARP])
+    const message = buildUnderstandUserMessage('a studio', [], [], false, [{ design: SHARP, brand: 'Kaelen Voss', accent: '#3DDC97' }])
     expect(message).toContain("RECENT SITES")
     expect(message).toContain('Fraunces + Manrope')
+    // Names and accents too: three runs in a row named the owner "Kaelen".
+    expect(message).toMatch(/named "Kaelen Voss"; accent #3DDC97/)
   })
 })
 
 describe('parseRecentDesigns', () => {
   it('keeps only saved designs that name a real typeface', () => {
     const rows = [{ design: SHARP }, { design: null }, { design: { displayFont: 'Comic Sans' } }, {}]
-    expect(parseRecentDesigns(rows)).toEqual([SHARP])
+    expect(parseRecentDesigns(rows)).toEqual([{ design: SHARP }])
   })
 })
 

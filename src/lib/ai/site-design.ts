@@ -17,11 +17,14 @@ export const CORNERS = ['sharp', 'subtle', 'soft', 'round', 'pill'] as const
 export const SURFACES = ['flat', 'outlined', 'hard-shadow', 'soft-shadow', 'glass', 'layered'] as const
 export const DENSITIES = ['airy', 'balanced', 'dense'] as const
 export const HEADINGS = ['oversized', 'editorial', 'compact', 'uppercase'] as const
+/** How the first screen is composed when the user didn't draw it — a structural fingerprint. */
+export const HERO_COMPOSITIONS = ['split', 'statement', 'full-bleed', 'editorial-stack', 'asymmetric', 'centered-object'] as const
 
 export type Corners = (typeof CORNERS)[number]
 export type Surfaces = (typeof SURFACES)[number]
 export type Density = (typeof DENSITIES)[number]
 export type HeadingStyle = (typeof HEADINGS)[number]
+export type HeroComposition = (typeof HERO_COMPOSITIONS)[number]
 
 export interface SiteDesign {
   displayFont: string
@@ -30,6 +33,7 @@ export interface SiteDesign {
   surfaces: Surfaces
   density: Density
   headings: HeadingStyle
+  hero: HeroComposition
 }
 
 // =============================================================================
@@ -106,6 +110,7 @@ export function normalizeDesign(raw: unknown, seed: string, styleId: string): Si
     surfaces: oneOf(SURFACES, d.surfaces) ?? base.surfaces,
     density: oneOf(DENSITIES, d.density) ?? base.density,
     headings: oneOf(HEADINGS, d.headings) ?? base.headings,
+    hero: oneOf(HERO_COMPOSITIONS, d.hero) ?? pick(HERO_COMPOSITIONS, `${seed}:hero`),
   }
 }
 
@@ -117,6 +122,14 @@ export function normalizeDesign(raw: unknown, seed: string, styleId: string): Si
  * survives; a body face that collides with the new display face is swapped too.
  */
 export function freshDesign(design: SiteDesign, recent: SiteDesign[], seed: string): SiteDesign {
+  // The first screen's composition is a fingerprint too: never the same as
+  // either of the last two sites.
+  const lastHeroes = recent.slice(0, 2).map(r => r.hero)
+  if (lastHeroes.includes(design.hero)) {
+    const others = HERO_COMPOSITIONS.filter(h => !lastHeroes.includes(h))
+    design = { ...design, hero: pick(others, `${seed}:fresh-hero`) }
+  }
+
   const usedDisplay = new Set(recent.map(r => r.displayFont))
   if (!usedDisplay.has(design.displayFont)) return design
 
@@ -139,7 +152,7 @@ export function siteFonts(design: SiteDesign): SiteFonts {
 
 /** One line for the "already used" list the understanding agent sees. */
 export function describeDesign(d: SiteDesign): string {
-  return `${d.displayFont} + ${d.bodyFont}, ${d.corners} corners, ${d.surfaces} surfaces, ${d.density}, ${d.headings} headings`
+  return `${d.displayFont} + ${d.bodyFont}, ${d.corners} corners, ${d.surfaces} surfaces, ${d.density}, ${d.headings} headings, ${d.hero} hero`
 }
 
 // =============================================================================
@@ -202,6 +215,15 @@ const DENSITY_RULES: Record<Density, string> = {
   dense: 'Information-rich: sections py-12 to py-16, content in mx-auto max-w-7xl px-5 md:px-10, gaps of 4-6, more items per row, smaller supporting text.',
 }
 
+const HERO_RULES: Record<HeroComposition, string> = {
+  split: 'a two-part split — words on one side, one strong visual on the other, unequal widths (e.g. 5/7).',
+  statement: 'one huge typographic statement filling most of the screen, a single short line under it, no image.',
+  'full-bleed': 'one full-bleed image or visual edge to edge with the headline set over a quiet area of it.',
+  'editorial-stack': 'a magazine opener — a large headline, a deck paragraph, and a slim row of facts or an index beneath.',
+  asymmetric: 'an off-grid composition — the headline anchored low-left, supporting elements floating at deliberate offsets.',
+  'centered-object': 'one central object or visual with the headline wrapped around or above it, symmetrical and calm.',
+}
+
 const HEADING_RULES: Record<HeadingStyle, string> = {
   oversized: 'Headings are huge and tight — hero text-7xl to text-9xl, leading-[0.9], tracking-tight — and dominate their section.',
   // No accented word inside a heading: one italic or coloured word in a headline is
@@ -235,7 +257,7 @@ export function designTokens(design: SiteDesign, styleId: string): DesignTokenSe
       `Never name any other typeface. ${HEADING_RULES[design.headings]}`,
     shadowTreatment: surfaces.rule,
     bannedClasses: [...new Set([...corners.banned, ...surfaces.banned, ...ALWAYS_BANNED])],
-    specialInstructions: DENSITY_RULES[design.density],
+    specialInstructions: `${DENSITY_RULES[design.density]} First screen, unless the user drew it: ${HERO_RULES[design.hero]}`,
   }
 }
 

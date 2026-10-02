@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { Region, RegionGeometry, RegionGroup, CanvasData, CanvasTool } from '@/types'
+import type { Region, RegionGeometry, RegionGroup, RegionTag, CanvasData, CanvasTool } from '@/types'
 import { generateUUID } from '@/lib/utils'
 
 import type Konva from 'konva'
@@ -39,6 +39,8 @@ interface CanvasStore {
   addRegion: (geometry: RegionGeometry) => void
   updateRegionGeometry: (id: string, updates: Partial<RegionGeometry>) => void
   updateRegionIntent: (id: string, intent: string) => void
+  /** The user's one-click answer to "what is this, and where does it go?" — null clears it. */
+  setRegionTag: (regionNumbers: number[], tag: RegionTag | null) => void
   deleteRegions: (ids: string[]) => void
   clearRegions: () => void
   setRegions: (regions: Region[]) => void
@@ -208,6 +210,18 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
           r.id === id ? { ...r, intent, updatedAt: new Date().toISOString() } : r
         ),
       }))
+    },
+
+    setRegionTag: (regionNumbers, tag) => {
+      set((state) => ({
+        regions: state.regions.map((r) => {
+          if (!regionNumbers.includes(r.regionNumber)) return r
+          const next = tag ? { ...r.tag, ...tag } : undefined
+          const empty = !next || (!next.kind && !next.anchor)
+          return { ...r, tag: empty ? undefined : next, updatedAt: new Date().toISOString() }
+        }),
+      }))
+      pushHistory()
     },
 
     deleteRegions: (ids) => {

@@ -8,7 +8,8 @@ import {
   type DesignBrief,
 } from './brief'
 import type { Region, RegionGroup } from '@/types'
-import { freshDesign, type SiteDesign } from './site-design'
+import { freshDesign } from './site-design'
+import type { RecentSite } from './recent-designs'
 
 /**
  * Runs the understanding pass against the provider chain. See brief.ts for what
@@ -23,7 +24,7 @@ export interface UnderstandContext {
   nvidiaModelId?: string
   imageBase64?: string
   /** Designs of the user's recent sites, which this one must not resemble. */
-  recentDesigns?: SiteDesign[]
+  recentDesigns?: RecentSite[]
 }
 
 /** Providers that can actually see the drawing go first when there is one. */
@@ -42,7 +43,7 @@ export async function understandRequest(context: UnderstandContext): Promise<Des
   const message = buildUnderstandUserMessage(prompt, regions, groups, hasImage, recent)
 
   // The agent is asked not to repeat a recent typeface; this guarantees it.
-  const fresh = (brief: DesignBrief): DesignBrief => ({ ...brief, design: freshDesign(brief.design, recent, prompt) })
+  const fresh = (brief: DesignBrief): DesignBrief => ({ ...brief, design: freshDesign(brief.design, recent.map(r => r.design), prompt) })
 
   for (const current of understandingChain(provider, hasImage)) {
     try {

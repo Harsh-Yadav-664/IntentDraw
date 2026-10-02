@@ -26,6 +26,8 @@
 - Run 3: correct reading, globe with all marks, Fraunces/Hanken palette unlike runs 1–2 (no-repeat works). It died on an unloaded `ScrollToPlugin` → runtime now loads the common GSAP plugins and turns any unsupported import into a harmless stand-in; re-rendered fine. Stats strip sat just below the fold → drawn columns now use modest fixed gaps.
 - Each run: ~3.5–6 minutes, ~5 model requests (1 understanding + 4 section batches).
 
+**Intent engine (2026-10-02, evening)** — the owner's cube run ("make region 1 a 3d rotating cube interactive with mouse clicks") built the cube in the wrong section. Now: code parses the prompt, the cube is a code-built object placed at the drawn box, and the nav floats over the first screen. Live re-run: brief read "a 3D cube object on the right side of the first screen", one cube only, rendered at (872, 202) for a box drawn at (882, 201). Users can also tag any shape in one click ("3D object · exactly here") and correct any element in "What I understood".
+
 **Known weak spots right now**
 - **Free-tier capacity.** On 2026-10-02 Gemini 3.x was overloaded all afternoon; generations ran on 2.5-flash. Quality follows the model that answered.
 - **No visual check of the result.** Nothing looks at the rendered page before the user does (see R7 below).
@@ -64,6 +66,13 @@ Items marked **(R#)** come from the 2026-10-02 research (§5); the full evidence
 8. **Speed on paid keys.** Run section batches 2–3 at a time when the provider allows it (`use-ai.ts` is the only place to change). Free tiers stay serial.
 9. **Guard drawn irregularities (R11).** Models "correct" one bigger/offset element back to the repeated pattern 70–96% of the time (Pattern over Pixels). State deliberate irregularities explicitly in the section's drawing block ("R5 is intentionally 1.6× wider than R4 and R6 — keep it").
 10. **Images:** search Pexels with the brief's concept and pass the chosen photo *into* the section prompt so palette and layout are built around a real image (R from the monetisation discussion). Later, paid tier: 1–2 AI-generated hero images conditioned on the palette.
+
+**Intent engine — next steps**
+1. **More code-built objects:** pyramid, ring/torus, floating card stack, extruded logo from a drawn outline; "3D tilt" for any content box the user calls 3D.
+2. **Words that point without numbers:** "the circle", "the box on the right", "the big one" → resolve to shapes by type, position and size.
+3. **Ask when unsure (R3):** when the model and the priors disagree with low confidence, show the question as tag chips in "What I understood" before building (or build with the best guess and highlight it).
+4. **Learn from corrections:** every tag the user changes after a generation is a labelled example of a misread — log them (R15) to tune priors and the prompt.
+5. **Mobile placement for objects** is a centred 16rem square under the section; let the drawing's relative position steer it.
 
 ## 3. The app's own UI
 
@@ -131,6 +140,8 @@ Folder: `D:\CODE\PROJECTS\intentdraw-research` — `repos/` (18 shallow clones, 
 - **Per-site design** (fonts actually loaded, corners/surfaces/density/headings, enforced classes, no repeats) and the owner's product principle in every agent prompt.
 - Multi-line imports no longer leave duplicate declarations (the `Terminal` crash); `pnpm dev` warms every route (8–13s first clicks → ~0.06s); dev mode skips sign-in pages.
 - Research: 18 repos + 33 papers downloaded and reviewed (§5).
+- **Drawing intent engine** (`intent.ts`): tags → prompt parsed in code → model → geometry priors; role `object` + `anchor`; code-built interactive 3D cube/sphere placed by the shell; nav over the first screen; one-click tags (Layers panel) and corrections ("What I understood").
+- **Fingerprints:** hero composition per site (not repeated), recent names/accents fed back.
 - Preview runtime: common GSAP plugins loaded; unsupported imports become stand-ins; framer-motion shimmed (a missing plugin used to blank the page).
 - Drawn content grouped into columns that keep their drawn position but stack in normal flow (no collisions); marks inside a sphere's circle merged into the sphere; "// LABEL" and ALL-CAPS body text stripped.
 

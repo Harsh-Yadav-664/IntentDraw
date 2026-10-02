@@ -8,6 +8,7 @@ import { BriefCard } from './brief-card'
 import { SectionList } from './section-list'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { RegionIntentChips } from './region-intent-chips'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Separator } from '@/components/ui/separator'
@@ -183,9 +184,9 @@ export default function ControlsPanel() {
                 className="mt-2 min-h-[54px] resize-none text-xs bg-black/20 border-white/10 focus:border-primary/50 focus:ring-primary/20 placeholder:text-muted-foreground/50"
                 disabled={isLoading}
               />
-              <p className="text-xs mt-1.5 text-muted-foreground/70">
-                Tip: You can also reference &quot;Region {selectedRegion.regionNumber}&quot; in the main prompt below.
-              </p>
+              <div className="mt-3">
+                <RegionIntentChips regionNumbers={[selectedRegion.regionNumber]} disabled={isLoading} />
+              </div>
             </div>
           )
         })()}
@@ -213,6 +214,13 @@ export default function ControlsPanel() {
                 Group {selectedRegionIds.length} shapes
               </Button>
             )}
+            <div className="mt-3">
+              <RegionIntentChips
+                regionNumbers={regions.filter((r) => selectedRegionIds.includes(r.id)).map((r) => r.regionNumber)}
+                disabled={isLoading}
+                compact
+              />
+            </div>
             <Button
               variant="outline"
               size="sm"

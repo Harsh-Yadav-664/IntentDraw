@@ -6,7 +6,8 @@ import { insideShare, looksHandwritten, perceiveDrawing } from './perception'
 import { ANCHORS, describeIntentSignals, intentSignals, type Anchor, type IntentSignal } from './intent'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
-import { CORNERS, DENSITIES, HEADINGS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
+import { CORNERS, DENSITIES, HEADINGS, HERO_COMPOSITIONS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
+import type { RecentSite } from './recent-designs'
 import { PRODUCT_PRINCIPLE } from './principle'
 
 /**
@@ -172,13 +173,14 @@ ${fontMenu()}
 - design.surfaces: ${SURFACES.map(c => `"${c}"`).join(' | ')} — how cards and panels separate from the page
 - design.density: ${DENSITIES.map(c => `"${c}"`).join(' | ')}
 - design.headings: ${HEADINGS.map(c => `"${c}"`).join(' | ')}
+- design.hero: how the first screen is composed when the user didn't draw it — ${HERO_COMPOSITIONS.map(c => `"${c}"`).join(' | ')}
 If the user lists designs from their recent sites, do NOT reuse those typefaces, and don't repeat the same combination of corners and surfaces.
 The message may name a DESIGN LENS — a craft to borrow a way of seeing from. Let it shape the palette, type and layout only — never the concept's vocabulary or any copy, and never mention it on the site.
 
 drawing.reading is ONE plain sentence naming what the drawing shows and where, in the user's terms. No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
+{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
 
 /**
  * Ordinary crafts with their own way of seeing, one handed to the understanding
@@ -229,14 +231,15 @@ export function buildUnderstandUserMessage(
   regions: Region[],
   groups: RegionGroup[],
   hasImage: boolean,
-  recentDesigns: SiteDesign[] = [],
+  recentDesigns: RecentSite[] = [],
   lens: string = pickLens()
 ): string {
   const parts: string[] = []
   if (recentDesigns.length > 0) {
     parts.push(
       "THE USER'S RECENT SITES — this one must not look related to any of them:\n" +
-        recentDesigns.map(d => `- ${describeDesign(d)}`).join('\n')
+        recentDesigns.map(r => `- ${describeDesign(r.design)}${r.brand ? `; named "${r.brand}"` : ''}${r.accent ? `; accent ${r.accent}` : ''}`).join('\n') +
+        '\nDo not reuse those names or anything that sounds like them, and pick an accent hue clearly different from theirs unless the prompt names a colour.'
     )
   }
   const keywordStyle = resolveByKeywords(prompt)

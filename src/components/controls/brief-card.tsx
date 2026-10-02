@@ -4,6 +4,7 @@ import { useState } from 'react'
 import { useWorkflowStore } from '@/store/workflow-store'
 import { Brain, ChevronDown } from 'lucide-react'
 import type { BriefElement } from '@/lib/ai/brief'
+import { RegionIntentChips } from './region-intent-chips'
 
 /**
  * What the understanding stage made of the request.
@@ -14,9 +15,16 @@ import type { BriefElement } from '@/lib/ai/brief'
  * layout when it was meant as a picture used to shape the output silently.
  */
 
+const ANCHOR_TEXT: Record<string, string> = {
+  exact: 'exactly where drawn',
+  anywhere: 'anywhere in its part',
+  behind: 'behind',
+}
+
 const ROLE_LABEL: Record<BriefElement['role'], string> = {
   layout: 'layout',
   illustration: 'picture',
+  object: '3D object',
   decoration: 'decoration',
   motion: 'motion path',
   connector: 'connector',
@@ -25,6 +33,7 @@ const ROLE_LABEL: Record<BriefElement['role'], string> = {
 export function BriefCard() {
   const brief = useWorkflowStore((s) => s.brief)
   const [open, setOpen] = useState(true)
+  const [editing, setEditing] = useState<string | null>(null)
 
   if (!brief) return null
 
@@ -64,19 +73,39 @@ export function BriefCard() {
                 {brief.drawing.reading || 'read as shapes'}
               </p>
               <div className="flex flex-wrap gap-1">
-                {brief.drawing.elements.map((e) => (
-                  <span
-                    key={e.name + e.regions.join()}
-                    className="rounded-md border border-white/10 bg-black/30 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    title={e.render ?? undefined}
-                  >
-                    <span className="text-foreground/80">{e.name}</span>
-                    {' · '}
-                    {ROLE_LABEL[e.role]}
-                    <span className="text-muted-foreground/50"> {e.regions.map((n) => `R${n}`).join('+')}</span>
-                  </span>
-                ))}
+                {brief.drawing.elements.map((e) => {
+                  const key = e.name + e.regions.join()
+                  return (
+                    <button
+                      type="button"
+                      key={key}
+                      onClick={() => setEditing(editing === key ? null : key)}
+                      aria-expanded={editing === key}
+                      className={`rounded-md border px-1.5 py-0.5 text-left text-[10px] text-muted-foreground transition-colors hover:border-white/25 ${editing === key ? 'border-primary/50 bg-primary/10' : 'border-white/10 bg-black/30'}`}
+                      title={e.render ?? 'Click to correct how this was read'}
+                    >
+                      <span className="text-foreground/80">{e.name}</span>
+                      {' · '}
+                      {ROLE_LABEL[e.role]}
+                      {' · '}
+                      {ANCHOR_TEXT[e.anchor] ?? ''}
+                      <span className="text-muted-foreground/50"> {e.regions.map((n) => `R${n}`).join('+')}</span>
+                    </button>
+                  )
+                })}
               </div>
+              {editing && (() => {
+                const e = brief.drawing.elements.find((x) => x.name + x.regions.join() === editing)
+                if (!e) return null
+                return (
+                  <div className="rounded-lg border border-white/10 bg-black/25 p-2">
+                    <p className="mb-2 text-muted-foreground/80">
+                      Not what you meant? Say what <span className="text-foreground/80">{e.regions.map((n) => `R${n}`).join('+')}</span> is — then Generate again. Your answer is final.
+                    </p>
+                    <RegionIntentChips regionNumbers={e.regions} compact />
+                  </div>
+                )
+              })()}
             </div>
           )}
 
