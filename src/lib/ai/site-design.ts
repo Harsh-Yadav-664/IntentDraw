@@ -311,7 +311,8 @@ export function enforceDesign(code: string, design: SiteDesign): string {
     })
     // Small, tracked-out ALL-CAPS labels are the commonest "template chrome"
     // tell (avoid-ai-design T5/SD4): keep the text, drop the costume.
-    if (/\buppercase\b/.test(value) && /\btracking-(?:widest|wider|\[0?\.(?:[1-9]\d*)em\])/.test(value) && /\btext-(?:xs|sm|\[(?:9|1[0-3])px\])\b/.test(value)) {
+    // Also ALL-CAPS body text: uppercase on anything set at body size.
+    if (/\buppercase\b/.test(value) && /\btext-(?:xs|sm|base|\[(?:9|1[0-6])px\])\b/.test(value)) {
       value = value.replace(/(^|[\s"'`])uppercase(?=$|[\s"'`])/, '$1').replace(/(^|[\s"'`])tracking-(?:widest|wider|\[[^\]]+\])(?=$|[\s"'`])/, '$1')
       removed = true
     }
@@ -325,5 +326,15 @@ export function enforceDesign(code: string, design: SiteDesign): string {
     out += value
     last = end
   }
-  return out + code.slice(last)
+  return stripCommentLabels(out + code.slice(last))
+}
+
+/**
+ * Removes the "// " code-comment costume from short ALL-CAPS labels in JSX text
+ * ("// ARCHITECTURAL SHOWCASE" → "ARCHITECTURAL SHOWCASE", which the class pass
+ * then usually turns into a plain label). Only text between tags that is a
+ * capitalised label — a code sample's real comments are left alone.
+ */
+export function stripCommentLabels(code: string): string {
+  return code.replace(/>(\s*)\/\/\s+([A-Z0-9][A-Z0-9 .,&·:/#'()+-]{2,60})(\s*)</g, '>$1$2$3<')
 }

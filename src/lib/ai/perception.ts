@@ -186,7 +186,7 @@ export function looksHandwritten(region: Region): boolean {
 }
 
 /** Share of a region's points inside another (closed) region's outline, ellipse or box. */
-function insideShare(inner: Region, outer: Region): number {
+export function insideShare(inner: Region, outer: Region): number {
   const o = outer.geometry
   const points = absolutePoints(inner)
   if (points.length === 0) return 0

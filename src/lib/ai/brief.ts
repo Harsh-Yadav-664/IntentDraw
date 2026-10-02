@@ -2,7 +2,7 @@ import type { Region, RegionGroup } from '@/types'
 import { PRESETS, resolveByKeywords, stablePresetFor } from './design-tokens'
 import { sanitizeUserPrompt } from './prompt-rules'
 import { simplifyToBudget } from './shape-path'
-import { looksHandwritten, perceiveDrawing } from './perception'
+import { insideShare, looksHandwritten, perceiveDrawing } from './perception'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
 import { CORNERS, DENSITIES, HEADINGS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
@@ -435,7 +435,32 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       section: sectionForPage(pageIndexForRegion(region), sectionNames),
     })
   }
-  return keepPagesTogether(out, regions, sectionNames)
+  return keepPagesTogether(mergeIntoSpheres(out, regions), regions, sectionNames)
+}
+
+/**
+ * Marks drawn inside a sphere's circle are drawn ON the sphere, so they turn
+ * with it. A real run made the circle a sphere and its eight network lines
+ * eight flat "routes" — a blank globe with lines pasted over it.
+ */
+function mergeIntoSpheres(els: BriefElement[], regions: Region[]): BriefElement[] {
+  const absorbed = new Set<BriefElement>()
+  const merged = els.map(sphere => {
+    if (sphere.form !== 'sphere') return sphere
+    const body = regions.find(r => sphere.regions.includes(r.regionNumber) && r.geometry.type === 'circle')
+    if (!body) return sphere
+    const extra: number[] = []
+    for (const e of els) {
+      if (e === sphere || absorbed.has(e) || e.form === 'sphere' || e.role === 'layout' || e.role === 'connector') continue
+      const members = regions.filter(r => e.regions.includes(r.regionNumber))
+      if (members.length > 0 && members.every(m => insideShare(m, body) >= 0.85)) {
+        extra.push(...e.regions)
+        absorbed.add(e)
+      }
+    }
+    return extra.length > 0 ? { ...sphere, regions: [...sphere.regions, ...extra] } : sphere
+  })
+  return merged.filter(e => !absorbed.has(e))
 }
 
 /**

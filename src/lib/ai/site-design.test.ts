@@ -141,3 +141,17 @@ describe('template chrome', () => {
     expect(enforceDesign(code, { ...SHARP, corners: 'pill' })).toBe(code)
   })
 })
+
+describe('comment-style labels', () => {
+  it('drops the "//" costume from capitalised labels only', async () => {
+    const { stripCommentLabels } = await import('./site-design')
+    expect(stripCommentLabels('<p className="x">// ARCHITECTURAL SHOWCASE</p>')).toBe('<p className="x">ARCHITECTURAL SHOWCASE</p>')
+    // A real code comment in a code sample stays.
+    expect(stripCommentLabels('<pre>// fetch the user first</pre>')).toBe('<pre>// fetch the user first</pre>')
+  })
+
+  it('turns ALL-CAPS body text back to normal case', () => {
+    const code = `<p className="text-sm uppercase leading-relaxed">Three critical deployments</p>`
+    expect(enforceDesign(code, { ...SHARP, corners: 'pill' })).toBe(`<p className="text-sm leading-relaxed">Three critical deployments</p>`)
+  })
+})

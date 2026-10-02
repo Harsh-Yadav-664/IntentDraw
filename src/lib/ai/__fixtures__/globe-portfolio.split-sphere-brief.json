@@ -1,0 +1,216 @@
+{
+ "tone": [
+  "premium",
+  "technical",
+  "confident",
+  "minimal"
+ ],
+ "avoid": [
+  "a single neon accent on near-black",
+  "identical rounded stat cards with soft grey shadows",
+  "a centered hero with a gradient headline and a '→' button"
+ ],
+ "brand": "Kai Nakamura",
+ "design": {
+  "corners": "sharp",
+  "density": "airy",
+  "bodyFont": "IBM Plex Mono",
+  "headings": "oversized",
+  "surfaces": "flat",
+  "displayFont": "Archivo Black"
+ },
+ "source": "model",
+ "concept": "A vintage travel poster for a systems engineer, where the globe is a map of the routes this person has built and the stats are the stamps in the passport.",
+ "drawing": {
+  "kind": "mixed",
+  "reading": "A large circle on the right filled with colored lines and small nodes, a handwritten word on the left, and a wide rectangle below it.",
+  "elements": [
+   {
+    "form": "sphere",
+    "name": "Globe",
+    "role": "illustration",
+    "depth": 1,
+    "motion": "Tilts and rotates slowly, following the pointer and scroll; the routes pulse gently.",
+    "render": "A dark, matte sphere with a faint wireframe grid; the colored routes and nodes wrap around its surface and glow softly against the near-black background.",
+    "regions": [
+     1
+    ],
+    "section": "Hero",
+    "placement": "hero-background"
+   },
+   {
+    "form": "line",
+    "name": "Route A",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A thin, glowing blue line that curves across the globe's surface, ending in a small node.",
+    "regions": [
+     2
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route B",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A short, glowing green line running horizontally across the upper part of the globe.",
+    "regions": [
+     3
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route C",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A glowing purple arc that sweeps across the right side of the globe, connecting two nodes.",
+    "regions": [
+     4
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route D",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A glowing orange line that curves down the lower-right of the globe.",
+    "regions": [
+     5
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route E",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A glowing red line that drops vertically near the bottom of the globe.",
+    "regions": [
+     6
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route F",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A glowing grey line that runs diagonally across the lower-left of the globe.",
+    "regions": [
+     7
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route G",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A short, glowing grey line near the center-left of the globe.",
+    "regions": [
+     8
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": "line",
+    "name": "Route H",
+    "role": "illustration",
+    "depth": 2,
+    "motion": "Pulses with a soft light that travels along its length.",
+    "render": "A thin, glowing grey line running horizontally across the middle of the globe.",
+    "regions": [
+     9
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": null,
+    "name": "Name",
+    "role": "layout",
+    "depth": 0,
+    "motion": null,
+    "render": "The word 'Name' in a large, handwritten script, rendered in a soft lavender-white that glows faintly against the dark background.",
+    "regions": [
+     10
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   },
+   {
+    "form": null,
+    "name": "Achievements band",
+    "role": "layout",
+    "depth": 0,
+    "motion": null,
+    "render": "A single horizontal band with a slightly lighter dark surface, holding five one-word stats with small numbers: 'Hackathons 12', 'Deployments 240', 'Latency 4ms', 'Uptime 99.99%', 'Setups 38'.",
+    "regions": [
+     11
+    ],
+    "section": "Hero",
+    "placement": "inline"
+   }
+  ]
+ },
+ "generic": "A near-black developer portfolio with a single neon accent, a centered hero with a gradient headline, and a row of identical rounded stat cards with soft shadows.",
+ "palette": {
+  "text": "#E8E6E1",
+  "accent": "#D4A843",
+  "surface": "#141418",
+  "secondary": "#4A90E2",
+  "background": "#0A0A0C"
+ },
+ "styleId": "glassmorphism",
+ "summary": "A dark, premium portfolio for Kai Nakamura, a competitive programmer and systems engineer. The hero pairs a large handwritten name with a 3D globe of glowing, color-coded network routes that reacts to",
+ "audience": "Technical recruiters, engineering managers, and hackathon organizers looking for a sharp, high-signal systems engineer.",
+ "sections": [
+  {
+   "name": "Navigation",
+   "purpose": "A minimal top bar with the brand name on the left and a single 'View Work' link on the right."
+  },
+  {
+   "name": "Hero",
+   "purpose": "The opening screen: a large handwritten name on the left, a 3D globe of glowing network routes on the right, and a one-line role statement below the name."
+  },
+  {
+   "name": "Achievements",
+   "purpose": "A single horizontal band of one-word stats with small numbers: Hackathons, Deployments, Latency, Uptime, Setups."
+  },
+  {
+   "name": "SelectedWork",
+   "purpose": "Three case studies with a title, a one-line problem, and a single metric, set in a tight editorial grid."
+  },
+  {
+   "name": "About",
+   "purpose": "A short, direct paragraph about who Kai is and what they build, with a small portrait or monogram."
+  },
+  {
+   "name": "Contact",
+   "purpose": "A single email link, a GitHub link, and a one-line invitation to collaborate."
+  },
+  {
+   "name": "Footer",
+   "purpose": "The brand name, a copyright line, and a small 'Built with care' note."
+  }
+ ],
+ "signature": "A 3D globe of glowing, color-coded network routes that tilts and rotates with the pointer, with the achievement stats set like passport stamps in a single horizontal band.",
+ "primaryAction": "View the work"
+}

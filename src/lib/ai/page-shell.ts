@@ -159,21 +159,6 @@ export function placementOf(e: BriefElement, regions: Region[]) {
 
 type Placed = NonNullable<ReturnType<typeof placementOf>>
 
-/**
- * Text marks a position, not a size: a handwritten "Name" is 18% wide because
- * that's how big the user's handwriting was, while the heading it stands for is
- * set huge. So text gets its drawn top-left and room up to the next drawn thing
- * to its right (or the screen edge) — never the width of the scribble.
- */
-function textClasses(at: Placed, all: Array<Placed | null>): string {
-  const blockers = all
-    .filter((o): o is Placed => !!o && o !== at && o.left > at.left + 1)
-    .filter(o => o.top < at.top + Math.max(at.height, 12) && o.top + o.height > at.top)
-  const edge = blockers.length > 0 ? Math.min(...blockers.map(o => o.left)) - 2 : 95
-  const room = Math.max(20, edge - at.left)
-  return `lg:absolute lg:left-[${pct(at.left)}] lg:top-[${pct(at.top)}] lg:max-w-[${pct(room)}]`
-}
-
 const ROLE_TEXT: Record<BriefElement['role'], string> = {
   layout: 'content',
   illustration: 'picture',
@@ -182,11 +167,40 @@ const ROLE_TEXT: Record<BriefElement['role'], string> = {
   connector: 'arrow',
 }
 
+interface Slot {
+  e: BriefElement
+  at: Placed
+  /** Made only of handwriting — marks where text goes, not how big it is. */
+  written: boolean
+}
+
+/** How much two drawn boxes share horizontally, as a share of the narrower one. */
+function overlapX(a: Placed, b: Placed): number {
+  const shared = Math.min(a.left + a.width, b.left + b.width) - Math.max(a.left, b.left)
+  return shared / Math.max(1, Math.min(a.width, b.width))
+}
+
 /**
- * The block a section call gets about what the user drew inside it: every
- * element with its exact place, what to do with it, and — for the section the
- * art layer sits behind — that the picture is already painted and must stay
- * visible. '' when nothing was drawn in these sections.
+ * Drawn content grouped into columns: things drawn one above another, sharing
+ * horizontal space. Positioning each one absolutely made them collide — a
+ * real run set the name huge, it wrapped to two lines, and the stats band
+ * pinned at its drawn spot covered it. A column keeps its drawn position but
+ * stacks its items in normal flow, with the drawn gaps between them.
+ */
+function columnsOf(slots: Slot[]): Slot[][] {
+  const columns: Slot[][] = []
+  for (const slot of [...slots].sort((a, b) => a.at.top - b.at.top)) {
+    const column = columns.find(c => c.some(o => overlapX(o.at, slot.at) > 0.3))
+    if (column) column.push(slot)
+    else columns.push([slot])
+  }
+  return columns
+}
+
+/**
+ * The block a section call gets about what the user drew inside it: drawn
+ * content as positioned columns with exact classes, pictures that are already
+ * painted behind it, and arrows. '' when nothing was drawn in these sections.
  */
 export function describeDrawnSections(
   sectionNames: string[],
@@ -199,43 +213,82 @@ export function describeDrawnSections(
   const host = sceneHost(brief, regions, sections)
   const blocks: string[] = []
 
+  const notesFor = (e: BriefElement): string => {
+    const own = regions
+      .filter(r => e.regions.includes(r.regionNumber) && r.intent?.trim())
+      .map(r => `R${r.regionNumber}: "${r.intent.trim().slice(0, 160)}"`)
+    const grouped = groups
+      .filter(g => g.intent.trim() && regions.some(r => e.regions.includes(r.regionNumber) && r.groupId === g.id))
+      .map(g => `group "${g.name}": "${g.intent.trim().slice(0, 200)}"`)
+    const all = [...own, ...grouped]
+    return all.length > 0 ? ` (user's notes — ${all.join('; ')})` : ''
+  }
+  const ids = (e: BriefElement) => e.regions.map(n => `R${n}`).join('+')
+  const where = (at: Placed) => `left ${pct(at.left)}, top ${pct(at.top)}, ${pct(at.width)} wide, ${pct(at.height)} tall`
+
   for (const name of sectionNames) {
-    const own = brief.drawing.elements.filter(e => elementSection(e, regions, sections) === name)
+    const own = brief.drawing.elements
+      .filter(e => elementSection(e, regions, sections) === name)
+      .map(e => ({ e, at: placementOf(e, regions) }))
+      .filter((x): x is { e: BriefElement; at: Placed } => !!x.at)
     if (own.length === 0) continue
     const lines: string[] = []
-    const placed = own.map(e => ({ e, at: placementOf(e, regions) }))
-    for (const { e, at } of placed) {
-      if (!at) continue
-      const ids = e.regions.map(n => `R${n}`).join('+')
-      const notes = regions
-        .filter(r => e.regions.includes(r.regionNumber) && r.intent?.trim())
-        .map(r => `R${r.regionNumber}: "${r.intent.trim().slice(0, 160)}"`)
-      const where = `left ${pct(at.left)}, top ${pct(at.top)}, ${pct(at.width)} wide, ${pct(at.height)} tall`
-      const members = regions.filter(r => e.regions.includes(r.regionNumber))
-      // A word the user wrote by hand marks text that belongs exactly here.
-      const written = members.length > 0 && members.every(looksHandwritten)
-        ? ` — the user HANDWROTE a word here: it marks the text that belongs at this spot (e.g. "Name" means the person's name, as a heading). Read the brief for what it says.`
-        : ''
-      const what = (e.render ? ` — ${e.render}` : '') + written
-      const groupNotes = groups
-        .filter(g => g.intent.trim() && regions.some(r => e.regions.includes(r.regionNumber) && r.groupId === g.id))
-        .map(g => `group "${g.name}": "${g.intent.trim().slice(0, 200)}"`)
-      const allNotes = [...notes, ...groupNotes]
-      const note = allNotes.length > 0 ? ` (user's notes — ${allNotes.join('; ')})` : ''
-      if (e.role === 'layout') {
-        lines.push(`- "${e.name}" (${ids}, ${ROLE_TEXT[e.role]}) at ${where}${what}${note}\n  → its wrapper gets exactly: className="${written ? textClasses(at, placed.map(x => x.at)) : at.classes}" (plus your own styling classes)`)
-      } else if (e.role === 'connector') {
-        lines.push(`- "${e.name}" (${ids}, an arrow) at ${where}${what}${note} — show the relationship it draws (a flow, a link, a sequence) between the things at its ends.`)
-      } else {
-        lines.push(`- "${e.name}" (${ids}, ${ROLE_TEXT[e.role]}) at ${where}${what} — ALREADY PAINTED behind this section by <${SCENE_COMPONENT} />. Do not draw it, import it or cover it: keep that area free of panels, cards and text.`)
+
+    // Drawn content, as columns.
+    const slots: Slot[] = own
+      .filter(x => x.e.role === 'layout')
+      .map(x => ({
+        ...x,
+        written: regions.filter(r => x.e.regions.includes(r.regionNumber)).every(looksHandwritten),
+      }))
+    const everything = own.map(x => x.at)
+    for (const column of columnsOf(slots)) {
+      const first = column[0]
+      const left = Math.min(...column.map(s => s.at.left))
+      const boxRight = Math.max(...column.filter(s => !s.written).map(s => s.at.left + s.at.width), left)
+      // Room for text: up to the next drawn thing to the right that it would run into.
+      const blockers = everything
+        .filter(o => !column.some(s => s.at === o) && o.left > left + 1)
+        .filter(o => o.top < first.at.top + 60 && o.top + o.height > first.at.top)
+      const textRoom = (blockers.length > 0 ? Math.min(...blockers.map(o => o.left)) - 2 : 95) - left
+      const width = Math.max(20, column.some(s => s.written) ? Math.max(textRoom, boxRight - left) : boxRight - left)
+      const wrapper = `lg:absolute lg:left-[${pct(left)}] lg:top-[${pct(first.at.top)}] lg:w-[${pct(width)}]${column.length > 1 ? ' lg:flex lg:flex-col' : ''}`
+
+      lines.push(
+        column.length > 1
+          ? `- A column at ${where(first.at)} → wrapper className="${wrapper}". Its items stay in normal flow, top to bottom, so a tall heading pushes the next item down instead of overlapping it:`
+          : `- At ${where(first.at)} → wrapper className="${wrapper}":`
+      )
+      column.forEach((slot, i) => {
+        const prev = column[i - 1]
+        const gap = prev ? Math.max(0, slot.at.top - (prev.at.top + prev.at.height)) : 0
+        const sizing = [
+          i > 0 && gap > 1 ? `lg:mt-[${Math.round(gap)}vh]` : '',
+          !slot.written && column.length > 1 ? `lg:w-[${pct(Math.min(100, (slot.at.width / width) * 100))}]` : '',
+        ].filter(Boolean).join(' ')
+        const written = slot.written
+          ? ' — the user HANDWROTE a word here: it marks the text that belongs at this spot (e.g. "Name" means the site\'s name, as the main heading). Its drawn width is just handwriting, not a size.'
+          : ''
+        lines.push(
+          `  ${column.length > 1 ? `${i + 1}. ` : ''}"${slot.e.name}" (${ids(slot.e)}, ${slot.written ? 'text' : 'content'})${slot.e.render ? ` — ${slot.e.render}` : ''}${written}${notesFor(slot.e)}${sizing ? `\n     item className adds "${sizing}"` : ''}`
+        )
+      })
+    }
+
+    for (const { e, at } of own) {
+      if (e.role === 'connector') {
+        lines.push(`- "${e.name}" (${ids(e)}, an arrow) at ${where(at)}${e.render ? ` — ${e.render}` : ''}${notesFor(e)} — show the relationship it draws (a flow, a link, a sequence) between the things at its ends.`)
+      } else if (e.role !== 'layout') {
+        lines.push(`- "${e.name}" (${ids(e)}, ${ROLE_TEXT[e.role]}) at ${where(at)}${e.render ? ` — ${e.render}` : ''} — ALREADY PAINTED behind this section by <${SCENE_COMPONENT} />. Do not draw it, import it or cover it: keep that area free of panels, cards and text.`)
       }
     }
+
     if (lines.length === 0) continue
     const behind = name === host
       ? `\nThe user's drawing is painted behind ${name}: give ${name} NO background colour or full-width overlay of its own. Keep text readable with a panel sized to the text, or a text shadow.`
       : ''
     blocks.push(
-      `WHAT THE USER DREW IN ${name} — honour it exactly. ${name} is one full screen: its root is <section className="relative min-h-screen …">. Positions are % of that screen; on desktop (lg:) each item sits exactly where it was drawn, on mobile everything stacks in reading order.\n${lines.join('\n')}${behind}`
+      `WHAT THE USER DREW IN ${name} — honour it exactly. ${name} is one full screen: its root is <section className="relative min-h-screen …">. Positions are % of that screen; on desktop (lg:) things sit exactly where they were drawn, on mobile everything stacks in reading order.\n${lines.join('\n')}${behind}`
     )
   }
   return blocks.join('\n\n')

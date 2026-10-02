@@ -77,9 +77,11 @@ describe('the page shell, built in code', () => {
 
   it('gives the section exact placement for what was drawn in it', () => {
     const block = describeDrawnSections(['HeroSection'], brief, regions)
-    expect(block).toMatch(/className="lg:absolute lg:left-\[4.9%\] lg:top-\[56%\] lg:w-\[49.6%\]"/) // R11
-    // Handwriting marks a position, not a size: room up to the globe.
-    expect(block).toMatch(/lg:left-\[4.4%\] lg:top-\[22.9%\] lg:max-w-\[58.2%\]/)
+    // One column: the handwritten name with room up to the globe (not the
+    // scribble's width), then the box drawn under it, in normal flow so a tall
+    // heading pushes it down instead of overlapping it (a real run collided).
+    expect(block).toMatch(/className="lg:absolute lg:left-\[4.4%\] lg:top-\[22.9%\] lg:w-\[58.2%\] lg:flex lg:flex-col"/)
+    expect(block).toMatch(/lg:mt-\[23vh\] lg:w-\[85.2%\]/) // R11, 23% of a screen below the name
     expect(block).toMatch(/HANDWROTE/)
     expect(block).toMatch(/ALREADY PAINTED behind this section/)
     expect(describeDrawnSections(['AboutSection'], brief, regions)).toBe('')
@@ -152,5 +154,16 @@ describe('one drawn page, one section', () => {
       prompt
     )
     expect(new Set(brief.drawing.elements.map(e => e.section))).toEqual(new Set(['Hero']))
+  })
+})
+
+describe('a sphere keeps what is drawn on it', () => {
+  it('merges marks drawn inside the circle back into the sphere — a real run split them into 8 flat "routes"', async () => {
+    const split = (await import('./__fixtures__/globe-portfolio.split-sphere-brief.json')).default
+    const brief = normalizeBrief(split, regions, prompt)
+    const globe = brief.drawing.elements.find(e => e.form === 'sphere')!
+    expect([...globe.regions].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(brief.drawing.elements.filter(e => e.name.startsWith('Route'))).toHaveLength(0)
+    expect(brief.drawing.elements).toHaveLength(3)
   })
 })
