@@ -48,7 +48,8 @@
 
 0. ~~Models for hosting (#10, #11)~~ — **decided 2026-10-20:** the first hosted version is for feedback; visitors bring their own key (as many providers as possible, aggregators included). Our keys are never served. "Pay to use" shows as Coming soon, on a step after sign-in (production only). No self-hosted model; build a configurable provider layer; collect data with consent. Build plans are on the two issues — to be done at the hosting step.
 
-1. ~~`PEXELS_API_KEY`~~ — **done** (set in `.env.local`).
+1. **Cloudflare keys for generated images (2026-10-20)** — free account at dash.cloudflare.com; Account ID from Workers AI; My Profile → API Tokens → Create Token → "Workers AI" template. Put `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in `.env.local`. Until then, pictures stay drawn in code. Before charging money: re-read BFL's terms linked from Cloudflare's FLUX.1 [schnell] page (the weights are Apache-2.0).
+   ~~`PEXELS_API_KEY`~~ — set, now only used by the old `NEXT_PUBLIC_IMAGE_SOURCE=photos` path.
 2. ~~`OPENROUTER_API_KEY`~~ — **done**. Free tier is 50 requests/day at $0; a one-time $10 credit raises it to 1000/day (no subscription).
 3. **Supabase Auth settings for the production domain** (only at deploy time) — Authentication → URL Configuration: Site URL = deployed domain; add `https://<domain>/auth/callback` (and `http://localhost:3000/auth/callback`) to Redirect URLs. Decide whether email confirmation is required. Free projects pause after 7 days idle.
 4. **Vercel project** (only at deploy time) — import the repo, set every variable from `.env.example`, do NOT set `NEXT_PUBLIC_AUTH_BYPASS`. Generation routes request `maxDuration = 300`; Hobby caps lower — Pro ($20/mo) if stages get killed.
@@ -70,7 +71,7 @@ Items marked **(R#)** come from the 2026-10-02 research (§5); the full evidence
 7. ~~Show the saved brief on reopen~~ — **done** (restored from the saved page parts).
 8. **Speed on paid keys.** Run section batches 2–3 at a time when the provider allows it (`use-ai.ts` is the only place to change). Free tiers stay serial.
 9. **Guard drawn irregularities (R11).** Models "correct" one bigger/offset element back to the repeated pattern 70–96% of the time (Pattern over Pixels). State deliberate irregularities explicitly in the section's drawing block ("R5 is intentionally 1.6× wider than R4 and R6 — keep it").
-10. **Images — owner decision 2026-10-19: no third-party stock photos while free; AI-generated images in the paid hosted tier.** Done 2026-10-20: every image is drawn in code in the site's palette (`image-art.ts`). Next, for the paid tier: an image route that turns the keyword URL (+ brief concept + palette) into a generated image, cached per project, swapped in where `artImage` runs today. Price check needed before choosing the model.
+10. **Images — generated (owner decision revised 2026-10-20: ready-to-launch sites, nothing that needs a credit line).** Built: FLUX.1 [schnell] on Cloudflare per picture, described by its alt / data item, styled by the brief's `imagery`, stored in Supabase Storage (`site-images`), made while the next section builds (see CLAUDE.md "Images are generated"). Next: (a) hosted visitors — our Cloudflare account must not pay (`IMAGE_GENERATION_HOSTED` stays off); BYOK image providers (Gemini/OpenRouter image models, the user's own Cloudflare) join the provider layer of #11; (b) users replacing pictures themselves → edit mode, #17; (c) a free-tier budget guard (≈170 images/day: count per day, fall back to drawn art when spent).
 
 **Intent engine — next steps**
 1. **More code-built objects:** pyramid, ring/torus, floating card stack, extruded logo from a drawn outline; "3D tilt" for any content box the user calls 3D.
@@ -141,6 +142,17 @@ Folder: `D:\CODE\PROJECTS\intentdraw-research` — `repos/` (18 shallow clones, 
 ---
 
 ## Done (kept briefly so nothing is re-investigated)
+
+**2026-10-20 (later) — output quality pass, one commit each**
+- **Generated images** (above, #10 in §2). Openverse unreachable from the owner's network; Commons rejected (credit lines); Gemini image models limit 0 on the free key; Pollinations free tier drew the wrong dish with a watermark.
+- **One fact sheet** in the brief (address, phone, email, hours) used by every section; plan rule against overlapping sections (one "Visit", not Locations + Reservations + Contact).
+- **Template headlines** ("Welcome to …", "Discover …", "Where X meets Y") are a P0 → one corrective call.
+- **Contrast fixed in code**: a className whose own background and text colour fail AA gets the palette's ink (white-on-orange buttons, 2.6:1, were on every button of a real run).
+- **Layout check acts**: right after a run, up to two sections with text-on-text, overflow or a collapsed stretch are rebuilt once with the check's note, inside the 5-minute budget.
+- **'Auto' models** (default): Gemini for the first screen and content, Groq for navigation, footer and forms.
+- **Speed: provider lanes side by side + a hard 5-minute limit.** Same kind of prompt-only run: 648s before → 118s after (Gemini lane 3 at once, 44–55s each; Groq lane 6s). Sections still building at 4.5 min become placeholders.
+- **Still weak (seen in the 118s run):** the palette landed in a banned AI cluster (near-black + acid-green) despite the prompt rule — enforce in code on the brief's palette next; the hero's picture is drawn placeholder art until the Cloudflare keys are in; a button inherited dark-on-dark text the className contrast fix can't see (parent background) — the audit flags it.
+- `scripts/render-project.ts` screenshots any saved site with zero API calls.
 
 **2026-10-20 — the drawing looks right, and broken pieces stay contained (GitHub #3–#8, #14, #15)**
 - **The travel run's drawing** (fixture `travel-scenery.json`): a circle drawn among hills is split off as a sun *behind* them (`splitRoundBodies`); "background of the whole page" in the prompt fixes the scenery behind the whole page (`scope: 'page'`), and sections over it are told to stay translucent.
