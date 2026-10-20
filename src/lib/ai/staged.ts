@@ -13,6 +13,7 @@ import { repairGeneratedCode } from './repair'
 import { aliasSectionImports } from './assemble'
 import { describeProblem, findSyntaxProblem } from './validate'
 import { lintLayout } from './layout-lint'
+import { fixContrast } from './contrast-fix'
 import { aiLookNote, fixAiLook, scanAiLook } from './ai-look'
 import { MONOCHROME } from './prompt-rules'
 import { renderSceneComponent } from './scene-render'
@@ -142,9 +143,11 @@ export async function generateSectionStage(
   const pageSections = [...new Set([...(brief?.sections ?? []).map(s => s.name), ...sectionNames])]
   // A black-and-white site keeps its desaturated photos; any other loses the habit.
   const monochrome = MONOCHROME.test([prompt, brief?.concept, brief?.signature, ...(brief?.tone ?? [])].join(' '))
+  // Text that can't be read on its own button or band gets the palette's ink.
+  const inks = brief?.palette ? [brief.palette.text, brief.palette.background] : []
   const finish = (responseText: string) => {
     const repaired = repairGeneratedCode(aliasSectionImports(extractReact(responseText), pageSections))
-    return brief ? enforceDesign(repaired, brief.design, { monochrome }) : repaired
+    return fixContrast(brief ? enforceDesign(repaired, brief.design, { monochrome }) : repaired, inks).code
   }
 
   const started = Date.now()
