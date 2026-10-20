@@ -96,7 +96,9 @@ Defects, not preferences. Check your output against every one.
 1. FIRST SCREEN: headline + one clarifying line + an action + one piece of REAL
    content (interface fragment, image, priced list, metric row, nav with 3+
    links). A headline alone in an empty band fails. Never push content down the
-   page with leading empty space.
+   page with leading empty space. The headline says something only THIS
+   business could say — never "Welcome to …", "Discover …", "Experience …",
+   "Explore our …" or "Where X meets Y".
 2. NO SPACER ELEMENTS: no div, section or <br /> whose only job is height; no
    empty h-32/h-64 wrappers; no one short line alone inside a tall box.
 3. PADDING CEILING: section vertical padding NEVER exceeds py-24 (py-16/py-20

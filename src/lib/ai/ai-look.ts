@@ -38,6 +38,20 @@ function jsxText(code: string): string[] {
   return [...code.matchAll(/>([^<>{}]+)</g)].map(m => m[1].trim()).filter(t => t.length > 0)
 }
 
+/** The text of every h1 and h2, inner tags and string expressions included. */
+function headings(code: string): string[] {
+  return [...code.matchAll(/<h([12])\b[^>]*>([\s\S]*?)<\/h\1>/g)].map(m =>
+    m[2]
+      .replace(/\{\s*["'`]([^"'`{}]*)["'`]\s*\}/g, '$1')
+      .replace(/\{[^{}]*\}/g, ' ')
+      .replace(/<[^>]*>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  )
+}
+
+const TEMPLATE_HEADLINE = /^(?:welcome to|discover (?:the|our|a|your)|experience (?:the|our|a)|explore (?:the|our)|your (?:journey|gateway|destination)|where .{2,40} meets)\b/i
+
 const has = (classes: string, re: RegExp) => re.test(` ${classes} `)
 
 export function scanAiLook(code: string): AiTell[] {
@@ -82,6 +96,12 @@ export function scanAiLook(code: string): AiTell[] {
   const vagueLine = text.find(t => vague.test(t))
   if (vagueLine) {
     add({ id: 'CP1', severity: 'P1', what: `vague marketing copy ("${vagueLine.slice(0, 50)}")`, instead: 'say the concrete thing this business does, for whom, with a specific detail' })
+  }
+  // CP2 — a template headline. P0, above the catalogue: it is the first line a
+  // visitor reads ("Welcome to Casa del Sol" headed a real run's hero).
+  const headline = headings(code).find(t => TEMPLATE_HEADLINE.test(t))
+  if (headline) {
+    add({ id: 'CP2', severity: 'P0', what: `a template headline ("${headline.slice(0, 50)}")`, instead: 'say something only this business could say — what it makes, for whom, or where — in the brand voice' })
   }
   // CP3 — arrow glyphs stapled to text.
   const arrows = text.filter(t => /(?:→|->|⟶|↗)\s*$/.test(t) || /^\s*(?:→|⟶)/.test(t)).length

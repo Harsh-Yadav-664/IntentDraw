@@ -16,6 +16,13 @@ describe('scanAiLook', () => {
     expect(tells).toEqual([expect.objectContaining({ id: 'IM4', severity: 'P0' })])
   })
 
+  it('treats a template headline as P0 — it is the first thing a visitor reads', () => {
+    const tells = scanAiLook('<h1 className="font-display text-7xl">Welcome to<br /> {"Casa del Sol"}</h1>')
+    expect(tells.find(t => t.id === 'CP2')).toMatchObject({ severity: 'P0', what: 'a template headline ("Welcome to Casa del Sol")' })
+    expect(ids('<h2>Where <span>craft</span> meets code</h2>')).toContain('CP2')
+    expect(ids('<h1>Tacos al pastor, carved off the trompo since 1987</h1><p>Welcome to the family.</p>')).not.toContain('CP2')
+  })
+
   it('counts patterns before calling them a habit', () => {
     const card = `<div className="rounded-2xl shadow-xl p-6">x</div>`
     expect(ids(`const A = () => <div>${card}${card}</div>`)).not.toContain('K2')
