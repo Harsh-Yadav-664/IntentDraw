@@ -24,6 +24,12 @@ describe('resolveProvider', () => {
     expect(resolveProvider('auto', ['Reservations', 'Contact'])).toBe('groq')
     expect(resolveProvider('auto', ['Hero'])).toBe('gemini')
     expect(resolveProvider('auto', ['Menu', 'Contact'])).toBe('gemini') // mixed: content wins
+    // Names a real run gave its sections.
+    expect(resolveProvider('auto', ['NavIsobar', 'OvenFooter'])).toBe('groq')
+    expect(resolveProvider('auto', ['NeighborhoodPickupVisit'])).toBe('groq')
+    expect(resolveProvider('auto', ['HearthForecastHero', 'BakeScheduleRadar'])).toBe('gemini')
+    expect(resolveProvider('auto', ['PreorderPantry', 'FlourAndFermentStory'])).toBe('gemini')
+    expect(resolveProvider('auto', ['Canvas'])).toBe('gemini') // "nav" inside a word doesn't count
     expect(resolveProvider('auto')).toBe('gemini') // understanding, the legacy path
     expect(resolveProvider(undefined)).toBe('gemini')
     expect(buildFallbackChain('auto')[0]).toBe('gemini')

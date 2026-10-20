@@ -5,6 +5,7 @@ import { assembleProgressive } from '@/lib/ai/assemble'
 import { assembleParts, cleanMeta, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
 import type { DesignBrief } from '@/lib/ai/brief'
 import { withImageMap } from '@/lib/images/slots'
+import { laneWidth, resolveProvider, type ProviderName } from '@/lib/ai/provider-choice'
 
 /**
  * Hook for AI operations: generate a page, stop a generation, and rebuild one
@@ -65,6 +66,12 @@ const IMAGE_WAIT_MS = 45000
 // the run is under four minutes old — one rebuild takes up to about a minute,
 // so a whole generation stays under five.
 const AUTO_FIX_WINDOW_MS = 4 * 60 * 1000
+
+// The owner's limit: a generation never takes more than five minutes. Sections
+// still building at 4.5 minutes are stopped and left as placeholders, each
+// rebuildable on its own; the last pictures get what time remains.
+const RUN_BUDGET_MS = 5 * 60 * 1000
+const SECTIONS_BUDGET_MS = 4.5 * 60 * 1000
 
 export function useAI() {
   // From the shared store, not local state: several components call useAI(),
@@ -261,17 +268,45 @@ export function useAI() {
       if (firstPass.code) setPreviewCode(firstPass.code)
       setGenerationProgress({ label: 'Building sections', done: 2, total: totalStages })
 
-      // Serial on purpose: a burst of parallel calls is what trips free-tier
-      // rate limits, and spacing them lets per-minute quota recover.
-      for (let i = 0; i < batches.length; i++) {
-        const sectionNames = batches[i]
+      // One lane per provider, side by side: their quotas are separate, so a
+      // Gemini section and a Groq section never compete. Inside a lane, Gemini
+      // builds up to three at once (it is limited per day, and its thinking
+      // models take 40–140s a call — in a row they alone broke the five-minute
+      // budget); Groq one at a time (one section nearly fills its per-minute
+      // token allowance).
+      let finished = 0
+      const building = new Set<string>()
+      const outOfTime: string[] = []
+      const late = new AbortController()
+      const lateTimer = setTimeout(() => late.abort(), Math.max(0, startedAt + SECTIONS_BUDGET_MS - Date.now()))
+      const batchSignal = AbortSignal.any([signal, late.signal])
+      const showProgress = () =>
         setGenerationProgress({
-          label: `Building ${sectionNames.join(' & ')}`,
-          done: 2 + i,
+          label: building.size > 0 ? `Building ${[...building].join(', ')}` : 'Building sections',
+          done: 2 + finished,
           total: totalStages,
         })
-        markPlan(sectionNames, 'building')
+      // A block joins the page one at a time: each is tried against the page as
+      // it stands, and two arriving together must not both pass against a page
+      // that has neither.
+      let joining: Promise<void> = Promise.resolve()
+      const join = (work: () => Promise<void>) => {
+        const run = joining.then(work)
+        joining = run.catch(() => {})
+        return run
+      }
 
+      const buildBatch = async (sectionNames: string[]) => {
+        if (late.signal.aborted) {
+          outOfTime.push(...sectionNames)
+          failed.push(...sectionNames)
+          markPlan(sectionNames, 'failed')
+          finished++
+          return
+        }
+        sectionNames.forEach((name) => building.add(name))
+        markPlan(sectionNames, 'building')
+        showProgress()
         try {
           const sectionRes = await fetch('/api/generate/section', {
             method: 'POST',
@@ -285,43 +320,64 @@ export function useAI() {
               tokenId,
               brief,
             }),
-            signal,
+            signal: batchSignal,
           })
           const sectionResult = await sectionRes.json()
-
           const blockCode: string | null = sectionResult.success && sectionResult.data?.code ? sectionResult.data.code : null
-          // Tried against the page as it stands: the server checked the block
-          // alone, but only here can it clash with what other calls wrote.
-          const trial = blockCode
-            ? assembleProgressive(shellCode, [...completed, blockCode], pending.filter((name) => !sectionNames.includes(name)))
-            : null
-          const problem = trial ? (trial.code ? await compileProblem(trial.code) : trial.error ?? 'could not be assembled') : null
-          if (problem) console.warn(`[useAI] ${sectionNames.join(', ')} left out — the page would not compile with it: ${problem}`)
 
-          if (blockCode && !problem) {
-            completed.push(blockCode)
-            const block: SectionBlock = { sections: sectionNames, code: blockCode, ...cleanMeta(sectionResult.data) }
-            blocks.push(block)
-            paintImages(block, completed.length - 1)
-            pending = pending.filter((name) => !sectionNames.includes(name))
-            markPlan(sectionNames, 'built')
-          } else {
-            failed.push(...sectionNames)
-            markPlan(sectionNames, 'failed')
-          }
+          await join(async () => {
+            if (signal.aborted || !shellCode) return
+            // Tried against the page as it stands: the server checked the block
+            // alone, but only here can it clash with what other calls wrote.
+            const trial = blockCode
+              ? assembleProgressive(shellCode, [...completed, blockCode], pending.filter((name) => !sectionNames.includes(name)))
+              : null
+            const problem = trial ? (trial.code ? await compileProblem(trial.code) : trial.error ?? 'could not be assembled') : null
+            if (problem) console.warn(`[useAI] ${sectionNames.join(', ')} left out — the page would not compile with it: ${problem}`)
+
+            if (blockCode && !problem) {
+              completed.push(blockCode)
+              const block: SectionBlock = { sections: sectionNames, code: blockCode, ...cleanMeta(sectionResult.data) }
+              blocks.push(block)
+              paintImages(block, completed.length - 1)
+              pending = pending.filter((name) => !sectionNames.includes(name))
+              markPlan(sectionNames, 'built')
+            } else {
+              failed.push(...sectionNames)
+              markPlan(sectionNames, 'failed')
+            }
+            // Repaint after every batch — this is the progressive fill.
+            const pass = assembleProgressive(shellCode, completed, pending)
+            if (pass.code) setPreviewCode(pass.code)
+          })
         } catch (error) {
-          if (isAbort(error)) throw error
+          if (isAbort(error) && signal.aborted) throw error
+          if (late.signal.aborted) outOfTime.push(...sectionNames)
           failed.push(...sectionNames)
           markPlan(sectionNames, 'failed')
+        } finally {
+          sectionNames.forEach((name) => building.delete(name))
+          finished++
+          showProgress()
         }
-
-        // Repaint after every batch — this is the progressive fill.
-        const pass = assembleProgressive(shellCode, completed, pending)
-        if (pass.code) setPreviewCode(pass.code)
       }
 
+      const lanes = new Map<ProviderName, string[][]>()
+      for (const batch of batches) {
+        const lane = resolveProvider(aiProvider, batch)
+        lanes.set(lane, [...(lanes.get(lane) ?? []), batch])
+      }
+      await Promise.all(
+        [...lanes].map(async ([lane, queue]) => {
+          const runners = Array.from({ length: Math.min(laneWidth(lane), queue.length) }, async () => {
+            for (let batch = queue.shift(); batch; batch = queue.shift()) await buildBatch(batch)
+          })
+          await Promise.all(runners)
+        })
+      ).finally(() => clearTimeout(lateTimer))
+
       setGenerationProgress({ label: 'Finishing the pictures', done: totalStages, total: totalStages })
-      await atMost(imageWork, IMAGE_WAIT_MS)
+      await atMost(imageWork, Math.max(3000, Math.min(IMAGE_WAIT_MS, startedAt + RUN_BUDGET_MS - Date.now())))
       if (signal.aborted) throw new DOMException('Stopped', 'AbortError')
 
       keepParts([])
@@ -331,7 +387,17 @@ export function useAI() {
       // A partial page still renders; say which pieces didn't make it rather
       // than throwing away everything that did.
       if (failed.length > 0) {
-        setError(`Generated, but these sections failed and are placeholders: ${failed.join(', ')}. Rebuild them from the Sections list.`)
+        const slow = failed.filter((name) => outOfTime.includes(name))
+        const broke = failed.filter((name) => !outOfTime.includes(name))
+        setError(
+          [
+            broke.length > 0 && `these sections failed: ${broke.join(', ')}`,
+            slow.length > 0 && `these ran past the five-minute limit: ${slow.join(', ')}`,
+          ]
+            .filter(Boolean)
+            .join('; ')
+            .replace(/^/, 'Generated, but ') + '. They are placeholders — rebuild each from the Sections list.'
+        )
       }
       return true
     } catch (error) {

@@ -15,6 +15,7 @@ import {
 } from './prompts'
 import { resolveDesignTokens } from './design-tokens'
 import { repairGeneratedCode } from './repair'
+import { resolveProvider, type ProviderName } from './provider-choice'
 import { assembleFile } from './assemble'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
@@ -81,24 +82,7 @@ function humanizeProviderError(raw: string | undefined): string {
   return raw.split('\n')[0].slice(0, 140)
 }
 
-/** A provider that answers calls — what 'auto' resolves to. */
-export type ProviderName = Exclude<AIProvider, 'auto'>
-
-// Sections whose job is structure — navigation, the footer, forms and plain
-// information — rather than the page's look and content.
-const STRUCTURAL_SECTION = /^(?:site|top|main|primary)?(?:nav|navigation|navbar|header|topbar|menubar|footer|contact|contactform|form|booking|reservations?|reserve|visit|location|locations|findus|hours|faq|faqs|newsletter|signup|subscribe)$/i
-
-/**
- * Which provider builds a part of the page when the user chose 'auto'. In the
- * owner's side-by-side runs Gemini wrote the richer, more detailed sections and
- * Groq the cleaner, tidier structure — so Gemini builds the first screen and
- * the content, Groq the navigation, footer and forms. Each still falls back to
- * the other. Without section names (understanding, the legacy path): Gemini.
- */
-export function resolveProvider(choice: AIProvider | undefined, sectionNames: string[] = []): ProviderName {
-  if (choice && choice !== 'auto') return choice
-  return sectionNames.length > 0 && sectionNames.every(name => STRUCTURAL_SECTION.test(name)) ? 'groq' : 'gemini'
-}
+export { resolveProvider, type ProviderName } from './provider-choice'
 
 /**
  * One provider call, with that provider's timeout plus a backstop in case an
