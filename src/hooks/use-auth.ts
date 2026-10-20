@@ -4,6 +4,7 @@ import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { createBrowserClient } from '@/lib/supabase'
 import { useAuthContext } from '@/components/auth/auth-provider'
+import { safeRedirect } from '@/lib/auth/redirect'
 
 // =============================================================================
 // Re-export context hook
@@ -51,7 +52,7 @@ export function useAuthActions(): UseAuthActionsReturn {
     setIsSubmitting(true)
     
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data: signedUp, error } = await supabase.auth.signUp({
         email: data.email,
         password: data.password,
         options: {
@@ -68,10 +69,12 @@ export function useAuthActions(): UseAuthActionsReturn {
         return { error: { message: error.message, code: error.code } }
       }
 
-      // Supabase may require email confirmation depending on settings
-      // For development, auto-confirm is usually enabled
-      router.push('/dashboard')
-      router.refresh()
+      // With email confirmation on there is no session yet: the form says
+      // "check your email". With auto-confirm, go straight in.
+      if (signedUp.session) {
+        router.push('/dashboard')
+        router.refresh()
+      }
       
       return { error: null }
     } catch (err) {
@@ -100,9 +103,9 @@ export function useAuthActions(): UseAuthActionsReturn {
         return { error: { message: error.message, code: error.code } }
       }
 
-      // Check for redirect parameter in URL
+      // Return to where sign-in was asked for — a same-site path only.
       const params = new URLSearchParams(window.location.search)
-      const redirectTo = params.get('redirect') || '/dashboard'
+      const redirectTo = safeRedirect(params.get('redirect')) || '/dashboard'
       
       router.push(redirectTo)
       router.refresh()

@@ -9,7 +9,7 @@ interface PreviewFrameProps {
   className?: string
 }
 
-const DEVICE_WIDTHS = {
+export const DEVICE_WIDTHS = {
   desktop: 1280,
   tablet: 768,
   mobile: 375,
@@ -62,11 +62,8 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
 
   if (!srcDoc) {
     return (
-      <div className={`flex items-center justify-center bg-slate-50 text-slate-400 ${className}`}>
-        <div className="text-center p-4">
-          <div className="text-4xl mb-3">🎨</div>
-          <p className="text-sm">Generate a design to see preview</p>
-        </div>
+      <div className={`flex items-center justify-center text-faint ${className}`}>
+        <p className="p-4 text-[12px]">Generate a site to see it here.</p>
       </div>
     )
   }
@@ -74,12 +71,12 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
   return (
     <div 
       ref={containerRef} 
-      className={`overflow-auto bg-slate-100 flex justify-center py-4 ${className}`}
+      className={`overflow-auto flex justify-center py-4 ${className}`}
     >
       {/* Wrapper element that matches the exact scaled size of the iframe */}
       <div style={{ width: targetWidth * scale, height: frameHeight * scale }}>
         <div
-          className="bg-white shadow-md ring-1 ring-black/5"
+          className="bg-white shadow-plate ring-1 ring-line"
           style={{
             width: targetWidth,
             height: frameHeight,
