@@ -44,6 +44,32 @@ export function exportSource(code: string, projectName: string): string {
   return `${header}\n${repaired}\n`
 }
 
+const escapeAttribute = (value: string) => value.replace(/&/g, '&amp;').replace(/"/g, '&quot;')
+const escapeText = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;')
+
+/**
+ * A page that shows a generated site full-window inside a sandboxed frame.
+ *
+ * SECURITY — a blob: URL made by the app has the app's own origin, so opening
+ * the generated page directly as a blob ran model-written JavaScript with
+ * access to the app's storage and APIs. The wrapper is inert markup; the site
+ * runs only inside `sandbox="allow-scripts"` (an opaque origin), exactly like
+ * the editor's preview. Never add allow-same-origin here.
+ */
+export function sandboxedPage(html: string, title: string): string {
+  return `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escapeText(title)}</title>
+<style>html,body{margin:0;height:100%;background:#fff}iframe{display:block;border:0;width:100%;height:100%}</style></head>
+<body><iframe sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox allow-forms" title="${escapeAttribute(title)}" srcdoc="${escapeAttribute(html)}"></iframe></body></html>`
+}
+
+/** Opens the generated site in a new tab, sandboxed (see `sandboxedPage`). */
+export function openInNewTab(code: string, projectName: string): void {
+  const page = sandboxedPage(exportHtml(code, projectName), projectName)
+  const url = URL.createObjectURL(new Blob([page], { type: 'text/html' }))
+  window.open(url, '_blank', 'noopener')
+  setTimeout(() => URL.revokeObjectURL(url), 60_000)
+}
+
 /** Starts a browser download of a text file. */
 export function downloadFile(filename: string, contents: string, mime: string): void {
   const blob = new Blob([contents], { type: `${mime};charset=utf-8` })

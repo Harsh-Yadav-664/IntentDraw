@@ -1,12 +1,14 @@
 import type { Region, RegionGroup } from '@/types'
 import type { BriefElement, DesignBrief } from './brief'
 import { sectionForPage } from './brief'
-import { SCENE_COMPONENT } from './scene-render'
+import { SCENE_COMPONENT, textOverArt } from './scene-render'
 import { siteFonts } from './site-design'
 import { fontMarker } from '@/lib/design/fonts'
+import { paletteMarker } from '@/lib/utils/image-art'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { looksHandwritten } from './perception'
 import { renderObjects, type PlacedObject } from './objects'
+import { splitTopLevelChunks } from './assemble'
 
 /**
  * The page skeleton, built in code from the brief — not by a model.
@@ -64,6 +66,35 @@ export function overlayNav(brief: DesignBrief | undefined, regions: Region[], se
   return drawnOnFirst ? { nav: sections[0], under } : null
 }
 
+const SITE_HEADER = /^(?:site|top|main|primary)?(?:nav|navigation|navbar|header|topbar|menu)$/i
+const FOOTER = /footer/i
+
+/** The section that is the site's header and navigation, if the plan has one. */
+export function siteHeaderSection(sections: string[]): string | null {
+  return sections.find(s => SITE_HEADER.test(s)) ?? null
+}
+
+/**
+ * Sections in this batch that draw a navigation bar of their own although the
+ * page already has one. Sections are built separately, and a hero built alone
+ * only hears that a nav "floats over" it — a real run (Wilder House,
+ * 2026-10-20) drew its own brand bar, links and booking button under the real
+ * nav, so the page had two. A footer's link list is a nav legitimately.
+ */
+export function ownNavigation(code: string, sectionNames: string[], pageSections: string[]): string[] {
+  const header = siteHeaderSection(pageSections)
+  if (!header) return []
+  const checked = sectionNames.filter(n => n !== header && !FOOTER.test(n))
+  if (checked.length === 0) return []
+  const hasNav = (text: string) => /<nav\b/.test(text)
+  // With the nav or footer in the same answer, only the checked sections' own
+  // declarations can be told apart; otherwise every line belongs to them.
+  if (checked.length === sectionNames.length) return hasNav(code) ? checked : []
+  return splitTopLevelChunks(code)
+    .filter(c => c.name && checked.includes(c.name) && hasNav(c.code))
+    .map(c => c.name as string)
+}
+
 /** Sections that hold something the user drew — each is built in its own call. */
 export function drawnSections(brief: DesignBrief | undefined, regions: Region[], sections: string[]): string[] {
   if (!brief) return []
@@ -95,6 +126,31 @@ export function batchPlan(sections: string[], drawn: string[]): string[][] {
   for (let i = 0; i < large.length; i += 2) batches.push(large.slice(i, i + 2))
   return batches
 }
+
+export const BOUNDARY = 'SectionBoundary'
+
+/**
+ * Sections are written independently, and one that throws while rendering used
+ * to take the whole page down with it. Inside its own boundary it is left out
+ * and reported (`partial`, with its name), and the rest of the site still shows.
+ * Defined in the shell, not the runtime, so exported sites carry it too.
+ */
+export const SECTION_BOUNDARY = `/* Each section renders inside its own boundary: one that crashes is left out and reported; the rest of the page still shows. */
+class ${BOUNDARY} extends React.Component<{ name: string; children?: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: any, info: any) {
+    try {
+      window.parent.postMessage({ type: 'IFRAME_ERROR', kind: 'runtime', partial: true, section: this.props.name, message: String((error && error.message) || error), stack: String((info && info.componentStack) || '') }, '*');
+    } catch (e) {}
+  }
+  render() {
+    // display: contents — the marker names the section for the layout audit without taking part in layout.
+    return this.state.failed ? <div data-failed-section={this.props.name} /> : <div data-section={this.props.name} style={{ display: 'contents' }}>{this.props.children}</div>;
+  }
+}`
 
 export interface PageShell {
   shellCode: string
@@ -129,17 +185,19 @@ export function buildPageShell(
       })
       .filter(Boolean)
 
+  // Every section renders inside its own error boundary (SECTION_BOUNDARY).
+  const guarded = (name: string) => `<${BOUNDARY} name="${name}"><${name} /></${BOUNDARY}>`
   const overlay = overlayNav(brief, regions, sections)
   const lines = sections.flatMap(name => {
     if (overlay && name === overlay.nav) return []
     const own = placed(name)
     const navOver = overlay && name === overlay.under
-    if (name !== host && own.length === 0 && !navOver) return [`        <${name} />`]
+    if (name !== host && own.length === 0 && !navOver) return [`        ${guarded(name)}`]
     return [[
       `        <div className="relative">`,
       ...(name === host ? [`          ${layer('absolute inset-0 z-0 overflow-hidden')}`] : []),
-      ...(navOver ? [`          <div className="absolute inset-x-0 top-0 z-30"><${overlay.nav} /></div>`] : []),
-      `          <div className="relative z-10"><${name} /></div>`,
+      ...(navOver ? [`          <div className="absolute inset-x-0 top-0 z-30">${guarded(overlay.nav)}</div>`] : []),
+      `          <div className="relative z-10">${guarded(name)}</div>`,
       ...(own.length > 0
         ? [`          <div className="pointer-events-none relative z-20 lg:absolute lg:inset-0">`, ...own, `          </div>`]
         : []),
@@ -150,8 +208,12 @@ export function buildPageShell(
 
   const shellCode = [
     ...(brief ? [fontMarker(siteFonts(brief.design))] : []),
+    // Lets the preview draw images in the site's colours (image-art.ts).
+    ...(p ? [paletteMarker(p)] : []),
     `/* SECTIONS: ${sections.join(', ')} */`,
     `import React from 'react';`,
+    ``,
+    SECTION_BOUNDARY,
     ``,
     `/* The page skeleton, built by IntentDraw from the design brief: every planned section, in order. */`,
     `export default function App() {`,
@@ -263,6 +325,12 @@ export function describeDrawnSections(
   // Only a section with something painted behind it is told to stay transparent.
   const host = brief.drawing.elements.some(isArt) ? sceneHost(brief, regions, sections) : null
   const blocks: string[] = []
+  // Text straight over the picture: the colour that stays readable on every
+  // colour in it (scene-render.ts textOverArt), not a guess per section.
+  const ink = textOverArt(brief.palette)
+  if (host === 'page') {
+    blocks.push(`THE USER'S DRAWING IS FIXED BEHIND THE WHOLE PAGE — painted by IntentDraw as <${SCENE_COMPONENT} />; the content scrolls over it. ${sectionNames.join(', ')}: no opaque full-width background of your own — leave the section transparent, or at most a translucent band (palette surface at 55-75% opacity with backdrop-blur) — so the picture stays visible as the page scrolls. Text set directly over the picture is text-[${ink}]; body copy longer than a line or two sits on a panel sized to the text.`)
+  }
   const navOverlay = overlayNav(brief, regions, sections)
   if (navOverlay && sectionNames.includes(navOverlay.nav)) {
     blocks.push(`${navOverlay.nav} FLOATS OVER THE TOP OF ${navOverlay.under} (the first screen): give it a transparent or lightly translucent background — no solid full-width bar — and keep it about 64-80px tall. The page positions it; don't make it fixed or sticky yourself.`)
@@ -361,7 +429,7 @@ export function describeDrawnSections(
 
     if (lines.length === 0) continue
     const behind = (name === host
-      ? `\nThe user's drawing is painted behind ${name}: give ${name} NO background colour or full-width overlay of its own. Keep text readable with a panel sized to the text, or a text shadow.`
+      ? `\nThe user's drawing is painted behind ${name}: give ${name} NO background colour or full-width overlay of its own. Text set directly over the picture is text-[${ink}]; keep longer text readable with a panel sized to the text.`
       : '') + (navOverlay?.under === name
       ? `\nThe navigation bar floats over the top ~10% of ${name}: start ${name}'s own content below it (no extra spacer — just don't put anything in that strip).`
       : '')

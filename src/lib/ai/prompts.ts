@@ -1,4 +1,4 @@
-import { wrapUserPrompt, sanitizeUserPrompt } from './prompt-rules'
+import { wrapUserPrompt, sanitizeUserPrompt, todayLine } from './prompt-rules'
 import { describeLayout } from './region-analyzer'
 import { buildShapePath, describeShapePath, pointBudget } from './shape-path'
 import { buildReferenceSection } from './references'
@@ -7,7 +7,7 @@ import type { DesignTokenSet } from './design-tokens'
 import { describeScene, renderBrief, type BriefPalette, type DesignBrief } from './brief'
 import { MAX_SECTION_NOTE_CHARS } from './page-parts'
 import { pageIndexForRegion } from '@/lib/canvas/pages'
-import { describeDrawnSections } from './page-shell'
+import { describeDrawnSections, planSections, siteHeaderSection } from './page-shell'
 import { PRODUCT_PRINCIPLE } from './principle'
 
 // =============================================================================
@@ -555,7 +555,7 @@ export function buildStagedSectionUserPrompt(
   note?: string
 ): string {
   const sanitized = sanitizeUserPrompt(userPrompt)
-  const sections: string[] = [buildTokenSection(tokens, brief?.palette)]
+  const sections: string[] = [todayLine(), buildTokenSection(tokens, brief?.palette)]
 
   const briefBlock = brief ? renderBrief(brief, 'section') : ''
   if (briefBlock) sections.push(briefBlock)
@@ -585,6 +585,14 @@ ${shellCode}`)
       })
       .filter(Boolean)
     if (purposes.length > 0) sections.push(`WHAT EACH COMPONENT IS FOR:\n${purposes.join('\n')}`)
+
+    // Each section is written alone; without this a hero drew its own brand
+    // bar and links under the real navigation (two navs on one page).
+    const header = siteHeaderSection(planSections(brief))
+    const others = sectionNames.filter(n => n !== header && !/footer/i.test(n))
+    if (header && others.length > 0) {
+      sections.push(`${header} IS THE SITE'S HEADER AND NAVIGATION — built separately and already on the page. ${others.join(', ')} must NOT contain a site header, logo/brand bar, navigation links or a top-of-page action button of its own: start straight with the section's own content.`)
+    }
   }
 
   // What the user drew inside these sections, with exact desktop placement.

@@ -91,7 +91,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      data: { code: result.code, provider: result.provider },
+      data: { code: result.code, provider: result.provider, model: result.model, ms: result.ms, note: result.note },
     })
   } catch (error) {
     console.error('[API generate/section]', error)

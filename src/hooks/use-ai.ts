@@ -1,19 +1,37 @@
 import { useCallback } from 'react'
 import { useCanvasStore } from '@/store/canvas-store'
-import { useWorkflowStore } from '@/store/workflow-store'
+import { useWorkflowStore, type PlannedSection } from '@/store/workflow-store'
 import { assembleProgressive } from '@/lib/ai/assemble'
-import { assembleParts, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
+import { assembleParts, cleanMeta, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
 import type { DesignBrief } from '@/lib/ai/brief'
 
 /**
- * Hook for AI operations: generate a page, and rebuild one of its sections.
- * Handles loading states, errors, and store updates.
+ * Hook for AI operations: generate a page, stop a generation, and rebuild one
+ * of its sections. Handles loading states, errors, and store updates.
  *
- * Note: shape geometry comes directly from the Konva canvas store
- * (exact, since the user drew it) — no separate vision "analyze" step.
- * The drawing image is sent along with generation so the AI can read
- * the visual character of decorative strokes.
+ * Note: shape geometry comes directly from the canvas store (exact, since the
+ * user drew it) — no separate vision "analyze" step. The drawing image is sent
+ * along with generation so the AI can read the visual character of strokes.
  */
+
+// One run at a time across every component that calls useAI(). Stopping it
+// aborts the request in flight; sections already built are kept.
+let activeRun: AbortController | null = null
+
+const isAbort = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
+
+/**
+ * The check the preview's compiler will make, run first. A block is only added
+ * to the page if the page still compiles with it — so one bad section is a
+ * placeholder to rebuild, never a page that shows an error instead of a site.
+ * The parser is loaded on demand; it is large and only builds need it.
+ */
+async function compileProblem(code: string): Promise<string | null> {
+  const { findSyntaxProblem, describeProblem } = await import('@/lib/ai/validate')
+  const problem = findSyntaxProblem(code)
+  return problem ? describeProblem(problem, code) : null
+}
+
 export function useAI() {
   // From the shared store, not local state: several components call useAI(),
   // and a local flag only knew about generations started through that same
@@ -30,6 +48,7 @@ export function useAI() {
   const setError = useWorkflowStore((s) => s.setError)
   const setPreviewCode = useWorkflowStore((s) => s.setPreviewCode)
   const setGenerationProgress = useWorkflowStore((s) => s.setGenerationProgress)
+  const setBuildPlan = useWorkflowStore((s) => s.setBuildPlan)
   const setBrief = useWorkflowStore((s) => s.setBrief)
   const setPageParts = useWorkflowStore((s) => s.setPageParts)
   const setRebuild = useWorkflowStore((s) => s.setRebuild)
@@ -48,17 +67,67 @@ export function useAI() {
       setError('Please enter a prompt describing your design.')
       return false
     }
+    if (activeRun) return false
 
+    const run = new AbortController()
+    activeRun = run
+    const { signal } = run
+    // Put back if the run is stopped before it builds anything of its own.
+    const previous = { parts: useWorkflowStore.getState().pageParts, brief: useWorkflowStore.getState().brief }
+
+    setError(null)
     setStatus('generating')
     setBrief(null)
     // The previous page's parts no longer describe what will be on screen.
     setPageParts(null)
     setRebuild(null)
+    setBuildPlan(null)
     setGenerationProgress({
       label: regions.length > 0 ? 'Reading your drawing and prompt' : 'Understanding your idea',
       done: 0,
       total: 2,
     })
+
+    // Filled in as the run goes, so a stopped run can keep what it built.
+    let shellCode: string | null = null
+    let sceneCode: string | null = null
+    let tokenId = ''
+    let brief: DesignBrief | null = null
+    let classified: typeof regions | null = null
+    let resolvedPrompt: string | null = null
+    let plannedSections: string[] = []
+    const completed: string[] = []
+    const blocks: SectionBlock[] = []
+    const failed: string[] = []
+    let plan: PlannedSection[] = []
+    const markPlan = (names: string[], status: PlannedSection['status']) => {
+      plan = plan.map((s) => (names.includes(s.name) ? { ...s, status } : s))
+      setBuildPlan(plan)
+    }
+
+    /** The parts of whatever was built — the whole page, or what a stop left behind. */
+    const keepParts = (unbuilt: string[]): boolean => {
+      if (!shellCode || !brief) return false
+      const parts: PageParts = {
+        shellCode,
+        sceneCode,
+        tokenId,
+        brief,
+        regions: classified ?? regions,
+        groups,
+        prompt: resolvedPrompt ?? prompt.trim(),
+        sections: plannedSections,
+        blocks,
+        failed: [...failed, ...unbuilt],
+      }
+      // Assembled from the parts themselves, so the saved page and the saved
+      // parts always agree — that is what lets a reload restore them.
+      const assembled = assembleParts(parts)
+      if (!assembled.code) return false
+      setPageParts(parts)
+      setPreviewCode(assembled.code)
+      return true
+    }
 
     try {
       // Only capture/send the canvas image when something was drawn
@@ -79,56 +148,64 @@ export function useAI() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...shared, imageData, projectId: useWorkflowStore.getState().projectId }),
+        signal,
       })
       const understood = await understandRes.json()
       if (!understood.success) {
-        setError(understood.error || 'Could not read the request. Please try again.')
+        setError(understood.error || 'Could not read the request. Please try again.', understandRes.status === 429 ? 'quota' : 'failed')
         return false
       }
-      const brief = understood.data.brief as DesignBrief
+      brief = understood.data.brief as DesignBrief
       setBrief(brief)
       setGenerationProgress({ label: 'Designing the page structure', done: 1, total: 2 })
 
       // Stage 1 — the shell. Short enough to survive a serverless timeout, and
-      // it tells us what sections still need building.
+      // it tells us what sections still need building. This is the request
+      // that counts against the daily limit.
       const shellRes = await fetch('/api/generate/shell', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...shared, imageData, brief }),
+        signal,
       })
       const shellResult = await shellRes.json()
 
       if (!shellResult.success) {
-        setError(shellResult.error || 'Generation failed. Please try again.')
+        setError(shellResult.error || 'Generation failed. Please try again.', shellRes.status === 429 ? 'quota' : 'failed')
         return false
       }
 
-      const { shellCode, sceneCode, batches, tokenId, regions: classifiedRegions, prompt: resolvedPrompt } =
-        shellResult.data as {
-          shellCode: string
-          sceneCode: string | null
-          sections: string[]
-          batches: string[][]
-          tokenId: string
-          regions: typeof regions
-          prompt: string
-        }
+      const data = shellResult.data as {
+        shellCode: string
+        sceneCode: string | null
+        sections: string[]
+        batches: string[][]
+        tokenId: string
+        regions: typeof regions
+        prompt: string
+      }
+      shellCode = data.shellCode
+      sceneCode = data.sceneCode ?? null
+      tokenId = data.tokenId
+      classified = data.regions ?? null
+      resolvedPrompt = data.prompt ?? null
+      const { batches } = data
+
+      plannedSections = batches.flat().filter((name) => name !== SCENE_NAME)
+      plan = plannedSections.map((name) => ({ name, status: 'queued' as const }))
+      setBuildPlan(plan)
 
       const totalStages = 2 + batches.length
       let pending = batches.flat()
       // The drawing, rendered in code, goes in first: assembly keeps the first
       // definition of a name, so no section can replace the user's picture.
-      const completed: string[] = sceneCode ? [sceneCode] : []
+      if (sceneCode) completed.push(sceneCode)
 
       // Show the page immediately, with unbuilt sections as placeholders, so the
       // wait is visibly productive rather than a blank screen.
       const firstPass = assembleProgressive(shellCode, completed, pending)
       if (firstPass.code) setPreviewCode(firstPass.code)
       setGenerationProgress({ label: 'Building sections', done: 2, total: totalStages })
-
-      const failed: string[] = []
-      // Kept so a single section can be rebuilt later without a full run.
-      const blocks: SectionBlock[] = []
 
       // Serial on purpose: a burst of parallel calls is what trips free-tier
       // rate limits, and spacing them lets per-minute quota recover.
@@ -139,6 +216,7 @@ export function useAI() {
           done: 2 + i,
           total: totalStages,
         })
+        markPlan(sectionNames, 'building')
 
         try {
           const sectionRes = await fetch('/api/generate/section', {
@@ -146,25 +224,39 @@ export function useAI() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               ...shared,
-              regions: classifiedRegions ?? regions,
+              regions: classified ?? regions,
               prompt: resolvedPrompt ?? shared.prompt,
               sectionNames,
               shellCode,
               tokenId,
               brief,
             }),
+            signal,
           })
           const sectionResult = await sectionRes.json()
 
-          if (sectionResult.success && sectionResult.data?.code) {
-            completed.push(sectionResult.data.code)
-            blocks.push({ sections: sectionNames, code: sectionResult.data.code })
-            pending = pending.filter(name => !sectionNames.includes(name))
+          const blockCode: string | null = sectionResult.success && sectionResult.data?.code ? sectionResult.data.code : null
+          // Tried against the page as it stands: the server checked the block
+          // alone, but only here can it clash with what other calls wrote.
+          const trial = blockCode
+            ? assembleProgressive(shellCode, [...completed, blockCode], pending.filter((name) => !sectionNames.includes(name)))
+            : null
+          const problem = trial ? (trial.code ? await compileProblem(trial.code) : trial.error ?? 'could not be assembled') : null
+          if (problem) console.warn(`[useAI] ${sectionNames.join(', ')} left out — the page would not compile with it: ${problem}`)
+
+          if (blockCode && !problem) {
+            completed.push(blockCode)
+            blocks.push({ sections: sectionNames, code: blockCode, ...cleanMeta(sectionResult.data) })
+            pending = pending.filter((name) => !sectionNames.includes(name))
+            markPlan(sectionNames, 'built')
           } else {
             failed.push(...sectionNames)
+            markPlan(sectionNames, 'failed')
           }
-        } catch {
+        } catch (error) {
+          if (isAbort(error)) throw error
           failed.push(...sectionNames)
+          markPlan(sectionNames, 'failed')
         }
 
         // Repaint after every batch — this is the progressive fill.
@@ -172,26 +264,7 @@ export function useAI() {
         if (pass.code) setPreviewCode(pass.code)
       }
 
-      const parts: PageParts = {
-        shellCode,
-        sceneCode: sceneCode ?? null,
-        tokenId,
-        brief,
-        regions: classifiedRegions ?? regions,
-        groups,
-        prompt: resolvedPrompt ?? shared.prompt,
-        sections: batches.flat().filter(name => name !== SCENE_NAME),
-        blocks,
-        failed,
-      }
-      // Assembled from the parts themselves, so the saved page and the saved
-      // parts always agree — that is what lets a reload restore them.
-      const finalPass = assembleParts(parts)
-      if (finalPass.code) {
-        setPageParts(parts)
-        setPreviewCode(finalPass.code)
-      }
-
+      keepParts([])
       setStatus('preview_ready')
 
       // A partial page still renders; say which pieces didn't make it rather
@@ -201,16 +274,35 @@ export function useAI() {
       }
       return true
     } catch (error) {
+      if (isAbort(error)) {
+        // Stopped by the user. Whatever was built stays; the rest can be
+        // rebuilt one section at a time.
+        const built = new Set(blocks.flatMap((b) => b.sections))
+        const unbuilt = plannedSections.filter((name) => !built.has(name) && !failed.includes(name))
+        if (!keepParts(unbuilt)) {
+          setPageParts(previous.parts)
+          setBrief(previous.brief)
+        }
+        setStatus('idle')
+        return false
+      }
       console.error('[useAI] Generation error:', error)
       setError('Network error. Please check your connection and try again.')
       return false
     } finally {
+      if (activeRun === run) activeRun = null
       // Every exit leaves "generating" — an early return without an error
       // would otherwise lock the UI in a run that already ended.
       if (useWorkflowStore.getState().status === 'generating') setStatus('idle')
       setGenerationProgress(null)
+      setBuildPlan(null)
     }
-  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBrief, setPageParts, setRebuild])
+  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBuildPlan, setBrief, setPageParts, setRebuild])
+
+  /** Stops the generation in flight. Sections already built are kept. */
+  const cancelGeneration = useCallback(() => {
+    activeRun?.abort()
+  }, [])
 
   /**
    * Rebuilds ONE section of the last generated page — a single model call
@@ -252,10 +344,16 @@ export function useAI() {
         setRebuild(null)
         return false
       }
-      const next = replaceSection(parts, name, result.data.code)
+      const next = replaceSection(parts, name, result.data.code, cleanMeta(result.data))
       const assembled = assembleParts(next)
       if (!assembled.code) {
         setRebuild(null, { section: name, message: assembled.error ?? `Could not assemble ${name}.` })
+        return false
+      }
+      // A rebuild may fix a broken page, but must never break a working one.
+      const problem = await compileProblem(assembled.code)
+      if (problem && !(await compileProblem(assembleParts(parts).code))) {
+        setRebuild(null, { section: name, message: `The new ${name} did not compile (${problem}). The old version is kept.` })
         return false
       }
       setPageParts(next)
@@ -274,6 +372,7 @@ export function useAI() {
   return {
     isGenerating,
     generateCode,
+    cancelGeneration,
     rebuildSection,
   }
 }

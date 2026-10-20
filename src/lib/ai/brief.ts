@@ -1,11 +1,11 @@
 import type { Region, RegionGroup } from '@/types'
 import { PRESETS, resolveByKeywords, stablePresetFor } from './design-tokens'
-import { sanitizeUserPrompt } from './prompt-rules'
+import { sanitizeUserPrompt, todayLine } from './prompt-rules'
 import { simplifyToBudget } from './shape-path'
 import { insideShare, looksHandwritten, perceiveDrawing } from './perception'
-import { ANCHORS, describeIntentSignals, intentSignals, type Anchor, type IntentSignal } from './intent'
+import { ANCHORS, PAGE_WIDE, describeIntentSignals, intentSignals, type Anchor, type IntentSignal } from './intent'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
-import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
+import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, fitCircle, isRound, type SceneForm } from './scene'
 import { CORNERS, DENSITIES, HEADINGS, HERO_COMPOSITIONS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
 import type { RecentSite } from './recent-designs'
 import { PRODUCT_PRINCIPLE } from './principle'
@@ -234,7 +234,7 @@ export function buildUnderstandUserMessage(
   recentDesigns: RecentSite[] = [],
   lens: string = pickLens()
 ): string {
-  const parts: string[] = []
+  const parts: string[] = [todayLine()]
   if (recentDesigns.length > 0) {
     parts.push(
       "THE USER'S RECENT SITES — this one must not look related to any of them:\n" +
@@ -461,7 +461,8 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       anchor: defaultAnchor(role),
     })
   }
-  const settled = reconcile(out, intentSignals(prompt, regions), regions)
+  const signals = intentSignals(prompt, regions)
+  const settled = pageWideArt(splitRoundBodies(reconcile(out, signals, regions), regions), signals, prompt)
   return keepPagesTogether(mergeIntoSpheres(settled, regions), regions, sectionNames)
 }
 
@@ -511,7 +512,10 @@ function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region
       case 'background':
         role = base.role === 'decoration' ? 'decoration' : 'illustration'
         form = base.role === 'illustration' && base.form ? base.form : closed ? 'shape' : 'line'
-        placement = 'section-background'
+        // "the main background the content scrolls over" is the whole page's.
+        // Forcing every prompt background to one section put a real run's
+        // scenery behind its first screen only.
+        placement = sig.scope === 'page' ? 'page-background' : 'section-background'
         break
       case 'decoration':
         role = 'decoration'
@@ -536,6 +540,54 @@ function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region
     out.push(settled)
   }
   return out
+}
+
+/**
+ * A round stroke grouped with ridge or band strokes is a round body standing
+ * behind them, not one more ridge. A real run grouped two hills and an arc
+ * drawn between them as one "silhouette"; the arc was closed to the ground and
+ * stood in front of the hills as a pale slab. Perception had already measured
+ * it as a circular arc — this makes that measurement count.
+ *
+ * Only when the fitted centre sits clearly above the others' ground: a hill
+ * drawn as a neat semicircle has its centre on the ground and stays a hill.
+ */
+function splitRoundBodies(els: BriefElement[], regions: Region[]): BriefElement[] {
+  const out: BriefElement[] = []
+  for (const e of els) {
+    if (e.role !== 'illustration' || (e.form !== 'silhouette' && e.form !== 'band') || e.regions.length < 2) {
+      out.push(e)
+      continue
+    }
+    const members = regions.filter(r => e.regions.includes(r.regionNumber))
+    const ground = Math.max(...members.map(r => r.geometry.y + r.geometry.height))
+    const round = members.filter(r => {
+      if (r.geometry.type !== 'circle' && !isRound(r)) return false
+      const fit = r.geometry.type === 'circle'
+        ? { cy: r.geometry.y + r.geometry.height / 2, r: r.geometry.height / 2 }
+        : fitCircle(absolutePoints(r))
+      return !!fit && fit.cy < ground - fit.r * 0.3
+    })
+    if (round.length === 0 || round.length === members.length) {
+      out.push(e)
+      continue
+    }
+    const ids = round.map(r => r.regionNumber)
+    out.push({ ...e, regions: e.regions.filter(n => !ids.includes(n)) })
+    out.push({ ...e, name: `${e.name} — round body`.slice(0, 60), regions: ids, form: 'disc', depth: Math.max(0, e.depth - 1) })
+  }
+  return out
+}
+
+/**
+ * "Use my drawing as the main background the content scrolls over", with no
+ * shape named: the picture goes behind the whole page. When the prompt names
+ * shapes, `reconcile` has already applied this to exactly those.
+ */
+function pageWideArt(els: BriefElement[], signals: IntentSignal[], prompt: string): BriefElement[] {
+  if (signals.some(s => s.source === 'prompt' && s.kind === 'background')) return els
+  if (!/\b(?:background|backdrop|bg)\b/i.test(prompt) || !PAGE_WIDE.test(prompt.toLowerCase())) return els
+  return els.map(e => (e.role === 'illustration' ? { ...e, placement: 'page-background' as const } : e))
 }
 
 /**

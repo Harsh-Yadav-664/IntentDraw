@@ -316,7 +316,7 @@ function classNameRanges(code: string): Array<[number, number]> {
  * sharp design, and drop shadows on designs that have none. `drop-shadow-*`
  * (text legibility over the drawing) and `shadow-none` are never touched.
  */
-export function enforceDesign(code: string, design: SiteDesign): string {
+export function enforceDesign(code: string, design: SiteDesign, options: { monochrome?: boolean } = {}): string {
   const shouldRemove = removes(design)
   const token = /(^|[\s"'`])([^\s"'`]+)(?=$|[\s"'`])/g
   let out = ''
@@ -336,6 +336,14 @@ export function enforceDesign(code: string, design: SiteDesign): string {
     // Also ALL-CAPS body text: uppercase on anything set at body size.
     if (/\buppercase\b/.test(value) && /\btext-(?:xs|sm|base|\[(?:9|1[0-6])px\])\b/.test(value)) {
       value = value.replace(/(^|[\s"'`])uppercase(?=$|[\s"'`])/, '$1').replace(/(^|[\s"'`])tracking-(?:widest|wider|\[[^\]]+\])(?=$|[\s"'`])/, '$1')
+      removed = true
+    }
+    // Every photo forced to grayscale, colour only on hover: a model habit that
+    // drained a real "natural theme" travel site. A photo filling its frame
+    // (object-cover) keeps its colour unless the site is meant to be black and
+    // white; small marks like client logos (object-contain) are left alone.
+    if (!options.monochrome && /(?:^|[\s"'`])object-cover(?=$|[\s"'`])/.test(value) && /(?:^|[\s"'`:])grayscale(?=$|[\s"'`])/.test(value)) {
+      value = value.replace(/(^|[\s"'`])(?:[a-z0-9-]+:)?grayscale(?=$|[\s"'`])/g, '$1')
       removed = true
     }
     if (removed) {

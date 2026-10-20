@@ -2,6 +2,8 @@ import { normalizeImports } from '@/lib/ai/assemble'
 import { softenSceneOverlays } from '@/lib/ai/repair'
 import { rewriteImageUrl } from './image-url'
 import { fontHead } from '@/lib/design/fonts'
+import { artImage, keywordImage, NEUTRAL_ART_PALETTE, readPaletteMarker } from './image-art'
+import { auditPage, contrastRatio } from './page-audit'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -62,6 +64,21 @@ export function sanitizeHtml(html: string): string {
  * Granting `allow-same-origin` would fix html2canvas and destroy the sandbox that
  * makes running model-written code safe, so freezing in place is the right trade.
  */
+/**
+ * The generated file as the body of a template literal inside an inline
+ * <script>. Backslashes are escaped first: without that, every `\n`, `\"` or
+ * `\d` the model wrote was silently reinterpreted — a string like "a\"b" became
+ * a compile error and a regex like /\d+/ quietly matched the letter d. `</script`
+ * would end the script tag early, so it is broken up.
+ */
+export function embedInTemplate(code: string): string {
+  return code
+    .replace(/\\/g, '\\\\')
+    .replace(/`/g, '\\`')
+    .replace(/\$/g, '\\$')
+    .replace(/<\/(script)/gi, '<\\/$1')
+}
+
 export function wrapReactForPreview(
   tsxCode: string,
   options?: {
@@ -70,6 +87,13 @@ export function wrapReactForPreview(
     appOrigin?: string
     /** A file the user downloads and publishes, rather than the in-app preview. */
     export?: { title?: string }
+    /**
+     * What a keyword image becomes: `art` (default) — a composition drawn in
+     * code in the site's palette (image-art.ts); `photos` — a stock photo via
+     * /api/image. The owner ruled out third-party photos for now (2026-10-19);
+     * NEXT_PUBLIC_IMAGE_SOURCE=photos brings them back.
+     */
+    images?: 'art' | 'photos'
   }
 ): string {
   // Remove markdown formatting if somehow it slipped through
@@ -90,6 +114,8 @@ export function wrapReactForPreview(
   // The app's own origin, for routing keyword photos through /api/image. Empty
   // when this runs outside a browser (offline scripts), which keeps direct URLs.
   const appOrigin = options?.appOrigin ?? (typeof window !== 'undefined' ? window.location.origin : '');
+  const images = options?.images ?? (process.env.NEXT_PUBLIC_IMAGE_SOURCE === 'photos' ? 'photos' : 'art');
+  const artPalette = readPaletteMarker(code) ?? NEUTRAL_ART_PALETTE;
 
   // Navigation and height reporting script
   // The preview blocks navigation so a click can't take the frame away from the
@@ -106,6 +132,11 @@ export function wrapReactForPreview(
   const title = (options?.export?.title || 'Website').replace(/[<>&"]/g, '').slice(0, 120);
 
   const systemScript = `
+    // Functions below are embedded from the app's own source (fn.toString()).
+    // A compiler that keeps function names (esbuild keepNames, as tsx uses)
+    // wraps them in an __name() helper that only exists in the module — define
+    // a harmless one so the embedded copies run wherever they were compiled.
+    var __name = function (target) { return target; };
     ${navigationGuard}
 
     function reportHeight() {
@@ -119,6 +150,31 @@ export function wrapReactForPreview(
     // resizes itself from this any more; it is informational.
     window.addEventListener('load', reportHeight);
 
+    // A page that cannot compile or crashes while rendering shows one quiet
+    // line here and tells the editor, which explains it properly and offers a
+    // fix. Raw red compiler text over the site area helped nobody.
+    window.__intentdrawQuiet = { font: '14px system-ui, sans-serif', color: '#8a8a8a', padding: '64px 24px', textAlign: 'center' };
+    window.__intentdrawReport = function(kind, message, stack) {
+      try {
+        window.parent.postMessage({
+          type: 'IFRAME_ERROR',
+          kind: kind,
+          message: String(message || 'unknown error').slice(0, 4000),
+          stack: String(stack || '').slice(0, 2000),
+        }, '*');
+      } catch (err) {}
+    };
+    window.__intentdrawFail = function(kind, message) {
+      window.__intentdrawReport(kind, message);
+      var root = document.getElementById('root');
+      if (!root) return;
+      root.innerHTML = '';
+      var note = document.createElement('div');
+      for (var key in window.__intentdrawQuiet) note.style[key] = window.__intentdrawQuiet[key];
+      note.textContent = "This page has an error and can't be shown.";
+      root.appendChild(note);
+    };
+
     // LoremFlickr matches ALL keywords by default and answers "no match" with one
     // stock photo (a cat statue), so cards asking for "textile,scarf,linen" all
     // showed the same unrelated picture. One keyword always matches something on
@@ -130,7 +186,21 @@ export function wrapReactForPreview(
     // direct URL is kept, reduced to one keyword.
     var __APP_ORIGIN = ${JSON.stringify(appOrigin)};
     var __rewriteImageUrl = (${rewriteImageUrl.toString()});
-    function __fixImageUrl(u) { return __rewriteImageUrl(u, __APP_ORIGIN); }
+    // By default no photo is loaded at all: a keyword image — or a stock-photo
+    // URL a model invented anyway — is drawn in code in the site's palette.
+    var __ART = ${images === 'art'};
+    var __ART_PALETTE = ${JSON.stringify(artPalette)};
+    var __artImage = (${artImage.toString()});
+    var __keywordImage = (${keywordImage.toString()});
+    var __STOCK = /^https?:\\/\\/(?:[\\w-]+\\.)*(?:unsplash\\.com|pexels\\.com|picsum\\.photos|placehold\\.co|placeholder\\.com|pixabay\\.com|loremflickr\\.com)\\//i;
+    function __fixImageUrl(u) {
+      if (__ART) {
+        var k = __keywordImage(u);
+        if (k) return __artImage(k.keyword, k.w, k.h, k.seed, __ART_PALETTE);
+        if (__STOCK.test(u)) return __artImage(u, 1200, 800, 0, __ART_PALETTE);
+      }
+      return __rewriteImageUrl(u, __APP_ORIGIN);
+    }
     (function() {
       // Both routes: React assigns the src *property* for images; other code
       // uses setAttribute.
@@ -150,18 +220,13 @@ export function wrapReactForPreview(
       }
     })();
 
-    // A photo that fails to load becomes a quiet, labelled tile instead of a
+    // An image that fails to load is drawn in the site's palette instead of a
     // broken-image icon — one dead URL shouldn't make the whole page look broken.
     window.addEventListener('error', function(e) {
       var img = e.target;
       if (!img || img.tagName !== 'IMG' || img.getAttribute('data-fallback')) return;
       img.setAttribute('data-fallback', '1');
-      var label = (img.getAttribute('alt') || '').replace(/[<>&"]/g, '').slice(0, 48);
-      var svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 300" preserveAspectRatio="xMidYMid slice">' +
-        '<defs><linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#cfc6b8"/><stop offset="1" stop-color="#a99d8b"/></linearGradient></defs>' +
-        '<rect width="400" height="300" fill="url(#g)"/>' +
-        '<text x="200" y="156" font-family="system-ui,sans-serif" font-size="15" fill="#4a4238" fill-opacity=".75" text-anchor="middle">' + label + '</text></svg>';
-      img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      img.src = __artImage(img.getAttribute('alt') || 'image', img.naturalWidth || 1200, img.naturalHeight || 800, 0, __ART_PALETTE);
     }, true);
 
     // A URL built from a missing field ("…/undefined?lock=undefined") doesn't
@@ -176,6 +241,70 @@ export function wrapReactForPreview(
       });
     }
     window.addEventListener('load', function(){ __replaceUndefinedImages(); setTimeout(__replaceUndefinedImages, 1500); });
+
+    // Text straight over the user's drawing must stay readable. The scene lists
+    // the colours it is painted in (data-tones); any text that sits over it with
+    // no panel of its own, and falls below 3:1 against one of those colours,
+    // gets a soft halo in the opposite tone. A halo is invisible where the text
+    // already contrasts, so it only shows where it is needed. A real run set its
+    // hero headline straight across a pale shape at about 1.5:1.
+    function __legibleOverArt() {
+      var scene = document.querySelector('.intent-scene[data-tones]');
+      if (!scene) return;
+      function rgb(c) {
+        c = String(c);
+        if (c.charAt(0) === '#') {
+          var h = c.slice(1); if (h.length === 3) h = h.replace(/./g, '$&$&');
+          var n = parseInt(h, 16); return isNaN(n) ? null : [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
+        }
+        var m = c.match(/[\\d.]+/g);
+        if (!m || m.length < 3) return null;
+        return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+      }
+      function lum(c) {
+        var v = [c[0], c[1], c[2]].map(function(x) { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
+        return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+      }
+      function ratio(a, b) { var x = lum(a), y = lum(b); return (Math.max(x, y) + 0.05) / (Math.min(x, y) + 0.05); }
+      var tones = (scene.getAttribute('data-tones') || '').split(',').map(rgb).filter(Boolean);
+      if (tones.length === 0) return;
+      function overArt(el) {
+        for (var n = el; n && n !== document.body; n = n.parentElement) {
+          if (n !== el && n.querySelector('.intent-scene')) return true;
+          var cs = getComputedStyle(n);
+          var bg = rgb(cs.backgroundColor);
+          if ((bg && bg[3] >= 0.6) || cs.backgroundImage !== 'none' || (cs.backdropFilter && cs.backdropFilter !== 'none')) return false;
+        }
+        return false;
+      }
+      var seen = [];
+      var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+      for (var t = walker.nextNode(); t; t = walker.nextNode()) {
+        var el = t.parentElement;
+        if (!el || seen.indexOf(el) >= 0 || !t.nodeValue || t.nodeValue.trim().length < 2) continue;
+        seen.push(el);
+        if (el.closest('.intent-scene') || !overArt(el)) continue;
+        var cs = getComputedStyle(el);
+        if (cs.textShadow && cs.textShadow !== 'none') continue;
+        var ink = rgb(cs.color);
+        if (!ink) continue;
+        var worst = Math.min.apply(null, tones.map(function(c) { return ratio(ink, c); }));
+        if (worst >= 3) continue;
+        var halo = lum(ink) > 0.4 ? '0,0,0' : '255,255,255';
+        el.style.textShadow = '0 0 1px rgba(' + halo + ',.55), 0 0 10px rgba(' + halo + ',.45), 0 0 26px rgba(' + halo + ',.35)';
+      }
+    }
+    window.addEventListener('load', function(){ setTimeout(__legibleOverArt, 300); setTimeout(__legibleOverArt, 2500); });
+    ${options?.export ? '' : `
+    // What a reader would see wrong — unreadable text, sideways scroll, text on
+    // text, empty screens — measured on the rendered page (page-audit.ts) and
+    // sent to the editor, which offers each section's rebuild with it as a note.
+    // After the halo above, so text it already fixed isn't reported.
+    var __contrastRatio = (${contrastRatio.toString()});
+    var __auditPage = (${auditPage.toString()});
+    window.addEventListener('load', function(){ setTimeout(function() {
+      try { window.parent.postMessage({ type: 'IFRAME_AUDIT', findings: __auditPage(__contrastRatio) }, '*'); } catch (e) {}
+    }, 3200); });`}
   `;
 
   // Freezing the backdrop: finish and pause everything that would keep painting.
@@ -209,8 +338,11 @@ export function wrapReactForPreview(
     window.addEventListener('load', function(){ setTimeout(__freeze, 1200); });
     window.addEventListener('error', function(e){
       try {
+        // An uncaught error after the page rendered (an effect, a handler):
+        // logged by the editor, not treated as a broken page.
         window.parent.postMessage({
           type: 'IFRAME_ERROR',
+          kind: 'script',
           message: (e && e.message) || 'unknown error',
         }, '*');
       } catch (err) {}
@@ -222,7 +354,7 @@ export function wrapReactForPreview(
   // map becomes a harmless stand-in (window.__intentdrawStub), so an
   // unsupported library costs one effect, never the whole page.
   const babelScript = `
-    const originalCode = \`${code.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+    const originalCode = \`${embedInTemplate(code)}\`;
 
     // Module specifier -> the window property holding its exports.
     // null means the exports sit directly on window (GSAP's UMD builds).
@@ -430,14 +562,13 @@ class ErrorBoundary extends React.Component {
   static getDerivedStateFromError(error) {
     return { hasError: true, error };
   }
+  componentDidCatch(error, info) {
+    // The component stack names the section that crashed, so the editor can
+    // offer to rebuild just that one.
+    window.__intentdrawReport("runtime", error && error.message, info && info.componentStack);
+  }
   render() {
-    if (this.state.hasError) {
-      return React.createElement('div', {style: {color: 'red', padding: '20px', fontFamily: 'sans-serif'}}, 
-        React.createElement('b', null, 'Runtime Error:'), 
-        React.createElement('br'), 
-        this.state.error.message
-      );
-    }
+    if (this.state.hasError) return React.createElement("div", { style: window.__intentdrawQuiet }, "This page has an error and can't be shown.");
     return this.props.children;
   }
 }
@@ -448,12 +579,12 @@ if (typeof window.__RenderComponent !== "undefined") {
 } else if (typeof App !== "undefined") {
   root.render(React.createElement(ErrorBoundary, null, React.createElement(App)));
 } else {
-  document.getElementById("root").innerHTML = "<div style='color:red;padding:20px;font-family:sans-serif;'><b>Error:</b> No default export found to render. Make sure the code uses 'export default function Component()'.</div>";
+  window.__intentdrawFail("compile", "No default export found to render.");
 }\`;
-      
+
       eval(compiled);
     } catch (e) {
-      document.getElementById('root').innerHTML = '<div style="color:red;padding:20px;font-family:sans-serif;"><b>Compilation Error:</b><br/>' + e.message + '</div>';
+      window.__intentdrawFail('compile', e && e.message);
     }
   `;
 

@@ -10,9 +10,14 @@ import {
 } from './provider'
 import { STAGED_SECTION_SYSTEM_PROMPT, buildStagedSectionUserPrompt } from './prompts'
 import { repairGeneratedCode } from './repair'
+import { aliasSectionImports } from './assemble'
+import { describeProblem, findSyntaxProblem } from './validate'
+import { lintLayout } from './layout-lint'
+import { aiLookNote, fixAiLook, scanAiLook } from './ai-look'
+import { MONOCHROME } from './prompt-rules'
 import { renderSceneComponent } from './scene-render'
 import { enforceDesign } from './site-design'
-import { buildPageShell } from './page-shell'
+import { buildPageShell, ownNavigation } from './page-shell'
 import { renderObjects } from './objects'
 
 /**
@@ -53,6 +58,12 @@ export interface SectionStageResult {
   success: boolean
   code?: string
   provider?: ProviderName
+  /** The model that wrote the code that was kept. */
+  model?: string
+  /** How long the section took, retries included. */
+  ms?: number
+  /** What still looks generated, as a ready rebuild note. */
+  note?: string
   error?: string
 }
 
@@ -83,7 +94,7 @@ const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 export async function generateShellStage(context: StageContext): Promise<ShellStageResult> {
   const { regions, brief } = context
   const sceneCode = brief && brief.source !== 'fallback'
-    ? renderSceneComponent(brief.drawing.elements, regions, brief.palette)
+    ? renderSceneComponent(brief.drawing.elements, regions, brief.palette, { design: brief.design })
     : ''
   // 3D objects the user drew are built here too, and travel in the same block
   // as the scene — assembled ahead of every section, so none can replace them.
@@ -128,18 +139,81 @@ export async function generateSectionStage(
   const fallbacks = buildFallbackChain(provider)
   let errors: Record<string, string> = {}
 
+  const pageSections = [...new Set([...(brief?.sections ?? []).map(s => s.name), ...sectionNames])]
+  // A black-and-white site keeps its desaturated photos; any other loses the habit.
+  const monochrome = MONOCHROME.test([prompt, brief?.concept, brief?.signature, ...(brief?.tone ?? [])].join(' '))
+  const finish = (responseText: string) => {
+    const repaired = repairGeneratedCode(aliasSectionImports(extractReact(responseText), pageSections))
+    return brief ? enforceDesign(repaired, brief.design, { monochrome }) : repaired
+  }
+
+  const started = Date.now()
+  let model: string | undefined
+  const onModel = (name: string) => { model = name }
+
   for (let attempt = 0; attempt <= RATE_LIMIT_RETRIES; attempt++) {
     errors = {}
 
     for (const current of fallbacks) {
       try {
-        const responseText = await callProvider(current, STAGED_SECTION_SYSTEM_PROMPT, userMessage, {
-          nvidiaModelId,
-        })
-
-        const repaired = repairGeneratedCode(extractReact(responseText))
-        const code = brief ? enforceDesign(repaired, brief.design) : repaired
+        model = undefined
+        let code = finish(await callProvider(current, STAGED_SECTION_SYSTEM_PROMPT, userMessage, { nvidiaModelId, onModel }))
         if (!code || code.length < 10) throw new Error('section empty')
+
+        // Nothing that fails to compile leaves this function as a success. The
+        // model gets one chance to correct itself with the compiler's own
+        // message; a second failure is a failed section (a placeholder the
+        // user can rebuild), never a page that will not render.
+        let problem = findSyntaxProblem(code)
+        if (problem) {
+          const said = describeProblem(problem, code)
+          console.warn(`[Staged section ${sectionNames.join(',')}] ${current} wrote code that does not compile (${said}) — asking once more`)
+          const correction = `${userMessage}\n\nYOUR PREVIOUS ANSWER DID NOT COMPILE: ${said}\nWrite the components again in full. Every brace, bracket, parenthesis, quote and JSX tag must be closed, and no name may be declared or imported twice.`
+          code = finish(await callProvider(current, STAGED_SECTION_SYSTEM_PROMPT, correction, { nvidiaModelId, onModel }))
+          problem = code ? findSyntaxProblem(code) : null
+          if (!code || problem) throw new Error(`does not compile — ${problem ? describeProblem(problem, code) : 'empty answer'}`)
+        }
+
+        // Layout mistakes with one right answer (a grid row adding up to more
+        // columns than the grid has) are fixed here, for free.
+        const lint = lintLayout(code)
+        if (lint.fixes.length > 0) {
+          console.info(`[Staged section ${sectionNames.join(',')}] layout fixed: ${lint.fixes.join('; ')}`)
+          code = lint.code
+        }
+
+        // Signs the page was made by AI (ai-look.ts): the mechanical ones are
+        // fixed here; a P0 left over gets one corrective call, kept only if it
+        // compiles and looks less generated. The rest travel with the section,
+        // so the user can rebuild it with the note in one click.
+        // A second navigation bar (page-shell.ts ownNavigation) is fixed by the
+        // same one call — the two problems never cost two.
+        code = fixAiLook(code).code
+        let tells = scanAiLook(code)
+        let doubled = ownNavigation(code, sectionNames, pageSections)
+        const badness = (t: typeof tells, d: string[]) => t.filter(x => x.severity === 'P0').length + d.length
+        if (badness(tells, doubled) > 0) {
+          const problems = [
+            ...(doubled.length > 0 ? [`${doubled.join(', ')} drew its own navigation bar, but the page already has one — remove it and start with the section's own content.`] : []),
+            ...(tells.some(t => t.severity === 'P0') ? [`It looked generated. ${aiLookNote(tells)}`] : []),
+          ]
+          const retry = `${userMessage}\n\nYOUR PREVIOUS ANSWER HAD PROBLEMS: ${problems.join(' ')}\nWrite the components again in full, fixing exactly that and keeping everything else.`
+          try {
+            let retryModel: string | undefined
+            const again = fixAiLook(lintLayout(finish(await callProvider(current, STAGED_SECTION_SYSTEM_PROMPT, retry, { nvidiaModelId, onModel: name => { retryModel = name } }))).code).code
+            const ok = again && !findSyntaxProblem(again) && sectionNames.every(name => declares(again, name))
+            const againTells = ok ? scanAiLook(again) : null
+            const againDoubled = ok ? ownNavigation(again, sectionNames, pageSections) : null
+            if (againTells && againDoubled && badness(againTells, againDoubled) < badness(tells, doubled)) {
+              code = again
+              tells = againTells
+              doubled = againDoubled
+              model = retryModel ?? model
+            }
+          } catch (err) {
+            console.warn(`[Staged section ${sectionNames.join(',')}] look retry failed, keeping the first answer:`, err instanceof Error ? err.message : err)
+          }
+        }
 
         // A response that doesn't declare what was asked for would leave the
         // assembled page referencing an undefined component.
@@ -147,7 +221,11 @@ export async function generateSectionStage(
           throw new Error(`did not define ${sectionNames.join(' or ')}`)
         }
 
-        return { success: true, code, provider: current }
+        const note = [
+          doubled.length > 0 ? 'Draws its own navigation bar under the page\'s real one — remove it and start with the section\'s content.' : '',
+          aiLookNote(tells),
+        ].filter(Boolean).join(' ')
+        return { success: true, code, provider: current, model, ms: Date.now() - started, note: note || undefined }
       } catch (err) {
         errors[current] = err instanceof Error ? err.message : String(err)
         console.warn(`[Staged section ${sectionNames.join(',')}] ${current} failed:`, errors[current])

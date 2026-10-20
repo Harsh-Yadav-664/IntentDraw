@@ -35,6 +35,8 @@ export interface IntentSignal {
   object?: ObjectForm
   interactive?: boolean
   animated?: boolean
+  /** A background the user wants behind the whole page, not one section. */
+  scope?: 'page'
   source: 'tag' | 'prompt' | 'geometry'
   /** Tags are 1, explicit prompt references 0.9, geometry priors ≤ 0.6. */
   confidence: number
@@ -96,7 +98,13 @@ const WORDS = {
   interactive: /\binteractive\b|\bclick|\bhover|\bdrag|\bmouse\b|\bcursor\b|\btouch\b|\bscroll|\breacts?\b/,
   anywhere: /\banywhere\b|\bsomewhere\b|\bwherever\b/,
   inside: /\b(?:all|every|everything|regions?|shapes?)\b[^.]{0,30}\b(?:inside|within|in)\s+(?:it|that|this|them)\b/,
+  // "the main background", "behind the whole site", "content scrolls over it",
+  // "fixed background": a page-wide backdrop, not one section's.
+  pageWide: /\b(?:main|whole|entire|full|global|site|page|website)\b[^.]{0,25}\b(?:background|backdrop|bg)\b|\b(?:background|backdrop|bg)\b[^.]{0,40}\b(?:whole|entire|all|every)\s+(?:the\s+)?(?:page|site|website|sections?)\b|\bcontent\b[^.]{0,30}\bscroll|\bscrolls?\s+(?:over|on|above|across)\b|\bfixed\s+(?:background|backdrop|bg)\b/,
 }
+
+/** A page-wide background in the user's words (see WORDS.pageWide). */
+export const PAGE_WIDE = WORDS.pageWide
 
 function expand(first: string, rest: string): number[] {
   const out = [Number(first)]
@@ -165,6 +173,7 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
       object,
       interactive: WORDS.interactive.test(own) || undefined,
       animated: WORDS.animated.test(own) || undefined,
+      scope: kind === 'background' && WORDS.pageWide.test(own) ? 'page' : undefined,
       source: 'prompt',
       confidence: kind ? 0.9 : 0.6,
       why: `the prompt says: "${prompt.slice(start, end).trim().slice(0, 140)}"`,
@@ -261,6 +270,7 @@ export function describeIntentSignals(signals: IntentSignal[]): string {
     const what = [
       s.kind ? KIND_LABEL[s.kind] + (s.object ? ` (${s.object})` : '') : 'see the prompt',
       s.anchor ? ANCHOR_LABEL[s.anchor] : null,
+      s.scope === 'page' ? 'behind the WHOLE page (content scrolls over it)' : null,
       s.interactive ? 'interactive' : null,
       s.animated ? 'animated' : null,
     ].filter(Boolean).join(', ')

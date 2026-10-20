@@ -54,3 +54,15 @@ export function sanitizeUserPrompt(input: string): string {
   
   return sanitized.trim()
 }
+/**
+ * Today's date for the build prompts. Without it a model writes the year its
+ * training ended: a real run (2026-10-17) advertised "Season 2025" and set its
+ * booking form's default departure a year in the past.
+ */
+export function todayLine(now: Date = new Date()): string {
+  const iso = now.toISOString().slice(0, 10)
+  return `TODAY IS ${iso}. Any year, season, date, "since"/copyright line or default form date on the site is ${now.getUTCFullYear()} or later — never a past year.`
+}
+
+/** The prompt or brief asks for a black-and-white look, so desaturated photos are a choice. */
+export const MONOCHROME = /\b(?:monochrome|monochromatic|black[\s-]*(?:and|&)[\s-]*white|b\s*&\s*w|grayscale|greyscale|noir|duotone)\b/i

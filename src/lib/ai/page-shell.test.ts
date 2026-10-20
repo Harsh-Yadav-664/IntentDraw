@@ -3,7 +3,7 @@ import type { Region } from '@/types'
 import fixture from './__fixtures__/globe-portfolio.json'
 import misread from './__fixtures__/globe-portfolio.misread-brief.json'
 import { normalizeBrief, sectionForPage } from './brief'
-import { batchPlan, buildPageShell, describeDrawnSections, planSections } from './page-shell'
+import { batchPlan, buildPageShell, describeDrawnSections, ownNavigation, planSections, siteHeaderSection } from './page-shell'
 import { looksHandwritten, perceiveDrawing } from './perception'
 import { renderSceneComponent } from './scene-render'
 import { renderObjects } from './objects'
@@ -69,7 +69,7 @@ describe('the page shell, built in code', () => {
   it('places the 3D globe the user asked for exactly where it was drawn, and carries the fonts', () => {
     // "region 1 and all regions inside it … animated 3d object" → an object,
     // placed by the shell on top of the hero at R1's drawn box.
-    expect(shell.shellCode).toMatch(/<div className="relative z-10"><HeroSection \/><\/div>\s*<div className="pointer-events-none relative z-20 lg:absolute lg:inset-0">/)
+    expect(shell.shellCode).toMatch(/<div className="relative z-10"><SectionBoundary name="HeroSection"><HeroSection \/><\/SectionBoundary><\/div>\s*<div className="pointer-events-none relative z-20 lg:absolute lg:inset-0">/)
     expect(shell.shellCode).toMatch(/lg:left-\[64.6%\] lg:top-\[22.4vh\] lg:w-\[26.1%\] lg:h-\[37.9vh\]"><IntentObject1 \/>/)
     expect(shell.shellCode).toMatch(/SITE-FONTS: display=/)
   })
@@ -173,5 +173,25 @@ describe('a sphere keeps what is drawn on it', () => {
     expect([...globe.regions].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
     expect(brief.drawing.elements.filter(e => e.name.startsWith('Route'))).toHaveLength(0)
     expect(brief.drawing.elements).toHaveLength(3)
+  })
+})
+
+describe('one navigation per page', () => {
+  it('catches the Wilder House hero drawing its own nav under the real one', async () => {
+    const hero = (await import('./__fixtures__/wilder-hero.json')).default
+    expect(ownNavigation(hero.code, hero.block, hero.sections)).toEqual(['HeroLandscape'])
+  })
+
+  it('leaves the nav section, a footer and a page without a nav section alone', () => {
+    const page = ['Navigation', 'Hero', 'Footer']
+    const both = `const Navigation = () => <nav>a</nav>;\nconst Footer = () => <footer><nav>links</nav></footer>;`
+    expect(ownNavigation(both, ['Navigation', 'Footer'], page)).toEqual([])
+    expect(ownNavigation(`const Hero = () => <section><nav>x</nav></section>;`, ['Hero'], ['Hero', 'Footer'])).toEqual([])
+    expect(ownNavigation(`const Hero = () => <section><h1>x</h1></section>;`, ['Hero'], page)).toEqual([])
+  })
+
+  it('finds the header section by its name, not a hero that happens to say header', () => {
+    expect(siteHeaderSection(['Hero', 'SiteHeader', 'Footer'])).toBe('SiteHeader')
+    expect(siteHeaderSection(['HeroHeader', 'Footer'])).toBeNull()
   })
 })

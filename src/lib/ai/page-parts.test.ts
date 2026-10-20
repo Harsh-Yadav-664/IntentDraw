@@ -154,3 +154,29 @@ describe('rebuild note in the section prompt', () => {
     expect(buildStagedSectionUserPrompt(['Pricing'], shell, [], 'a bakery', PRESETS.neosleek)).not.toContain('USER INSTRUCTION FOR')
   })
 })
+
+describe('what each block carries', () => {
+  it('keeps who built a section and what still looks generated, through a rebuild and a save', () => {
+    const next = replaceSection(parts(), 'Pricing', `const Pricing = () => <section>tiers</section>;`, { provider: 'gemini', note: 'Looks generated: x.' })
+    expect(listSections(next).find(s => s.name === 'Pricing')).toEqual({ name: 'Pricing', status: 'built', provider: 'gemini', note: 'Looks generated: x.' })
+    const saved = JSON.parse(JSON.stringify(next))
+    const restored = parseSavedParts(saved, assembleParts(next).code)
+    expect(restored?.blocks[0]).toMatchObject({ provider: 'gemini', note: 'Looks generated: x.' })
+  })
+
+  it('drops metadata that is not a short string', () => {
+    const next = replaceSection(parts(), 'Pricing', `const Pricing = () => <section>tiers</section>;`, { provider: 42 as unknown as string, note: 'n'.repeat(900) })
+    expect(next.blocks[0].provider).toBeUndefined()
+    expect(next.blocks[0].note).toHaveLength(300)
+  })
+})
+
+describe('provenance', () => {
+  it('records the model and time with the section, and refuses junk', () => {
+    const next = replaceSection(parts(), 'Pricing', `const Pricing = () => <section>tiers</section>;`, { provider: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', ms: 31234.6 })
+    expect(listSections(next).find(s => s.name === 'Pricing')).toMatchObject({ provider: 'openrouter', model: 'nvidia/nemotron-3-ultra-550b-a55b:free', ms: 31235 })
+    const junk = replaceSection(parts(), 'Pricing', `const Pricing = () => <section>tiers</section>;`, { ms: Number.NaN, model: '' })
+    expect(junk.blocks[0]).not.toHaveProperty('ms')
+    expect(junk.blocks[0]).not.toHaveProperty('model')
+  })
+})
