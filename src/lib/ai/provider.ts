@@ -92,7 +92,14 @@ export async function callProvider(
   p: ProviderName,
   systemPrompt: string,
   userMessage: string,
-  options: { nvidiaModelId?: string; openrouterModelId?: string; imageBase64?: string; geminiDeadlineMs?: number } = {}
+  options: {
+    nvidiaModelId?: string
+    openrouterModelId?: string
+    imageBase64?: string
+    geminiDeadlineMs?: number
+    /** Told which model answered — a provider walks its own list of models. */
+    onModel?: (model: string) => void
+  } = {}
 ): Promise<string> {
   // How long Gemini may spend walking its model chain before the next provider
   // gets a turn. geminiGenerate stops on its own; the backstop is a safety net.
@@ -109,13 +116,14 @@ export async function callProvider(
   const imageBase64 = options.imageBase64?.replace(/^data:image\/\w+;base64,/, '')
 
   const call = async (): Promise<string> => {
-    if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId)
+    const { onModel } = options
+    if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId, onModel)
     // Groq switches to its vision model when an image is attached.
-    if (p === 'groq') return groqGenerate(systemPrompt, userMessage, { imageBase64 })
+    if (p === 'groq') return groqGenerate(systemPrompt, userMessage, { imageBase64, onModel })
     // OpenRouter swaps to a vision-capable free model on its own when an image
     // is attached, so the drawing isn't silently dropped.
     if (p === 'openrouter') {
-      return openrouterGenerate(systemPrompt, userMessage, openrouterModelId, { imageBase64 })
+      return openrouterGenerate(systemPrompt, userMessage, openrouterModelId, { imageBase64, onModel })
     }
 
     const contentParts: Part[] = [{ text: systemPrompt }, { text: userMessage }]
@@ -124,7 +132,7 @@ export async function callProvider(
     }
     // geminiGenerate retries free-tier 429s (honoring the server's
     // retryDelay) before giving up and letting the chain fall through.
-    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini, deadlineMs: geminiDeadlineMs })
+    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini, deadlineMs: geminiDeadlineMs, onModel })
   }
 
   // Gemini and OpenRouter both retry through free-tier 429s in-band (honoring

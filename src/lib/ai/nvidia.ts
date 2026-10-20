@@ -1,7 +1,8 @@
 export async function nvidiaGenerate(
   systemPrompt: string,
   userPrompt: string,
-  modelId: string = 'nvidia/nemotron-3.5-lightning-30b-a3b' // Default, overridden by UI. NOTE: meta/llama-3.1-70b-instruct reached EOL 2026-08-26; NVIDIA models are currently slow/unreliable — prefer Gemini or Groq.
+  modelId: string = 'nvidia/nemotron-3.5-lightning-30b-a3b', // Default, overridden by UI. NOTE: meta/llama-3.1-70b-instruct reached EOL 2026-08-26; NVIDIA models are currently slow/unreliable — prefer Gemini or Groq.
+  onModel?: (model: string) => void
 ): Promise<string> {
   const apiKey = process.env.NVIDIA_NIM_API_KEY
   if (!apiKey) {
@@ -41,5 +42,6 @@ export async function nvidiaGenerate(
   }
 
   const result = await response.json()
+  onModel?.(modelId)
   return result.choices[0].message.content
 }

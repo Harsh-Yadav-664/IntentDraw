@@ -95,12 +95,12 @@ type Failure = 'daily-quota' | 'retired' | 'overloaded' | 'rate-limited' | 'fata
 /** What a Gemini error means for what to do next. */
 export function classifyGeminiError(message: string): Failure {
   // A per-DAY quota won't recover by waiting seconds: move to the next model.
-  if (/PerDay|per day|daily/i.test(message) && /429|quota|resource_exhausted/i.test(message)) return 'daily-quota'
-  if (/404|no longer available|not found|is not supported/i.test(message)) return 'retired'
+  if (/PerDay|per day|daily/i.test(message) && /\b429\b|quota|resource_exhausted/i.test(message)) return 'daily-quota'
+  if (/\b404\b|no longer available|not found|is not supported/i.test(message)) return 'retired'
   // Capacity problems on Google's side — the next model has its own capacity.
-  if (/503|500|service unavailable|high demand|overloaded|internal error|timed out|aborted/i.test(message)) return 'overloaded'
+  if (/\b503\b|\b500\b|service unavailable|high demand|overloaded|internal error|timed out|aborted/i.test(message)) return 'overloaded'
   // A per-minute limit clears in seconds: one short wait is worth it.
-  if (/429|too many requests|resource_exhausted|rate.?limit|quota/i.test(message)) return 'rate-limited'
+  if (/\b429\b|too many requests|resource_exhausted|rate.?limit|\bquota\b/i.test(message)) return 'rate-limited'
   return 'fatal'
 }
 
@@ -122,7 +122,7 @@ export function classifyGeminiError(message: string): Failure {
  */
 export async function geminiGenerate(
   contentParts: Part[],
-  opts?: { perAttemptTimeoutMs?: number; deadlineMs?: number }
+  opts?: { perAttemptTimeoutMs?: number; deadlineMs?: number; onModel?: (model: string) => void }
 ): Promise<string> {
   const perAttemptTimeoutMs = opts?.perAttemptTimeoutMs ?? 120000
   const deadline = Date.now() + (opts?.deadlineMs ?? 150000)
@@ -140,6 +140,7 @@ export async function geminiGenerate(
           signal: AbortSignal.timeout(Math.min(perAttemptTimeoutMs, remaining)),
         })
         lastGood = modelName
+        opts?.onModel?.(modelName)
         return result.response.text()
       } catch (err) {
         lastErr = err
