@@ -1,6 +1,6 @@
 # IntentDraw — Status, Backlog and Roadmap
 
-**The single place for where the project stands, what's done, and everything planned.** Updated 2026-10-02. It is meant to survive the chat: anything decided or discovered goes here.
+**The single place for where the project stands, what's done, and everything planned.** Updated 2026-10-20. It is meant to survive the chat: anything decided or discovered goes here.
 
 > **Note for Claude:** `AGENTS.md` §6 says "no persistent issues log needed." That rule is superseded for this file — the owner explicitly asked for it (2026-09-18, again 2026-10-02). Do not delete it citing that rule.
 
@@ -28,11 +28,14 @@
 
 **Intent engine (2026-10-02, evening)** — the owner's cube run ("make region 1 a 3d rotating cube interactive with mouse clicks") built the cube in the wrong section. Now: code parses the prompt, the cube is a code-built object placed at the drawn box, and the nav floats over the first screen. Live re-run: brief read "a 3D cube object on the right side of the first screen", one cube only, rendered at (872, 202) for a box drawn at (882, 201). Users can also tag any shape in one click ("3D object · exactly here") and correct any element in "What I understood".
 
+**New interface (2026-10-03)** — the whole app now wears the owner's chosen design: design A's landing page with design B's sketch-to-site slider, and design B's dashboard, editor, settings and sign-in. Everything on screen is wired to what the app really does; unbuilt things say "Coming soon". Checked live: landing (desktop + phone), dashboard on 28 real projects, editor (select, draw, undo, zoom, tags, layers), a real build started from the café example — live per-section status, **Stop** mid-run (kept the built section, listed the rest), **rebuild one section** (22s), and a reload that restored the page, the section list and the reading. Production build passes; in production `/dashboard` redirects to sign-in and the APIs return 401. Details in CLAUDE.md → "The app's own interface".
+
 **Known weak spots right now**
 - **Free-tier capacity.** On 2026-10-02 Gemini 3.x was overloaded all afternoon; generations ran on 2.5-flash. Quality follows the model that answered.
-- **No visual check of the result.** Nothing looks at the rendered page before the user does (see R7 below).
-- **Text contrast over drawn art and dark backgrounds** is not checked (a dark-grey name on near-black shipped once).
-- **The app's own UI** is still the old one; the owner's new UI design is in `Downloads/intentdraw-ui-design-brief.zip` (see §3).
+- **Only a measured visual check of the result.** Since 2026-10-20 the layout audit measures the rendered page (contrast, overflow, overlap, empty screens) — but nothing yet judges *taste* (hierarchy, rhythm, whether it impresses); that needs the VLM critic (R7, paid tier). Since 2026-10-03 every build is *compile*-checked, so a page can no longer arrive as a compile error — but a section can still come out sparse, low-contrast or with an empty panel, and nothing catches that. This is now the main gap between "builds" and "impresses".
+- **Text contrast on plain dark backgrounds** is not checked. Text over the drawn art is (2026-10-20: a halo is added below 3:1); a dark-grey name on a near-black section is still possible.
+- **Light theme** exists (Settings → Appearance) but has only been spot-checked; the editor canvas in light mode needs a proper look.
+- **Dashboard cards show the drawing, not the built site.** A real screenshot of each site would sell the result better (see §3).
 
 **How to see what the pipeline does without spending quota**
 - `npx tsx scripts/diagnose-staged.ts <project.json> [brief.json] [--prompts]` — shell, batches, per-section drawing instructions, full prompts.
@@ -43,12 +46,14 @@
 
 ## 1. Owner actions — only you can do these
 
+0. ~~Models for hosting (#10, #11)~~ — **decided 2026-10-20:** the first hosted version is for feedback; visitors bring their own key (as many providers as possible, aggregators included). Our keys are never served. "Pay to use" shows as Coming soon, on a step after sign-in (production only). No self-hosted model; build a configurable provider layer; collect data with consent. Build plans are on the two issues — to be done at the hosting step.
+
 1. ~~`PEXELS_API_KEY`~~ — **done** (set in `.env.local`).
 2. ~~`OPENROUTER_API_KEY`~~ — **done**. Free tier is 50 requests/day at $0; a one-time $10 credit raises it to 1000/day (no subscription).
 3. **Supabase Auth settings for the production domain** (only at deploy time) — Authentication → URL Configuration: Site URL = deployed domain; add `https://<domain>/auth/callback` (and `http://localhost:3000/auth/callback`) to Redirect URLs. Decide whether email confirmation is required. Free projects pause after 7 days idle.
 4. **Vercel project** (only at deploy time) — import the repo, set every variable from `.env.example`, do NOT set `NEXT_PUBLIC_AUTH_BYPASS`. Generation routes request `maxDuration = 300`; Hobby caps lower — Pro ($20/mo) if stages get killed.
 5. **GSAP licensing.** The free Standard license prohibits "tools that allow users to build visual animations without code that compete with Webflow's visual animation building capabilities." IntentDraw generates code, so it probably falls outside — confirm with Webflow before animation is a headline paid feature.
-6. **Pricing.** Suggested shape (market: v0 $20, Lovable ~$25, Bolt $20): Free (BYO key or small daily cap, badge on shared sites) / Pro ~$20 (credits on our key, AI hero images, custom domain, no badge) / Studio ~$50. Recurring value is hosting + custom domains, not only generations. Billing waits on this decision.
+6. **Pricing — confirm what the site now says.** The landing page, upgrade dialog and Settings show Free ($0, 10 generations a day) · Pro ($20/month, "coming soon") · Studio ("Later"), all from `src/lib/plans.ts`. Pro's listed benefits (premium models, more generations, licensed photos, custom domain) are marked planned. Change that one file to change all three places. Suggested shape (market: v0 $20, Lovable ~$25, Bolt $20): Free (BYO key or small daily cap, badge on shared sites) / Pro ~$20 (credits on our key, AI hero images, custom domain, no badge) / Studio ~$50. Recurring value is hosting + custom domains, not only generations. Billing waits on this decision.
 
 ---
 
@@ -57,15 +62,15 @@
 Items marked **(R#)** come from the 2026-10-02 research (§5); the full evidence is in `D:\CODE\PROJECTS\intentdraw-research\REPORT.md`.
 
 1. **Self-healing compile errors (R6).** The preview reports `IFRAME_ERROR`. Map the error to the section that declares the offending name and rebuild that one section with the error text as the note (one call, only on failure) — show "fixing automatically" instead of a red box. Saves whole regenerations.
-2. **Anti-AI-design scanner on every section (R1).** Port the code-certain tells from `avoid-ai-design/scripts/detect.mjs` (MIT, keep the notice) to TypeScript: gradient headline text, purple/indigo gradients, ALL-CAPS tracked eyebrows, "→" stapled to buttons, decorative 01/02/03, `rounded-2xl shadow-lg` everywhere, icon-in-tinted-square, glassmorphism by reflex. Auto-fix the mechanical ones in `enforceDesign`; send the rest back as a rebuild note for that section. 0 tokens. Closes the old "automated genericness signal" item.
-3. **Contrast enforcement.** A render-time check in the preview (computed text vs background colour) that lifts text below 4.5:1 — the dark-on-dark headline case.
+2. ~~Anti-AI-design scanner (R1)~~ — **done 2026-10-20** (`ai-look.ts`). Not yet covered: ALL-CAPS tracked eyebrows and reflex glassmorphism need a judgement call, so they belong to the visual critic.
+3. **Contrast enforcement — half done.** Text over the drawn art gets a halo below 3:1 (`__legibleOverArt` in the preview runtime). Extend the same walk to every text node against its computed background (4.5:1 body, 3:1 large).
 4. **Clarifying questions (R3).** The brief may return up to two `questions: [{text, options[]}]` when the agent is genuinely unsure ("R3–R4: river or road?"); shown as chips in "What I understood"; the build proceeds with the best guess unless answered. Experts strongly preferred this in the Sketch2Code study.
 5. **Pick a design direction (R4).** Understanding returns 2–3 directions (concept + fonts + palette + corners/surfaces) as text; the card shows each in its own fonts and colours; the user picks (or the first is used after ~10s); only that one is built. Cheapest "variants" possible, and it makes uniqueness visible.
-6. **Brief correction.** Edit the reading (retag an element, change its form/section) and "rebuild with this reading" without re-running understanding. The data model supports it.
-7. **Show the saved brief on reopen.** It's saved in page parts; the card starts empty after reload.
+6. **Brief correction — half done.** "Edit reading" lets the user retag every element and build again; the tags win on the next run. Still missing: rebuilding from the corrected reading *without* re-running understanding (saves a model call).
+7. ~~Show the saved brief on reopen~~ — **done** (restored from the saved page parts).
 8. **Speed on paid keys.** Run section batches 2–3 at a time when the provider allows it (`use-ai.ts` is the only place to change). Free tiers stay serial.
 9. **Guard drawn irregularities (R11).** Models "correct" one bigger/offset element back to the repeated pattern 70–96% of the time (Pattern over Pixels). State deliberate irregularities explicitly in the section's drawing block ("R5 is intentionally 1.6× wider than R4 and R6 — keep it").
-10. **Images:** search Pexels with the brief's concept and pass the chosen photo *into* the section prompt so palette and layout are built around a real image (R from the monetisation discussion). Later, paid tier: 1–2 AI-generated hero images conditioned on the palette.
+10. **Images — owner decision 2026-10-19: no third-party stock photos while free; AI-generated images in the paid hosted tier.** Done 2026-10-20: every image is drawn in code in the site's palette (`image-art.ts`). Next, for the paid tier: an image route that turns the keyword URL (+ brief concept + palette) into a generated image, cached per project, swapped in where `artImage` runs today. Price check needed before choosing the model.
 
 **Intent engine — next steps**
 1. **More code-built objects:** pyramid, ring/torus, floating card stack, extruded logo from a drawn outline; "3D tilt" for any content box the user calls 3D.
@@ -76,12 +81,16 @@ Items marked **(R#)** come from the 2026-10-02 research (§5); the full evidence
 
 ## 3. The app's own UI
 
-1. **Port the owner's new UI** (`Downloads/intentdraw-ui-design-brief.zip`, a Vite + React app: Landing, Auth, Dashboard, Editor, Settings, Share, Upgrade, Public share page, `design-tokens.css`, ~120 KB of CSS). Port screen by screen into the Next.js app, keeping all existing behaviour and wiring (stores, routes, auth, generation). Generated from `IntentDraw-UI-prompt.md` (sent to the owner 2026-10-02).
-2. **Click to edit in Output (R8).** Inject `data-oid` attributes in the preview's Babel plugin (`intentdraw-transform` in `sanitize.ts`), like Onlook (Apache-2.0, `packages/parser/src/ids.ts`): click a heading to edit its text with zero model calls; click a block → "change this" → scoped section rebuild with the element as locator.
-3. **Draw to edit (R9).** In edit mode, strokes drawn over the frozen backdrop of an existing section become a scoped rebuild of that section (make-real's idea: the code is the source of truth, the drawing is the change). No competitor does sketch-based editing.
-4. **Region chips above the prompt** — click a region or group and write its own instruction (owner's planned feature).
-5. **Canvas UX audit** — selection, resizing, labelling, marquee → group, keyboard shortcuts. Merge the region intent editor and the chip strip.
-6. **First-run examples** (like Dyad's inspiration prompts) and an OG image for shared links.
+Done 2026-10-03: the new interface (landing, sign-in, dashboard, editor, settings), region chips + on-canvas description, the canvas overhaul (corner handles, marquee, multi-drag, duplicate, nudge, zoom, pan, auto-added pages), first-run examples. What's left:
+
+1. **Click to edit in Output (R8).** Inject `data-oid` attributes in the preview's Babel plugin (`intentdraw-transform` in `sanitize.ts`), like Onlook (Apache-2.0, `packages/parser/src/ids.ts`): click a heading to edit its text with zero model calls; click a block → "change this" → scoped section rebuild with the element as locator. (Shown as "Coming soon" in the app.)
+2. **Draw to edit (R9).** In edit mode, strokes drawn over the frozen backdrop of an existing section become a scoped rebuild of that section (make-real's idea: the code is the source of truth, the drawing is the change). No competitor does sketch-based editing.
+3. **Real site thumbnails on the dashboard.** Cards show the drawing (or the prompt). A picture of the built site is stronger, but a sandboxed frame can't screenshot itself and a live frame per card is heavy — same blocker as the visual critic (§4.4). Options: one lazily mounted frozen frame for the hovered card, or a server-side render at save time.
+4. **Light theme pass.** Walk every screen in light mode, the editor canvas especially (ghost backdrop opacity, region colours on paper).
+5. **Editor on small screens.** Below 1024px the editor shows "best on a desktop". A read-only view of the built site there would be better than a dead end.
+6. **OG image** for shared links and the landing page; a favicon in the new mark.
+7. **Empty prompt + drawing.** The owner's rule is "a short prompt, or none, must be enough", but Generate still requires a sentence. Let a drawing with tags/descriptions build on its own.
+8. **Bring-your-own-key, version history, several screens per project, custom domains, billing** — all shown as "Coming soon" in the app; each is a real feature to build (see §4), not a UI task.
 
 ## 4. Product — beyond one landing page
 
@@ -120,7 +129,9 @@ Folder: `D:\CODE\PROJECTS\intentdraw-research` — `repos/` (18 shallow clones, 
 
 ## 6. Housekeeping
 
-1. Remaining lint errors: `no-explicit-any` in `api/models/route.ts` (1) and `drawing-canvas.tsx` (3).
+1. Remaining lint errors: `no-explicit-any` in `api/models/route.ts` (1) and `require()` in the root debug script `test-limits.js` (2).
+1a. Unused dependencies after the UI port: `radix-ui`, `class-variance-authority`, `shadcn`, `tw-animate-css` (and its import in `globals.css`). Remove them.
+1b. Next 16 prints that `middleware.ts` should be renamed `proxy.ts` — do it when convenient.
 2. Unused DB tables `regions` and `generation_history` (full RLS, zero application code). Use them or drop them.
 3. `viewMode: 'split'` is unreachable — no UI sets it, no render branch.
 4. The legacy single-call route `POST /api/generate` still runs the old intent classifier and style presets. Nothing in the UI uses it; retire it.
@@ -130,6 +141,35 @@ Folder: `D:\CODE\PROJECTS\intentdraw-research` — `repos/` (18 shallow clones, 
 ---
 
 ## Done (kept briefly so nothing is re-investigated)
+
+**2026-10-20 — the drawing looks right, and broken pieces stay contained (GitHub #3–#8, #14, #15)**
+- **The travel run's drawing** (fixture `travel-scenery.json`): a circle drawn among hills is split off as a sun *behind* them (`splitRoundBodies`); "background of the whole page" in the prompt fixes the scenery behind the whole page (`scope: 'page'`), and sections over it are told to stay translucent.
+- **Scene styles** follow the site's surfaces — painterly, papercut, line-art, flat — with atmospheric depth (nearest land ≥3:1), a gentle intro, scroll parallax, grain; all motion is frame-driven so a hidden or frozen frame never sticks half-faded; reduced motion respected.
+- **Text over the drawing stays readable:** sections are given the right ink colour (`textOverArt`), and the preview adds a soft halo to any text still under 3:1 against the scene.
+- **Layout lint** (`layout-lint.ts`, AST): a grid row whose spans add up to more columns than the grid is fixed in code.
+- **Dates and photos:** every prompt carries today's date (no "© 2024"); `grayscale` on photos is stripped unless the site is meant to be monochrome.
+- **One crashing section no longer hides the page:** each section is wrapped in an error boundary in the code-built shell; the rest of the site stays on screen and the notice names the section to rebuild.
+- **AI-look scanner** (`ai-look.ts`, ideas from the MIT avoid-ai-design catalogue): gradient text and bouncy easing fixed in code; purple-to-blue gradients and placeholder names ("Jane Doe") get one corrective call; anything left is saved with the section, and its Rebuild opens with that note filled in. Each section also records which provider built it.
+- **Compile fix:** the preview embedded the page in a template literal without escaping backslashes — any `\"` in generated code broke. Also fixed: four regexes in `gemini.ts` had been saved with a backspace byte instead of the regex word boundary, so quota/overload errors were never recognised.
+- **Layout audit on the rendered page** (`page-audit.ts`, zero tokens, the free stand-in for the R7 critic): unreadable text, sideways overflow, overlapping text, empty screens — per section, offered as that section's rebuild note. On the Wilder House run it found the double navigation, a 3.2:1 button and a section whose photo had collapsed to 0px; the last is now also fixed in code (`layout-lint.ts`), and sections are told the site header already exists.
+- **Images drawn in code** in the site's palette instead of stock photos (owner's decision); photos still available with `NEXT_PUBLIC_IMAGE_SOURCE=photos`.
+- **Models (GitHub #12):** catalogues re-checked; the dead OpenRouter vision entry replaced by `nvidia/nemotron-3.5-super-vl:free` (probed: read a test drawing in <1s). Each section now records the model that built it and how long it took.
+- Tools: `scripts/scene-gallery.ts` (every scene style from a project, no API calls) and `scripts/shoot.mjs` (headless-Chrome screenshots of any page).
+
+**2026-10-03 — no more compile errors where the site should be**
+- Root cause of the owner's "Duplicate declaration Navigation": one section imported the lucide icon `Navigation` while another section *is* the component `Navigation`; assembly merged both into one file. Any section named like an icon (Navigation, Menu, Contact, Map, Gallery…) could hit it. Assembly now aliases the import in the block that imported it (`Navigation as NavigationIcon`) and points that block's uses at the alias.
+- **Nothing that doesn't compile reaches the preview** — three layers: the section route parses every answer and asks the model once more with the compiler's message if it fails (`validate.ts`, same parser as the preview's Babel); the browser tries each block against the page before adding it (a block that would break the page becomes a failed section to rebuild); the editor checks the page on load.
+- **Issue UI**: a persistent notice, an "issue" button in the top bar that reopens the details after the notice is closed, a details dialog (where, what kind, the technical message, copy), a one-click fix (rebuild the section at fault — one model call, no generation used), and a clean empty state in the Output view. The canvas no longer shows a broken page behind the drawing.
+- Pages saved before the fix repair themselves on open from their saved parts — no rebuild, no model call.
+- **Data-loss hole closed**: a save used to drop a project's build parts whenever the session couldn't read them (it happened to the owner's project mid-session; restored from a copy). A save now writes unread parts back untouched.
+
+**2026-10-03 — the app's own interface**
+- Ported the owner's two designs: A's landing page (with B's before/after slider), B's dashboard, editor, settings, sign-in. One design system (`globals.css` colour roles + `components/kit`), dark and light. shadcn components removed.
+- Editor: live section status during a build, **Stop** (keeps what's built), limit / failed / offline states, "What I understood" restored after reload, "Edit reading", share dialog, export menu, usage chip.
+- Canvas: viewport-sized Konva stage (no giant canvas at high zoom), zoom + pan, corner handles, multi-shape drag as one undo step, duplicate (Ctrl+D), nudge, select-all, group from the selection bar, describe/tag a shape on the canvas, pages added as you draw past the bottom. The vision-model export is zoom-independent and still carries the R-number labels.
+- Dashboard: real projects with drawing thumbnails (strokes included), search, sort, rename, duplicate, delete, usage meter, account menu, start-from-example. Settings: profile, appearance, plan, usage, which providers have keys, domains (coming soon).
+- **Security fixes found on the way:** "Open in new tab" ran generated code with the app's own origin (blob URL) — now sandboxed; `?redirect=` after sign-in accepted any URL (open redirect) — now same-site paths only.
+- Bugs fixed on the way: opening a project with no drawing kept the previous project's shapes; resizing a circle or a stroke corrupted its geometry; signup always jumped to the dashboard even when email confirmation was pending.
 
 **2026-10-02 — making it work on free models, and the drawing actually used**
 - **Root cause of the "one section, drawing ignored" run:** Gemini 3.x overloaded → 4-minute waits → text-only Groq wrote everything; both OpenRouter models had left the free catalogue; the section plan reached the shell only when the drawing had no layout box; the placement text named a literal `<FirstSection />`; sections never received drawing geometry; the understanding prompt's only examples were mountains/suns/rivers.

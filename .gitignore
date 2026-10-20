@@ -42,3 +42,6 @@ public/_*.html
 # Build artifacts that were tracked by mistake
 tsconfig.tsbuildinfo
 .system_generated/
+
+# Private ideation notes (owner strategy, feature ideas) — never pushed
+*.local.md
