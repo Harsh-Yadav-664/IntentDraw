@@ -5,6 +5,7 @@ import { generateSectionStage } from '@/lib/ai/staged'
 import { normalizeBrief } from '@/lib/ai/brief'
 import { designTokens } from '@/lib/ai/site-design'
 import { MAX_SECTION_NOTE_CHARS } from '@/lib/ai/page-parts'
+import { resolveProvider } from '@/lib/ai/provider'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
         prompt,
         tokens,
         globalTheme,
-        provider: provider ?? 'gemini',
+        provider: resolveProvider(provider, sectionNames),
         nvidiaModelId,
         brief: validBrief,
       },

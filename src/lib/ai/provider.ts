@@ -31,7 +31,7 @@ import type { AIProvider, Region, RegionGroup } from '@/types'
 // more headroom than Groq's dedicated fast endpoint, but not Gemini's: Gemini's
 // 120s covers vision plus in-band 429 retries, neither of which applies here
 // (openrouter.ts does its own 429 wait, which the backstop below accounts for).
-const PROVIDER_TIMEOUT_MS: Record<AIProvider, number> = {
+const PROVIDER_TIMEOUT_MS: Record<ProviderName, number> = {
   gemini: 120000,
   groq: 45000,
   nvidia: 75000,
@@ -81,7 +81,24 @@ function humanizeProviderError(raw: string | undefined): string {
   return raw.split('\n')[0].slice(0, 140)
 }
 
-export type ProviderName = AIProvider
+/** A provider that answers calls — what 'auto' resolves to. */
+export type ProviderName = Exclude<AIProvider, 'auto'>
+
+// Sections whose job is structure — navigation, the footer, forms and plain
+// information — rather than the page's look and content.
+const STRUCTURAL_SECTION = /^(?:site|top|main|primary)?(?:nav|navigation|navbar|header|topbar|menubar|footer|contact|contactform|form|booking|reservations?|reserve|visit|location|locations|findus|hours|faq|faqs|newsletter|signup|subscribe)$/i
+
+/**
+ * Which provider builds a part of the page when the user chose 'auto'. In the
+ * owner's side-by-side runs Gemini wrote the richer, more detailed sections and
+ * Groq the cleaner, tidier structure — so Gemini builds the first screen and
+ * the content, Groq the navigation, footer and forms. Each still falls back to
+ * the other. Without section names (understanding, the legacy path): Gemini.
+ */
+export function resolveProvider(choice: AIProvider | undefined, sectionNames: string[] = []): ProviderName {
+  if (choice && choice !== 'auto') return choice
+  return sectionNames.length > 0 && sectionNames.every(name => STRUCTURAL_SECTION.test(name)) ? 'groq' : 'gemini'
+}
 
 /**
  * One provider call, with that provider's timeout plus a backstop in case an
@@ -163,7 +180,8 @@ function openrouterConfigured(): boolean {
  * and shouldn't displace the known-good Gemini path, but it is worth one more
  * attempt once everything else has failed.
  */
-export function buildFallbackChain(provider: ProviderName): ProviderName[] {
+export function buildFallbackChain(choice: AIProvider): ProviderName[] {
+  const provider = resolveProvider(choice)
   const tail = openrouterConfigured() ? (['openrouter'] as ProviderName[]) : []
   if (provider === 'openrouter') return ['openrouter', 'gemini', 'groq', 'nvidia']
   // NVIDIA goes last: its free endpoints routinely take longer than a request

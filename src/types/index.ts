@@ -7,7 +7,8 @@
  * used to be spelled out literally in eight places, and adding a provider meant
  * finding all of them. `ProviderName` in `lib/ai/provider.ts` aliases this.
  */
-export type AIProvider = 'gemini' | 'groq' | 'nvidia' | 'openrouter'
+/** 'auto' picks per part of the page — see resolveProvider() in lib/ai/provider.ts. */
+export type AIProvider = 'auto' | 'gemini' | 'groq' | 'nvidia' | 'openrouter'
 
 export interface RegionLockState {
   layout: boolean

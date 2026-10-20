@@ -182,7 +182,7 @@ const initialState: WorkflowState = {
   issueNoticeOpen: false,
   audit: {},
   autoFixUntil: null,
-  aiProvider: 'gemini',
+  aiProvider: 'auto',
   nvidiaModelId: 'nvidia/nemotron-3.5-lightning-30b-a3b',
   saveStatus: 'saved',
   lastSavedAt: null,

@@ -14,6 +14,7 @@ import type { AIProvider } from '@/types'
 import { ANCHOR_TEXT, ROLE_LABEL } from './reading'
 
 const PROVIDERS: Array<{ value: AIProvider; label: string; hint: string }> = [
+  { value: 'auto', label: 'Auto', hint: 'Gemini builds the first screen and content, Groq the navigation, footer and forms' },
   { value: 'gemini', label: 'Gemini Flash', hint: 'Best quality · reads your drawing · falls back through newer Gemini models' },
   { value: 'openrouter', label: 'OpenRouter', hint: 'Stronger free coding models' },
   { value: 'groq', label: 'Groq', hint: 'Fastest · reads your drawing with Qwen' },
