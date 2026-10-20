@@ -69,6 +69,13 @@ export interface BriefPalette {
   secondary: string
 }
 
+export interface BriefFacts {
+  address: string
+  phone: string
+  email: string
+  hours: string
+}
+
 export interface DesignBrief {
   summary: string
   audience: string
@@ -78,6 +85,11 @@ export interface DesignBrief {
   signature: string
   /** Art direction shared by every picture on the site, so they read as one shoot. */
   imagery: string
+  /**
+   * The site's hard facts, decided once. Sections are written in separate calls
+   * and each used to invent its own — one page gave two different addresses.
+   */
+  facts: BriefFacts
   /** The template version of this site, named so the build can steer away from it. */
   generic: string
   /** The one name the whole site uses — sections are built in separate calls and used to invent different ones. */
@@ -147,6 +159,8 @@ Name a layout element by its purpose ("Navigation", "Key achievements row") and 
 THE SITE AND ITS SECTIONS
 Work out who it is for, what they must be able to do, and the content it really needs — real specifics (actual product categories, believable names, concrete numbers), never "Feature 1".
 Plan 5-8 sections as PascalCase component names in page order, each with a one-line purpose naming its actual content.
+- Every section has its own job. Never plan two that cover the same thing — address, hours, booking and contact for one place are ONE section (a "Visit" with all of it), not Locations + Reservations + Contact.
+- facts: the site's hard facts, decided once — address, phone, email, opening hours — when this kind of site shows them, believable for its place (or the user's own); "" when it doesn't need one. Every section uses exactly these.
 - The drawn pages are the top of the site, in order: what is drawn on page 1 belongs to the first section (the hero), page 2 to the next, and so on. Set each element's "section" that way.
 - The site does NOT end where the drawing ends. After the drawn pages, plan the rest of what this site needs (work, about, pricing, testimonials, contact, footer …).
 - A navigation bar, when the site needs one, is its own first section; the footer its own last section.
@@ -183,7 +197,7 @@ The message may name a DESIGN LENS — a craft to borrow a way of seeing from. L
 drawing.reading is ONE plain sentence naming what the drawing shows and where, in the user's terms. No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","imagery":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
+{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","imagery":"","facts":{"address":"","phone":"","email":"","hours":""},"avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
 
 /**
  * Ordinary crafts with their own way of seeing, one handed to the understanding
@@ -338,6 +352,19 @@ function palette(v: unknown): BriefPalette | null {
     out[key] = value.toUpperCase()
   }
   return out
+}
+
+const EMAIL = /^[^\s@"<>]+@[^\s@"<>]+\.[a-z]{2,}$/i
+
+function facts(v: unknown): BriefFacts {
+  const f = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const email = str(f.email, 80)
+  return {
+    address: str(f.address, 140),
+    phone: str(f.phone, 40).replace(/[^\d+()./ -]/g, '').trim(),
+    email: EMAIL.test(email) ? email : '',
+    hours: str(f.hours, 140),
+  }
 }
 
 /** "Hero section" / "hero-section" → "HeroSection". Anything that can't be a component name is dropped. */
@@ -688,6 +715,7 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
     concept: str(b.concept, 320),
     signature: str(b.signature, 280),
     imagery: str(b.imagery, 200),
+    facts: facts(b.facts),
     generic: str(b.generic, 240),
     brand: str(b.brand, 60),
     avoid: strList(b.avoid, 4, 140),
@@ -809,6 +837,13 @@ export function renderBrief(brief: DesignBrief, mode: 'shell' | 'section'): stri
   if (site.length > 0) lines.push(site.join(' '))
   if (brief.brand) lines.push(`Name on the site: ${brief.brand} — use exactly this wherever a name appears (logo, headings, footer, copy).`)
   lines.push('Write real content only: no placeholder names or text ("Your Name", "John Doe", "Creator\'s Name", "Lorem ipsum", "Company"), no generic filler lines.')
+  const factLine = [
+    brief.facts.address && `address ${brief.facts.address}`,
+    brief.facts.phone && `phone ${brief.facts.phone}`,
+    brief.facts.email && `email ${brief.facts.email}`,
+    brief.facts.hours && `hours ${brief.facts.hours}`,
+  ].filter(Boolean)
+  if (factLine.length > 0) lines.push(`Facts — use exactly these wherever they appear, never other ones: ${factLine.join(' · ')}.`)
   if (brief.concept) lines.push(`Concept: ${brief.concept}`)
   if (brief.signature) lines.push(`Signature element (must appear, executed well): ${brief.signature}`)
   if (brief.avoid.length > 0) lines.push(`Avoid these clichés: ${brief.avoid.join('; ')}`)
