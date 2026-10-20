@@ -1,0 +1,841 @@
+import React, { useRef, useEffect } from 'react';
+import gsap from 'gsap';
+import { ChevronLeft, ChevronRight, Utensils, Instagram, Facebook, Twitter, ChefHat, Sun, Heart, MapPin, Clock, Phone, Calendar, Users, Mail } from 'lucide-react';
+import { ScrollTrigger } from 'gsap/ScrollTrigger';
+
+/* SITE-FONTS: display=Playfair Display; body=Space Grotesk */
+/* SITE-PALETTE: #FAF3E0,#FFF5E1,#2E2E2E,#FF6F00,#4A7C59 */
+/* SECTIONS: Navigation, Hero, Menu, About, Locations, Reservations, Contact, Footer */
+
+/* Each section renders inside its own boundary: one that crashes is left out and reported; the rest of the page still shows. */
+class SectionBoundary extends React.Component<{ name: string; children?: React.ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: any, info: any) {
+    try {
+      window.parent.postMessage({ type: 'IFRAME_ERROR', kind: 'runtime', partial: true, section: this.props.name, message: String((error && error.message) || error), stack: String((info && info.componentStack) || '') }, '*');
+    } catch (e) {}
+  }
+  render() {
+    // display: contents — the marker names the section for the layout audit without taking part in layout.
+    return this.state.failed ? <div data-failed-section={this.props.name} /> : <div data-section={this.props.name} style={{ display: 'contents' }}>{this.props.children}</div>;
+  }
+}
+
+/* The page skeleton, built by IntentDraw from the design brief: every planned section, in order. */
+
+/* IntentScene: the user's drawing, rendered by IntentDraw (papercut) — geometry, layering, colour and motion are fixed. */
+const IntentScene = ({ className = '' }: { className?: string }) => {
+  const root = React.useRef<HTMLDivElement | null>(null);
+  React.useEffect(() => {
+    const host = root.current;
+    const w = window as any;
+    if (!host || w.__intentdrawFrozen) return;
+    if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const rise = Array.from(host.querySelectorAll('[data-rise]')) as any[];
+    const draws = (Array.from(host.querySelectorAll('[data-draw]')) as any[])
+      .map(p => { let len = 0; try { len = Math.ceil(p.getTotalLength()); } catch (e) {} return { p, len }; })
+      .filter(d => d.len > 0);
+    const layers = Array.from(host.querySelectorAll('[data-depth]')) as any[];
+    const fine = !!(window.matchMedia && window.matchMedia('(pointer: fine)').matches);
+    const ease = (t: number) => 1 - Math.pow(1 - Math.min(1, Math.max(0, t)), 3);
+    let start = 0, intro = true, mx = 0, my = 0, x = 0, y = 0, s = 0, raf = 0;
+    const settle = () => {
+      intro = false;
+      rise.forEach(g => { g.style.transform = ''; g.style.opacity = ''; });
+      draws.forEach(d => { d.p.style.strokeDasharray = ''; d.p.style.strokeDashoffset = ''; });
+    };
+    const tick = (now: number) => {
+      raf = 0;
+      if (w.__intentdrawFrozen) { settle(); return; }
+      if (intro) {
+        if (!start) start = now;
+        const t = now - start;
+        let done = true;
+        rise.forEach((g, i) => {
+          const k = ease((t - 140 * i) / 1600);
+          if (k < 1) done = false;
+          g.style.transform = 'translateY(' + (36 * (1 - k)).toFixed(2) + 'px)';
+          g.style.opacity = String(0.2 + 0.8 * k);
+        });
+        draws.forEach((d, i) => {
+          const k = ease((t - 250 - 110 * i) / 2200);
+          if (k < 1) done = false;
+          d.p.style.strokeDasharray = d.len + ' ' + d.len;
+          d.p.style.strokeDashoffset = String(d.len * (1 - k));
+        });
+        if (done) settle();
+      }
+      const target = Math.min(3000, window.scrollY || 0);
+      x += (mx - x) * 0.07; y += (my - y) * 0.07; s += (target - s) * 0.12;
+      for (const g of layers) {
+        const d = Number(g.getAttribute('data-depth')) || 0;
+        const lift = s * 0.3 * (1 - d);
+        g.style.transform = 'translate(' + (-x * 28 * d).toFixed(2) + 'px,' + (lift - y * 10 * d).toFixed(2) + 'px) scale(' + (1 + 0.04 * d).toFixed(3) + ')';
+      }
+      if (intro || Math.abs(mx - x) + Math.abs(my - y) > 0.002 || Math.abs(target - s) > 0.5) raf = requestAnimationFrame(tick);
+    };
+    const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
+    // A hidden frame can report a zero-sized window: never divide by it.
+    const onMove = (e: MouseEvent) => { mx = e.clientX / Math.max(1, window.innerWidth) - 0.5; my = e.clientY / Math.max(1, window.innerHeight) - 0.5; kick(); };
+    window.addEventListener('scroll', kick, { passive: true });
+    if (fine) window.addEventListener('mousemove', onMove, { passive: true });
+    kick();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener('scroll', kick);
+      window.removeEventListener('mousemove', onMove);
+    };
+  }, []);
+  return (
+    <div ref={root} aria-hidden="true" data-tones="" className={`intent-scene relative block w-full h-full overflow-hidden ${className}`}>
+      <svg
+        viewBox="0 0 1280 800"
+        preserveAspectRatio="xMidYMid slice"
+        className="absolute inset-0 block w-full h-full"
+      >
+        <defs>
+          <linearGradient id="is-sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#FBD6AF" /><stop offset="100%" stopColor="#FAF3E0" /></linearGradient>
+          <filter id="is-paper" x="-10%" y="-20%" width="120%" height="140%"><feDropShadow dx="0" dy="-4" stdDeviation="6" floodColor="#000000" floodOpacity="0.26" /></filter>
+        </defs>
+        <rect y="0" width="1280" height="800" fill="url(#is-sky)" />
+        <g data-depth="1" style={{ transformOrigin: '640px 800px' }}>
+          <g data-rise="1">
+            {/* TacoScrollContainer */}
+            <path id="is0-track" d="M13 423 L1279 423 L1279 680 L13 680" fill="none" stroke="none" />
+            <circle r="7" fill="#FF6F00"><animateMotion dur="8s" repeatCount="indefinite" rotate="auto"><mpath href="#is0-track" /></animateMotion></circle>
+          </g>
+        </g>
+      </svg>
+      <div className="pointer-events-none absolute inset-0" style={{ opacity: 0.1, mixBlendMode: 'soft-light', backgroundImage: "url('data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22180%22%20height%3D%22180%22%3E%3Cfilter%20id%3D%22g%22%3E%3CfeTurbulence%20type%3D%22fractalNoise%22%20baseFrequency%3D%22.8%22%20numOctaves%3D%223%22%20stitchTiles%3D%22stitch%22%2F%3E%3CfeColorMatrix%20values%3D%220%200%200%200%20.5%200%200%200%200%20.5%200%200%200%200%20.5%200%200%200%201%200%22%2F%3E%3C%2Ffilter%3E%3Crect%20width%3D%22100%25%22%20height%3D%22100%25%22%20filter%3D%22url(%23g)%22%2F%3E%3C%2Fsvg%3E')" }} />
+    </div>
+  );
+};
+
+gsap.registerPlugin(ScrollTrigger);
+
+// Helper component for individual taco showcases (R1 & R2)
+const TacoShowcase = ({ name, region, description, imageKeyword, lockNum, className }) => {
+    return (
+        <div className={`relative bg-[#FFF5E1] rounded-[14px] p-6 text-[#2E2E2E] overflow-hidden group transition-all duration-300 hover:scale-[1.02] hover:rotate-y-3 ${className}`}>
+            {/* The image component, slightly offset for layering effect */}
+            <div className="relative w-full h-48 mb-4 rounded-[14px] bg-[#4A7C59] -translate-y-4 -translate-x-4 group-hover:translate-x-0 group-hover:translate-y-0 transition-transform duration-300 ease-power3-out">
+                <img
+                    src={`https://loremflickr.com/300/200/${imageKeyword}?lock=${lockNum}`}
+                    alt={`${name} taco`}
+                    className="w-full h-full object-cover rounded-[14px] absolute inset-0 group-hover:scale-105 transition-transform duration-300 ease-power3-out"
+                />
+            </div>
+            <h3 className="font-display text-3xl font-bold mb-2 relative z-10">{name}</h3>
+            <p className="text-sm text-[#FF6F00] font-semibold mb-2 relative z-10">{region}</p>
+            <p className="text-base leading-relaxed relative z-10">{description}</p>
+        </div>
+    );
+};
+
+// Helper component for individual taco cards in the carousel (R3)
+const TacoCard = ({ name, region, description, imageKeyword, lockNum, className }, ref) => {
+    return (
+        <div
+            ref={ref}
+            className={`taco-card relative bg-[#FFF5E1] rounded-[14px] p-5 text-[#2E2E2E] flex flex-col justify-between items-start transition-transform duration-300 hover:scale-105 ${className}`}
+        >
+            <div className="w-full h-32 mb-3 rounded-[14px] overflow-hidden bg-[#4A7C59] flex items-center justify-center">
+                <img
+                    src={`https://loremflickr.com/200/150/${imageKeyword}?lock=${lockNum}`}
+                    alt={`${name} taco`}
+                    className="w-full h-full object-cover rounded-[14px]"
+                />
+            </div>
+            <h4 className="font-display text-xl font-bold mb-1 leading-tight">{name}</h4>
+            <p className="text-xs text-[#FF6F00] font-semibold mb-2">{region}</p>
+            <p className="text-sm leading-snug text-left">{description}</p>
+            <button className="mt-4 px-4 py-2 bg-[#FF6F00] text-[#FFF5E1] rounded-[10px] text-sm font-semibold hover:bg-[#FF8C33] transition-colors duration-200 flex items-center gap-1">
+                View Details <Utensils size={16} />
+            </button>
+        </div>
+    );
+};
+
+// Forward ref to TacoCard for GSAP animations
+const ForwardedTacoCard = React.forwardRef(TacoCard);
+
+export const Menu = () => {
+    const carouselRef = useRef(null);
+    const tacosRef = useRef([]); // Ref for individual taco cards for GSAP
+    const tacosColumnRef = useRef(null); // Ref for the column holding R1 and R2
+
+    const tacoData = [
+        { name: "Tacos al Pastor", region: "Puebla", description: "Marinated pork, pineapple, onion, cilantro.", imageKeyword: "alpastor", lockNum: 10 },
+        { name: "Carnitas Michoacanas", region: "Michoacán", description: "Slow-braised pork, crispy, tender.", imageKeyword: "carnitas", lockNum: 11 },
+        { name: "Cochinita Pibil", region: "Yucatán", description: "Achiote-marinated pork, pickled red onion.", imageKeyword: "cochinita", lockNum: 12 },
+        { name: "Birria de Chivo", region: "Jalisco", description: "Goat stew, rich broth, cilantro, onion.", imageKeyword: "birria", lockNum: 13 },
+        { name: "Tacos Gobernador", region: "Sinaloa", description: "Shrimp, poblano peppers, cheese.", imageKeyword: "shrimp", lockNum: 14 },
+        { name: "Tacos de Suadero", region: "Mexico City", description: "Thin-sliced beef, confit in its own fat.", imageKeyword: "suadero", lockNum: 15 },
+        { name: "Pescado Ensenada", region: "Baja California", description: "Crispy fried fish, cabbage slaw, crema.", imageKeyword: "fish", lockNum: 16 },
+    ];
+
+    const scrollCarousel = (scrollOffset) => {
+        if (carouselRef.current) {
+            gsap.to(carouselRef.current, {
+                scrollLeft: carouselRef.current.scrollLeft + scrollOffset,
+                duration: 0.6,
+                ease: 'power3.out',
+            });
+        }
+    };
+
+    useEffect(() => {
+        const ctx = gsap.context(() => {
+            // Animate hero heading
+            gsap.from(".menu-heading", {
+                y: 50,
+                opacity: 0,
+                duration: 1.2,
+                ease: "power3.out",
+                delay: 0.2
+            });
+
+            // Animate R1 and R2 individual taco showcases
+            gsap.from(tacosColumnRef.current.children, {
+                opacity: 0,
+                y: 50,
+                stagger: 0.2,
+                duration: 1,
+                ease: "power3.out",
+                delay: 0.5
+            });
+
+            // Animate taco cards in the carousel
+            gsap.from(tacosRef.current, {
+                opacity: 0,
+                x: 100,
+                stagger: 0.1,
+                duration: 0.8,
+                ease: "power3.out",
+                scrollTrigger: {
+                    trigger: carouselRef.current,
+                    start: "top 85%", // when the top of the carousel is 85% in viewport
+                    end: "bottom 15%",
+                    toggleActions: "play none none reverse",
+                }
+            });
+        });
+
+        return () => ctx.revert();
+    }, []);
+
+    return (
+        <section className="relative min-h-screen py-16 lg:py-20 text-[#2E2E2E]">
+            <div className="mx-auto max-w-7xl px-6 md:px-12 relative z-20"> {/* Higher z-index to ensure content is above IntentScene */}
+                <h2 className="font-display text-5xl lg:text-7xl mb-16 menu-heading text-[#2E2E2E]">
+                    Taste the Authentic Flavors of Mexico
+                </h2>
+
+                {/* The column for R1 and R2 - Individual Taco Showcases */}
+                {/* On mobile, this will stack naturally after the heading. On desktop, it's absolutely positioned. */}
+                <div ref={tacosColumnRef} className="relative z-20 flex flex-col items-center gap-8 lg:absolute lg:left-[12.5%] lg:top-[63.1%] lg:w-[20%] lg:flex lg:flex-col lg:items-start lg:gap-0">
+                    {/* R1 - Taco Showcase 1 */}
+                    <TacoShowcase
+                        name="Tacos al Pastor"
+                        region="Puebla"
+                        description="Marinated pork, pineapple, onion, and cilantro on a warm tortilla, a true staple of Puebla cuisine."
+                        imageKeyword="alpastor-taco"
+                        lockNum={21}
+                        className="w-full lg:w-[85.5%]"
+                    />
+                    {/* R2 - Taco Showcase 2 */}
+                    <TacoShowcase
+                        name="Carnitas Michoacanas"
+                        region="Michoacán"
+                        description="Slow-braised pork, crispy on the outside, incredibly tender inside, traditionally served with fresh salsa verde."
+                        imageKeyword="carnitas-taco"
+                        lockNum={22}
+                        className="w-full lg:mt-6 lg:w-[74.6%]"
+                    />
+                </div>
+            </div>
+
+            {/* The scrollable carousel for R3 - positioned absolutely over the IntentScene drawing */}
+            {/* The container itself has no background to allow the IntentScene drawing to show through */}
+            <div className="relative z-10 mt-16 lg:mt-0 lg:absolute lg:left-[1%] lg:top-[52.9%] lg:w-[99%] lg:h-[32.1%] flex items-center justify-center pointer-events-none">
+                {/* Subtle gradient overlays to suggest scrollability without obscuring the background entirely */}
+                <div className="absolute inset-y-0 left-0 w-24 bg-gradient-to-r from-[#FAF3E0]/70 to-transparent z-30 pointer-events-none" />
+                <div className="absolute inset-y-0 right-0 w-24 bg-gradient-to-l from-[#FAF3E0]/70 to-transparent z-30 pointer-events-none" />
+
+                {/* Navigation Arrows - these need to be clickable */}
+                <button
+                    onClick={() => scrollCarousel(-300)}
+                    className="absolute left-4 lg:left-0 p-3 bg-[#FF6F00] text-[#FFF5E1] rounded-[10px] z-40 opacity-90 hover:opacity-100 transition-opacity pointer-events-auto"
+                    aria-label="Scroll left"
+                ><ChevronLeft size={24} /></button>
+
+                <div
+                    ref={carouselRef}
+                    className="flex overflow-x-scroll scrollbar-hide space-x-8 px-8 py-4 z-20 w-full h-full justify-start items-center pointer-events-auto"
+                >
+                    {tacoData.map((taco, index) => (
+                        <ForwardedTacoCard
+                            key={index}
+                            {...taco}
+                            className="flex-shrink-0 w-72 h-auto"
+                            ref={el => tacosRef.current[index] = el}
+                        />
+                    ))}
+                </div>
+
+                <button
+                    onClick={() => scrollCarousel(300)}
+                    className="absolute right-4 lg:right-0 p-3 bg-[#FF6F00] text-[#FFF5E1] rounded-[10px] z-40 opacity-90 hover:opacity-100 transition-opacity pointer-events-auto"
+                    aria-label="Scroll right"
+                ><ChevronRight size={24} /></button>
+            </div>
+        </section>
+    );
+};
+
+export function Navigation() {
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.nav-link', {
+        y: -20,
+        opacity: 0,
+        stagger: 0.1,
+        duration: 0.8,
+        ease: 'power3.out',
+      });
+    });
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <header className="bg-[#FFF5E1] py-16">
+      <div className="mx-auto max-w-7xl px-6 md:px-12 flex items-center justify-between">
+        <h1 className="font-display text-5xl text-[#2E2E2E]">Casa del Sol</h1>
+        <nav>
+          <ul className="flex space-x-8">
+            <li>
+              <a href="#" className="nav-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Home
+              </a>
+            </li>
+            <li>
+              <a href="#" className="nav-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Menu
+              </a>
+            </li>
+            <li>
+              <a href="#" className="nav-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                About
+              </a>
+            </li>
+            <li>
+              <a href="#" className="nav-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Locations
+              </a>
+            </li>
+            <li>
+              <a href="#" className="nav-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Reservations
+              </a>
+            </li>
+            <li>
+              <a href="#" className="nav-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Contact
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </header>
+  );
+}
+
+export function Footer() {
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.footer-link', {
+        y: 20,
+        opacity: 0,
+        stagger: 0.1,
+        duration: 0.8,
+        ease: 'power3.out',
+      });
+    });
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <footer className="bg-[#FFF5E1] py-16">
+      <div className="mx-auto max-w-7xl px-6 md:px-12 flex flex-col md:flex-row items-center justify-between gap-8">
+        <p className="text-sm text-[#2E2E2E]">
+          © 2026 Casa del Sol. All rights reserved.
+        </p>
+        <div className="flex space-x-6">
+          <a href="#" className="text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+            <Instagram className="w-6 h-6" />
+          </a>
+          <a href="#" className="text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+            <Facebook className="w-6 h-6" />
+          </a>
+          <a href="#" className="text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+            <Twitter className="w-6 h-6" />
+          </a>
+        </div>
+        <nav>
+          <ul className="flex space-x-6">
+            <li>
+              <a href="#" className="footer-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Privacy
+              </a>
+            </li>
+            <li>
+              <a href="#" className="footer-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Terms
+              </a>
+            </li>
+            <li>
+              <a href="#" className="footer-link text-[#2E2E2E] hover:text-[#FF6F00] transition-colors duration-300">
+                Sitemap
+              </a>
+            </li>
+          </ul>
+        </nav>
+      </div>
+    </footer>
+  );
+}
+
+gsap.registerPlugin(ScrollTrigger);
+
+export function Hero() {
+  const heroRef = useRef(null);
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.hero-line', {
+        y: 60,
+        opacity: 0,
+        stagger: 0.1,
+        duration: 1,
+        ease: 'power3.out',
+      });
+
+      // Subtle rotation for the main sun visual
+      gsap.to('.hero-sun-visual', {
+        rotate: 3,
+        scale: 1.02,
+        duration: 8,
+        ease: 'sine.inOut',
+        repeat: -1,
+        yoyo: true,
+      });
+
+      // Animate background motifs
+      gsap.fromTo('.hero-motif-1', { x: -50, opacity: 0 }, { x: 0, opacity: 0.05, duration: 2, ease: 'power2.out' });
+      gsap.fromTo('.hero-motif-2', { y: 50, opacity: 0 }, { y: 0, opacity: 0.05, duration: 2.5, ease: 'power2.out' });
+      gsap.fromTo('.hero-motif-3', { x: 50, opacity: 0 }, { x: 0, opacity: 0.05, duration: 2.2, ease: 'power2.out' });
+
+    }, heroRef);
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <section ref={heroRef} className="relative py-24 bg-[#FAF3E0] text-[#2E2E2E] overflow-hidden">
+      {/* Regional religious motif background - subtle, scattered shapes */}
+      <div className="absolute top-10 left-1/4 w-24 h-24 bg-[#4A7C59] rounded-[14px] opacity-0 rotate-12 -translate-x-1/2 hero-motif-1 hidden lg:block" aria-hidden="true" />
+      <div className="absolute bottom-20 right-1/3 w-32 h-32 bg-[#FF6F00] rounded-[14px] opacity-0 -rotate-6 translate-x-1/2 hero-motif-2 hidden lg:block" aria-hidden="true" />
+      <div className="absolute top-1/2 left-1/2 w-20 h-20 bg-[#FAF3E0] rounded-[14px] opacity-0 rotate-45 -translate-x-1/2 -translate-y-1/2 hero-motif-3 hidden lg:block" aria-hidden="true" />
+      <div className="absolute top-1/4 right-0 w-40 h-40 bg-[#FFF5E1] rounded-[14px] opacity-0 -rotate-12 translate-x-1/2 hero-motif-1 hidden lg:block" aria-hidden="true" />
+
+      <div className="relative z-10 mx-auto max-w-7xl px-6 md:px-12 grid grid-cols-1 md:grid-cols-12 items-center gap-10">
+        <div className="md:col-span-7 flex flex-col justify-center">
+          <h1 className="font-display text-6xl md:text-7xl leading-tight text-[#2E2E2E] hero-line">
+            Welcome to <br />Casa del Sol
+          </h1>
+          <p className="mt-4 md:mt-6 text-xl text-[#2E2E2E] hero-line max-w-lg">
+            A vibrant culinary journey through the authentic regional flavors of Mexico, crafted with passion and heritage.
+          </p>
+          <button className="inline-flex items-center justify-center gap-2 mt-8 py-3 px-8 bg-[#FF6F00] text-[#FFF5E1] font-bold rounded-[10px] hover:bg-opacity-90 transition-all duration-300 hero-line w-fit">
+            <ChefHat className="w-5 h-5" />
+            Reserve a Table
+          </button>
+        </div>
+
+        <div className="md:col-span-5 relative h-[300px] md:h-[450px] flex items-center justify-center">
+          {/* Main stylized sun visual, layered and animated */}
+          <div className="absolute inset-0 bg-[#FFF5E1] rounded-[14px] rotate-3 translate-x-4 translate-y-4 hero-sun-visual" />
+          <div className="absolute inset-0 bg-[#FF6F00] rounded-[14px] flex items-center justify-center p-8 -rotate-3 -translate-x-4 -translate-y-4 hero-sun-visual">
+            <Sun className="w-2/3 h-2/3 text-[#4A7C59]" strokeWidth={0.5} /> {/* Using Sun icon as abstract symbol */}
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function About() {
+  const aboutRef = useRef(null);
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.fromTo('.about-reveal',
+        { opacity: 0, y: 50 },
+        {
+          opacity: 1,
+          y: 0,
+          stagger: 0.1,
+          duration: 0.8,
+          ease: 'power3.out',
+          scrollTrigger: {
+            trigger: aboutRef.current,
+            start: 'top 75%', // When top of section hits 75% viewport height
+            toggleActions: 'play none none none',
+          },
+        }
+      );
+    }, aboutRef);
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <section ref={aboutRef} className="relative py-16 bg-[#FFF5E1] text-[#2E2E2E] overflow-hidden">
+      <div className="mx-auto max-w-7xl px-6 md:px-12 grid grid-cols-1 md:grid-cols-2 gap-16 items-center">
+        {/* Left Column: Image with layering */}
+        <div className="md:col-span-1 relative h-[300px] md:h-[400px] about-reveal">
+          <div className="absolute inset-0 bg-[#FAF3E0] rounded-[14px] rotate-2 translate-x-4 translate-y-4" />
+          <img
+            src="https://loremflickr.com/600/400/pottery?lock=33"
+            alt="Traditional Mexican pottery with vibrant designs"
+            className="relative z-10 w-full h-full object-cover rounded-[14px]"
+            loading="lazy"
+          />
+        </div>
+
+        {/* Right Column: Text content */}
+        <div className="md:col-span-1 about-reveal">
+          <h2 className="font-display text-5xl leading-tight text-[#2E2E2E]">
+            Our Story: A Journey Through Mexico's Rich Culinary Heritage
+          </h2>
+          <p className="mt-6 text-lg text-[#2E2E2E]">
+            At Casa del Sol, we believe food is a vibrant celebration of culture and community. Our journey began with a passion for uncovering and sharing the diverse, authentic flavors of Mexico's many regions. From the vibrant spices of Oaxaca to the seafood traditions of Veracruz, every dish tells a story.
+          </p>
+          <p className="mt-4 text-lg text-[#2E2E2E]">
+            We meticulously source traditional ingredients and honor time-honored recipes passed down through generations. Our chefs, inspired by the regional cocineras, infuse each creation with a dedication to authenticity, ensuring an unforgettable dining experience that goes beyond the plate.
+          </p>
+          <div className="mt-8 flex items-center gap-4 about-reveal">
+            <Heart className="w-8 h-8 text-[#FF6F00]" strokeWidth={1.5} />
+            <p className="text-xl font-medium text-[#4A7C59] font-display">Crafted with love and tradition</p>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function Locations() {
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.loc-section', {
+        y: 40,
+        opacity: 0,
+        duration: 0.8,
+        ease: 'power3.out',
+      });
+    });
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <section className="py-16 bg-[#FFF5E1] loc-section">
+      <div className="mx-auto max-w-7xl px-6 md:px-12">
+        <h2 className="font-display text-5xl md:text-6xl text-[#2E2E2E] mb-8">
+          Find Us
+        </h2>
+        <div className="flex flex-col lg:flex-row gap-8">
+          <div className="flex-1 space-y-6">
+            <p className="flex items-center text-lg">
+              <MapPin className="mr-2 text-[#FF6F00]" />
+              123 Calle de la Luz, Centro Histórico, 06000 Ciudad de México, México
+            </p>
+            <p className="flex items-center text-lg">
+              <Clock className="mr-2 text-[#FF6F00]" />
+              Monday – Sunday: 11:00 AM – 11:00 PM
+            </p>
+            <p className="flex items-center text-lg">
+              <Phone className="mr-2 text-[#FF6F00]" />
+              +52 55 1234 5678
+            </p>
+          </div>
+          <div className="flex-1">
+            <img
+              src="https://loremflickr.com/800/600/map?lock=23"
+              alt="Map to Casa del Sol"
+              className="rounded-[14px] w-full h-auto object-cover"
+            />
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function Reservations() {
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from('.res-section', {
+        y: 40,
+        opacity: 0,
+        duration: 0.8,
+        ease: 'power3.out',
+      });
+    });
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <section className="py-20 bg-[#FFF5E1] res-section">
+      <div className="mx-auto max-w-7xl px-6 md:px-12">
+        <h2 className="font-display text-5xl md:text-6xl text-[#2E2E2E] mb-8">
+          Reserve a Table
+        </h2>
+        <form className="grid gap-8 max-w-2xl">
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-lg mb-1" htmlFor="name">
+                Name
+              </label>
+              <input
+                id="name"
+                type="text"
+                required
+                className="w-full rounded-[10px] border border-[#4A7C59] bg-[#FFF5E1] py-2 px-4 focus:outline-none focus:ring-2 focus:ring-[#FF6F00]"
+              />
+            </div>
+            <div>
+              <label className="block text-lg mb-1" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                type="email"
+                required
+                className="w-full rounded-[10px] border border-[#4A7C59] bg-[#FFF5E1] py-2 px-4 focus:outline-none focus:ring-2 focus:ring-[#FF6F00]"
+              />
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-lg mb-1" htmlFor="phone">
+                Phone
+              </label>
+              <input
+                id="phone"
+                type="tel"
+                required
+                className="w-full rounded-[10px] border border-[#4A7C59] bg-[#FFF5E1] py-2 px-4 focus:outline-none focus:ring-2 focus:ring-[#FF6F00]"
+              />
+            </div>
+            <div>
+              <label className="block text-lg mb-1" htmlFor="date">
+                Date
+              </label>
+              <input
+                id="date"
+                type="date"
+                required
+                className="w-full rounded-[10px] border border-[#4A7C59] bg-[#FFF5E1] py-2 px-4 focus:outline-none focus:ring-2 focus:ring-[#FF6F00]"
+              />
+            </div>
+          </div>
+
+          <div className="grid md:grid-cols-2 gap-6">
+            <div>
+              <label className="block text-lg mb-1" htmlFor="time">
+                Time
+              </label>
+              <input
+                id="time"
+                type="time"
+                required
+                className="w-full rounded-[10px] border border-[#4A7C59] bg-[#FFF5E1] py-2 px-4 focus:outline-none focus:ring-2 focus:ring-[#FF6F00]"
+              />
+            </div>
+            <div>
+              <label className="block text-lg mb-1" htmlFor="party">
+                Party Size
+              </label>
+              <input
+                id="party"
+                type="number"
+                min="1"
+                max="20"
+                required
+                className="w-full rounded-[10px] border border-[#4A7C59] bg-[#FFF5E1] py-2 px-4 focus:outline-none focus:ring-2 focus:ring-[#FF6F00]"
+              />
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            className="self-start bg-[#FF6F00] text-white rounded-[10px] py-2 px-6 hover:bg-[#e65c00] transition-colors"
+          >
+            Book Now
+          </button>
+        </form>
+        <p className="mt-6 text-lg text-[#2E2E2E]">
+          <Calendar className="inline-block mr-2 text-[#4A7C59]" />
+          Reservations are held for 15 minutes. Please arrive on time.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+gsap.registerPlugin(ScrollTrigger);
+
+export function Contact() {
+  const sectionRef = useRef(null);
+
+  useEffect(() => {
+    const ctx = gsap.context(() => {
+      gsap.from(sectionRef.current.children, {
+        opacity: 0,
+        y: 30,
+        stagger: 0.1,
+        duration: 0.8,
+        ease: 'power3.out',
+        scrollTrigger: {
+          trigger: sectionRef.current,
+          start: 'top 80%',
+          toggleActions: 'play none none none',
+        },
+      });
+    }, sectionRef);
+
+    return () => ctx.revert();
+  }, []);
+
+  return (
+    <section ref={sectionRef} className="py-16 md:py-20 bg-[#FAF3E0] text-[#2E2E2E]">
+      <div className="mx-auto max-w-7xl px-6 md:px-12">
+        <h2 className="font-display text-5xl md:text-6xl text-center mb-12 leading-tight">
+          Reach Out to <span className="text-[#FF6F00]">Casa del Sol</span>
+        </h2>
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-10 lg:gap-16 items-start">
+          {/* Contact Information Block - designed to appear as a layered surface */}
+          <div className="bg-[#FFF5E1] p-8 rounded-[14px] relative lg:z-10 -translate-y-4 lg:translate-x-4">
+            <h3 className="font-display text-4xl mb-6 text-[#FF6F00]">Get in Touch</h3>
+            <p className="mb-6 text-lg">
+              We'd love to hear from you! Whether you have questions about our menu, need to adjust a reservation, or just want to share your experience, our team is ready to assist.
+            </p>
+            <div className="space-y-6 text-lg">
+              <div className="flex items-center space-x-4">
+                <Phone className="text-[#4A7C59] w-6 h-6" />
+                <span>+52 55 1234 5678</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <Mail className="text-[#4A7C59] w-6 h-6" />
+                <span>hola@casadelsol.mx</span>
+              </div>
+              <div className="flex items-center space-x-4">
+                <MapPin className="text-[#4A7C59] w-6 h-6" />
+                <span>789 Calle del Sol, Ciudad de México, México</span>
+              </div>
+            </div>
+            <p className="mt-8 text-base">
+              Operating Hours:<br/>
+              Tuesday - Sunday: 12:00 PM - 10:00 PM<br/>
+              Closed on Mondays
+            </p>
+          </div>
+
+          {/* Contact Form Block */}
+          <div className="bg-[#FFF5E1] p-8 rounded-[14px] relative lg:z-0">
+            <h3 className="font-display text-4xl mb-6 text-[#4A7C59]">Send us a Message</h3>
+            <form className="space-y-6">
+              <div>
+                <label htmlFor="name" className="block text-sm font-medium mb-2">
+                  Name
+                </label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  className="w-full p-3 bg-[#FAF3E0] rounded-[10px] border border-transparent focus:border-[#FF6F00] focus:ring-1 focus:ring-[#FF6F00] transition-all duration-200 outline-none"
+                  placeholder="Your Name"
+                />
+              </div>
+              <div>
+                <label htmlFor="email" className="block text-sm font-medium mb-2">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  id="email"
+                  name="email"
+                  className="w-full p-3 bg-[#FAF3E0] rounded-[10px] border border-transparent focus:border-[#FF6F00] focus:ring-1 focus:ring-[#FF6F00] transition-all duration-200 outline-none"
+                  placeholder="your.email@example.com"
+                />
+              </div>
+              <div>
+                <label htmlFor="subject" className="block text-sm font-medium mb-2">
+                  Subject
+                </label>
+                <input
+                  type="text"
+                  id="subject"
+                  name="subject"
+                  className="w-full p-3 bg-[#FAF3E0] rounded-[10px] border border-transparent focus:border-[#FF6F00] focus:ring-1 focus:ring-[#FF6F00] transition-all duration-200 outline-none"
+                  placeholder="Regarding your reservation or a general inquiry"
+                />
+              </div>
+              <div>
+                <label htmlFor="message" className="block text-sm font-medium mb-2">
+                  Message
+                </label>
+                <textarea
+                  id="message"
+                  name="message"
+                  rows={5}
+                  className="w-full p-3 bg-[#FAF3E0] rounded-[10px] border border-transparent focus:border-[#FF6F00] focus:ring-1 focus:ring-[#FF6F00] transition-all duration-200 outline-none"
+                  placeholder="How can we help you today?"
+                ></textarea>
+              </div>
+              <button
+                type="submit"
+                className="w-full bg-[#FF6F00] text-[#FFF5E1] font-bold py-3 px-6 rounded-[10px] hover:bg-[#E05F00] transition-colors duration-300 transform hover:-translate-y-0.5 focus:outline-none focus:ring-2 focus:ring-[#FF6F00] focus:ring-offset-2 focus:ring-offset-[#FFF5E1]"
+              >
+                Send Message
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export default function App() {
+  return (
+    <div className="relative min-h-screen overflow-x-hidden bg-[#FAF3E0] text-[#2E2E2E] antialiased">
+      <main className="relative z-10">
+        <SectionBoundary name="Navigation"><Navigation /></SectionBoundary>
+        <SectionBoundary name="Hero"><Hero /></SectionBoundary>
+        <div className="relative">
+          <div className="absolute inset-0 z-0 overflow-hidden pointer-events-none" aria-hidden="true"><IntentScene /></div>
+          <div className="relative z-10"><SectionBoundary name="Menu"><Menu /></SectionBoundary></div>
+        </div>
+        <SectionBoundary name="About"><About /></SectionBoundary>
+        <SectionBoundary name="Locations"><Locations /></SectionBoundary>
+        <SectionBoundary name="Reservations"><Reservations /></SectionBoundary>
+        <SectionBoundary name="Contact"><Contact /></SectionBoundary>
+        <SectionBoundary name="Footer"><Footer /></SectionBoundary>
+      </main>
+    </div>
+  );
+}

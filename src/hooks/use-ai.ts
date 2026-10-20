@@ -4,6 +4,7 @@ import { useWorkflowStore, type PlannedSection } from '@/store/workflow-store'
 import { assembleProgressive } from '@/lib/ai/assemble'
 import { assembleParts, cleanMeta, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
 import type { DesignBrief } from '@/lib/ai/brief'
+import { withImageMap } from '@/lib/images/slots'
 
 /**
  * Hook for AI operations: generate a page, stop a generation, and rebuild one
@@ -31,6 +32,34 @@ async function compileProblem(code: string): Promise<string | null> {
   const problem = findSyntaxProblem(code)
   return problem ? describeProblem(problem, code) : null
 }
+
+/**
+ * The pictures one block asks for, made by /api/generate/images: a map from
+ * keyword-URL key to image, or null when none were made (not configured, a
+ * failure, or a stop) — the page then draws its pictures in code.
+ */
+async function requestImages(code: string, imagery: string, signal?: AbortSignal): Promise<Record<string, string> | null> {
+  try {
+    const res = await fetch('/api/generate/images', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code, imagery }),
+      signal,
+    })
+    const result = await res.json().catch(() => null)
+    const images = result?.data?.images
+    return images && typeof images === 'object' && Object.keys(images).length > 0 ? (images as Record<string, string>) : null
+  } catch {
+    return null
+  }
+}
+
+/** Waits for `work`, but never longer than `ms`. */
+const atMost = (work: Promise<unknown>, ms: number) => Promise.race([work, new Promise((resolve) => setTimeout(resolve, ms))])
+
+// How long the end of a run waits for the last pictures. Each block's pictures
+// are made while the next section builds, so usually only the last is left.
+const IMAGE_WAIT_MS = 45000
 
 export function useAI() {
   // From the shared store, not local state: several components call useAI(),
@@ -96,10 +125,27 @@ export function useAI() {
     let classified: typeof regions | null = null
     let resolvedPrompt: string | null = null
     let plannedSections: string[] = []
+    // Sections not built yet — placeholders in every repaint.
+    let pending: string[] = []
     const completed: string[] = []
     const blocks: SectionBlock[] = []
     const failed: string[] = []
     let plan: PlannedSection[] = []
+    // Pictures for each block are made while the next section is built —
+    // chained, so one image request runs at a time.
+    let imageWork: Promise<void> = Promise.resolve()
+    const paintImages = (block: SectionBlock, slot: number) => {
+      imageWork = imageWork.then(async () => {
+        const made = await requestImages(block.code, brief?.imagery ?? '', signal)
+        const index = blocks.indexOf(block)
+        if (!made || index < 0 || !shellCode || signal.aborted) return
+        const code = withImageMap(block.code, made)
+        blocks[index] = { ...block, code }
+        completed[slot] = code
+        const pass = assembleProgressive(shellCode, completed, pending)
+        if (pass.code) setPreviewCode(pass.code)
+      })
+    }
     const markPlan = (names: string[], status: PlannedSection['status']) => {
       plan = plan.map((s) => (names.includes(s.name) ? { ...s, status } : s))
       setBuildPlan(plan)
@@ -196,7 +242,7 @@ export function useAI() {
       setBuildPlan(plan)
 
       const totalStages = 2 + batches.length
-      let pending = batches.flat()
+      pending = batches.flat()
       // The drawing, rendered in code, goes in first: assembly keeps the first
       // definition of a name, so no section can replace the user's picture.
       if (sceneCode) completed.push(sceneCode)
@@ -246,7 +292,9 @@ export function useAI() {
 
           if (blockCode && !problem) {
             completed.push(blockCode)
-            blocks.push({ sections: sectionNames, code: blockCode, ...cleanMeta(sectionResult.data) })
+            const block: SectionBlock = { sections: sectionNames, code: blockCode, ...cleanMeta(sectionResult.data) }
+            blocks.push(block)
+            paintImages(block, completed.length - 1)
             pending = pending.filter((name) => !sectionNames.includes(name))
             markPlan(sectionNames, 'built')
           } else {
@@ -263,6 +311,10 @@ export function useAI() {
         const pass = assembleProgressive(shellCode, completed, pending)
         if (pass.code) setPreviewCode(pass.code)
       }
+
+      setGenerationProgress({ label: 'Finishing the pictures', done: totalStages, total: totalStages })
+      await atMost(imageWork, IMAGE_WAIT_MS)
+      if (signal.aborted) throw new DOMException('Stopped', 'AbortError')
 
       keepParts([])
       setStatus('preview_ready')
@@ -344,7 +396,9 @@ export function useAI() {
         setRebuild(null)
         return false
       }
-      const next = replaceSection(parts, name, result.data.code, cleanMeta(result.data))
+      const made = await atMost(requestImages(result.data.code, parts.brief?.imagery ?? ''), IMAGE_WAIT_MS)
+      const code = made ? withImageMap(result.data.code, made as Record<string, string>) : result.data.code
+      const next = replaceSection(parts, name, code, cleanMeta(result.data))
       const assembled = assembleParts(next)
       if (!assembled.code) {
         setRebuild(null, { section: name, message: assembled.error ?? `Could not assemble ${name}.` })

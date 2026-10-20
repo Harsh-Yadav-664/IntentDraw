@@ -76,6 +76,8 @@ export interface DesignBrief {
   tone: string[]
   concept: string
   signature: string
+  /** Art direction shared by every picture on the site, so they read as one shoot. */
+  imagery: string
   /** The template version of this site, named so the build can steer away from it. */
   generic: string
   /** The one name the whole site uses — sections are built in separate calls and used to invent different ones. */
@@ -154,6 +156,7 @@ MAKING IT UNLIKE ANY TEMPLATE
 - generic: first, one sentence describing the template version of this site — what any AI site builder would produce for this prompt (its usual palette, fonts and hero). Every choice below must differ from it.
 - concept: one sentence — the idea the whole site is built around, tied to this business and, if there is one, to the drawing. An idea, not a style adjective.
 - signature: one specific element no template has.
+- imagery: one line of art direction that every picture on the site shares, so they look like one shoot or one illustrator's work: the medium, the light, the setting and the colour mood, in this palette. Concrete, never adjectives alone.
 - avoid: 3 clichés this kind of site usually falls into.
 - palette: 5 hex colours that belong to the concept. Don't default to Tailwind's stock blue/purple/slate unless the concept demands them.
 - styleId: the closest base style, used only to pick structural references — "neosleek" (stark, sharp), "playful_pop" (rounded, bright), "elegant_serif" (editorial, refined), "glassmorphism" (dark, luminous).
@@ -180,7 +183,7 @@ The message may name a DESIGN LENS — a craft to borrow a way of seeing from. L
 drawing.reading is ONE plain sentence naming what the drawing shows and where, in the user's terms. No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
+{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","imagery":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
 
 /**
  * Ordinary crafts with their own way of seeing, one handed to the understanding
@@ -684,6 +687,7 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
     tone: strList(b.tone, 5, 30),
     concept: str(b.concept, 320),
     signature: str(b.signature, 280),
+    imagery: str(b.imagery, 200),
     generic: str(b.generic, 240),
     brand: str(b.brand, 60),
     avoid: strList(b.avoid, 4, 140),

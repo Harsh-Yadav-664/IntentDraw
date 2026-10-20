@@ -4,6 +4,7 @@ import { rewriteImageUrl } from './image-url'
 import { fontHead } from '@/lib/design/fonts'
 import { artImage, keywordImage, NEUTRAL_ART_PALETTE, readPaletteMarker } from './image-art'
 import { auditPage, contrastRatio } from './page-audit'
+import { imageKey } from '@/lib/images/slots'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -193,7 +194,15 @@ export function wrapReactForPreview(
     var __artImage = (${artImage.toString()});
     var __keywordImage = (${keywordImage.toString()});
     var __STOCK = /^https?:\\/\\/(?:[\\w-]+\\.)*(?:unsplash\\.com|pexels\\.com|picsum\\.photos|placehold\\.co|placeholder\\.com|pixabay\\.com|loremflickr\\.com)\\//i;
+    // Images generated for this page: each block carries a map from its
+    // keyword URLs to the images made for them (lib/images/slots.ts).
+    var __imageKey = (${imageKey.toString()});
     function __fixImageUrl(u) {
+      var made = window.__intentdrawImages;
+      if (made) {
+        var key = __imageKey(u);
+        if (key && typeof made[key] === 'string') return made[key];
+      }
       if (__ART) {
         var k = __keywordImage(u);
         if (k) return __artImage(k.keyword, k.w, k.h, k.seed, __ART_PALETTE);

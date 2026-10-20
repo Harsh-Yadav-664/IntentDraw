@@ -151,7 +151,7 @@ NEVER: Bootstrap-style generic cards with heavy drop shadows.
 IMAGES: never invent Unsplash or other photo URLs — you cannot know real photo IDs, so invented ones are broken or show something unrelated. Every photo MUST use this exact form, with ONE concrete subject keyword for what that image shows (a single lowercase word — several keywords match nothing and return an unrelated stock photo) and a different lock number per image:
   https://loremflickr.com/{width}/{height}/{keyword}?lock={1-999}
   e.g. https://loremflickr.com/800/600/pottery?lock=12  ·  https://loremflickr.com/600/800/weaver?lock=40  ·  https://loremflickr.com/400/400/necklace?lock=7
-Always give a meaningful alt. Never picsum.photos. Where a photo isn't needed, prefer typography, colour and shape over decoration.
+The alt is what the picture is MADE from, so describe exactly what it shows in 6-15 words — subject, setting, framing ("three tacos al pastor on a clay plate, close-up"), never "image", "photo" or the section's name. When images come from a data array, give each item its own alt field and pass it to the <img>. Never picsum.photos. Where a photo isn't needed, prefer typography, colour and shape over decoration.
 NEVER: Lorem ipsum — invent real-sounding placeholder content.
 NEVER: Spinning loader rings as default state.
 NEVER: Output markdown backticks (\`\`\`).
