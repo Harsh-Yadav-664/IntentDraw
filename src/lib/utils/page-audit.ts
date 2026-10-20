@@ -202,6 +202,22 @@ export function auditBySection(raw: unknown, sections: string[]): Record<string,
   return out
 }
 
+// Findings that mean the layout is broken, not just weak: worth a rebuild on
+// the audit's own say-so.
+const BROKEN = ['overflow', 'overlap', 'empty']
+
+/** Sections whose layout is broken, in the order the audit met them (untrusted input, validated). */
+export function brokenSections(raw: unknown, sections: string[]): string[] {
+  if (!Array.isArray(raw)) return []
+  const out: string[] = []
+  for (const f of raw.slice(0, 40)) {
+    if (!f || typeof f !== 'object') continue
+    const { kind, section } = f as Record<string, unknown>
+    if (typeof kind === 'string' && BROKEN.includes(kind) && typeof section === 'string' && sections.includes(section) && !out.includes(section)) out.push(section)
+  }
+  return out
+}
+
 /** A rebuild note for one section from what the audit found there. */
 export function auditNote(findings: AuditFinding[], max = 300): string {
   if (findings.length === 0) return ''

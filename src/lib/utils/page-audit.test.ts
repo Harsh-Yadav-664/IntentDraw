@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { auditBySection, auditNote, auditPage, contrastRatio } from './page-audit'
+import { auditBySection, auditNote, auditPage, brokenSections, contrastRatio } from './page-audit'
 
 describe('contrastRatio', () => {
   it('matches WCAG reference values', () => {
@@ -44,5 +44,19 @@ describe('auditBySection', () => {
     expect(notes.RetreatPhoto).toMatch(/^Layout check: /)
     expect(notes.RetreatPhoto).not.toMatch(/[<>{}`]/)
     expect(auditBySection('nope', ['A'])).toEqual({})
+  })
+})
+
+describe('brokenSections', () => {
+  it('names sections whose layout is broken — not merely weak — once each, in order', () => {
+    const broken = brokenSections([
+      { kind: 'contrast', section: 'Hero', detail: 'x' },
+      { kind: 'overlap', section: 'Menu', detail: 'x' },
+      { kind: 'empty', section: 'Gallery', detail: 'x' },
+      { kind: 'overflow', section: 'Menu', detail: 'x' },
+      { kind: 'overlap', section: 'Evil', detail: 'x' },
+    ], ['Hero', 'Menu', 'Gallery'])
+    expect(broken).toEqual(['Menu', 'Gallery'])
+    expect(brokenSections({}, ['Menu'])).toEqual([])
   })
 })

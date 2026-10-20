@@ -61,6 +61,11 @@ const atMost = (work: Promise<unknown>, ms: number) => Promise.race([work, new P
 // are made while the next section builds, so usually only the last is left.
 const IMAGE_WAIT_MS = 45000
 
+// After a run, the layout check may rebuild broken sections on its own while
+// the run is under four minutes old — one rebuild takes up to about a minute,
+// so a whole generation stays under five.
+const AUTO_FIX_WINDOW_MS = 4 * 60 * 1000
+
 export function useAI() {
   // From the shared store, not local state: several components call useAI(),
   // and a local flag only knew about generations started through that same
@@ -81,6 +86,7 @@ export function useAI() {
   const setBrief = useWorkflowStore((s) => s.setBrief)
   const setPageParts = useWorkflowStore((s) => s.setPageParts)
   const setRebuild = useWorkflowStore((s) => s.setRebuild)
+  const setAutoFixUntil = useWorkflowStore((s) => s.setAutoFixUntil)
   const aiProvider = useWorkflowStore((s) => s.aiProvider)
   const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
 
@@ -100,6 +106,7 @@ export function useAI() {
 
     const run = new AbortController()
     activeRun = run
+    const startedAt = Date.now()
     const { signal } = run
     // Put back if the run is stopped before it builds anything of its own.
     const previous = { parts: useWorkflowStore.getState().pageParts, brief: useWorkflowStore.getState().brief }
@@ -111,6 +118,7 @@ export function useAI() {
     setPageParts(null)
     setRebuild(null)
     setBuildPlan(null)
+    setAutoFixUntil(null)
     setGenerationProgress({
       label: regions.length > 0 ? 'Reading your drawing and prompt' : 'Understanding your idea',
       done: 0,
@@ -317,6 +325,7 @@ export function useAI() {
       if (signal.aborted) throw new DOMException('Stopped', 'AbortError')
 
       keepParts([])
+      setAutoFixUntil(startedAt + AUTO_FIX_WINDOW_MS)
       setStatus('preview_ready')
 
       // A partial page still renders; say which pieces didn't make it rather
@@ -349,7 +358,7 @@ export function useAI() {
       setGenerationProgress(null)
       setBuildPlan(null)
     }
-  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBuildPlan, setBrief, setPageParts, setRebuild])
+  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBuildPlan, setBrief, setPageParts, setRebuild, setAutoFixUntil])
 
   /** Stops the generation in flight. Sections already built are kept. */
   const cancelGeneration = useCallback(() => {

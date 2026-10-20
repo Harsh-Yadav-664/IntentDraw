@@ -1,13 +1,13 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
 import { AlertTriangle, Check, Copy, Loader2, RefreshCw, Wrench, X } from 'lucide-react'
 import { Button, Dialog, cx } from '@/components/kit/kit'
 import { useWorkflowStore, type PreviewIssue } from '@/store/workflow-store'
 import { useAI } from '@/hooks/use-ai'
 import { MAX_SECTION_NOTE_CHARS, type PageParts } from '@/lib/ai/page-parts'
-import { auditBySection } from '@/lib/utils/page-audit'
+import { auditBySection, brokenSections } from '@/lib/utils/page-audit'
 
 /* -------------------------------------------------------------------------- */
 /* Finding the issue                                                           */
@@ -42,6 +42,9 @@ export function useIssueWatcher() {
   const generating = useWorkflowStore((s) => s.status === 'generating')
   const setIssue = useWorkflowStore((s) => s.setIssue)
   const setAudit = useWorkflowStore((s) => s.setAudit)
+  const { rebuildSection } = useAI()
+  const rebuild = useRef(rebuildSection)
+  rebuild.current = rebuildSection
 
   useEffect(() => {
     if (!previewCode || generating) return
@@ -70,8 +73,24 @@ export function useIssueWatcher() {
       const data = e.data as { type?: unknown; kind?: unknown; message?: unknown; stack?: unknown; section?: unknown; partial?: unknown; findings?: unknown } | null
       if (data?.type === 'IFRAME_AUDIT') {
         // What the rendered page looks like to a reader — offered per section as a rebuild note.
-        const { status, pageParts } = useWorkflowStore.getState()
-        if (status !== 'generating' && pageParts) setAudit(auditBySection(data.findings, pageParts.sections))
+        const { status, pageParts, autoFixUntil, setAutoFixUntil } = useWorkflowStore.getState()
+        if (status === 'generating' || !pageParts) return
+        const notes = auditBySection(data.findings, pageParts.sections)
+        setAudit(notes)
+        // Right after a run, a section whose layout is broken (text on text,
+        // sideways overflow, a collapsed stretch) is rebuilt once with the
+        // check's note — at most two, and only inside the run's time budget.
+        if (autoFixUntil && Date.now() < autoFixUntil) {
+          setAutoFixUntil(null)
+          const broken = brokenSections(data.findings, pageParts.sections).slice(0, 2)
+          void (async () => {
+            for (const name of broken) {
+              if (Date.now() > autoFixUntil) break
+              toast(`Fixing the layout of ${name}`, { description: notes[name]?.replace(/^Layout check: /, '') })
+              await rebuild.current(name, notes[name])
+            }
+          })()
+        }
         return
       }
       if (!data || data.type !== 'IFRAME_ERROR') return

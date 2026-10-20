@@ -94,6 +94,12 @@ export interface WorkflowState {
   issueNoticeOpen: boolean
   /** What the layout audit (page-audit.ts) found on the page shown, as a rebuild note per section. */
   audit: Record<string, string>
+  /**
+   * Until when the layout check may rebuild broken sections on its own — set
+   * as a run finishes, so it happens once per run and never past the time
+   * budget (a whole generation stays under five minutes).
+   */
+  autoFixUntil: number | null
   aiProvider: AIProvider
   nvidiaModelId: string
 
@@ -140,6 +146,7 @@ export interface WorkflowActions {
   setIssue: (issue: PreviewIssue | null) => void
   closeIssueNotice: () => void
   setAudit: (audit: Record<string, string>) => void
+  setAutoFixUntil: (until: number | null) => void
   setAiProvider: (provider: AIProvider) => void
   setNvidiaModelId: (modelId: string) => void
 
@@ -174,6 +181,7 @@ const initialState: WorkflowState = {
   issue: null,
   issueNoticeOpen: false,
   audit: {},
+  autoFixUntil: null,
   aiProvider: 'gemini',
   nvidiaModelId: 'nvidia/nemotron-3.5-lightning-30b-a3b',
   saveStatus: 'saved',
@@ -252,6 +260,7 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
       issue: null,
       issueNoticeOpen: false,
       audit: {},
+      autoFixUntil: null,
       _unreadParts: !pageParts && rawParts ? { raw: rawParts, forCode: saved } : null,
       globalTheme: project.global_theme ?? '',
       saveStatus: previewCode === saved ? 'saved' : 'unsaved',
@@ -307,6 +316,7 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
 
   closeIssueNotice: () => set({ issueNoticeOpen: false }),
   setAudit: (audit) => set({ audit }),
+  setAutoFixUntil: (autoFixUntil) => set({ autoFixUntil }),
 
   setAiProvider: (aiProvider) => {
     set({ aiProvider })
