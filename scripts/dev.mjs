@@ -26,6 +26,7 @@ const ROUTES = [
   '/api/generate/images',
   '/api/image',
   '/api/models',
+  '/api/preferences',
 ]
 
 const next = spawn('pnpm', ['exec', 'next', 'dev', '--port', PORT], { stdio: 'inherit', shell: true })

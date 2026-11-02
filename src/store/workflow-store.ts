@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import type { AIProvider } from '@/types'
 import type { DesignBrief } from '@/lib/ai/brief'
 import { assembleParts, parseSavedParts, type PageParts } from '@/lib/ai/page-parts'
+import { addVersion, makeVersion, VERSIONS_ENABLED, type PageVersion, type VersionKind } from '@/lib/ai/versions'
 
 // =============================================================================
 // Types
@@ -100,6 +101,15 @@ export interface WorkflowState {
    * budget (a whole generation stays under five minutes).
    */
   autoFixUntil: number | null
+  /**
+   * Every version of the page this session produced — the finished run, the
+   * page before its pictures, answers the look check replaced, auto-fixes and
+   * rebuilds — so a page that got worse can be put back (versions.ts).
+   * Development only; in memory, not saved.
+   */
+  versions: PageVersion[]
+  /** The version marked as preferred, if any. */
+  preferredVersionId: string | null
   aiProvider: AIProvider
   nvidiaModelId: string
 
@@ -147,6 +157,12 @@ export interface WorkflowActions {
   closeIssueNotice: () => void
   setAudit: (audit: Record<string, string>) => void
   setAutoFixUntil: (until: number | null) => void
+  /** Keeps a version of the page these parts make. A no-op outside development. */
+  recordVersion: (kind: VersionKind, label: string, parts: PageParts) => void
+  clearVersions: () => void
+  /** Puts a kept version back on screen; its parts become the page's, so it is what gets saved. */
+  showVersion: (id: string) => void
+  setPreferredVersion: (id: string | null) => void
   setAiProvider: (provider: AIProvider) => void
   setNvidiaModelId: (modelId: string) => void
 
@@ -182,6 +198,8 @@ const initialState: WorkflowState = {
   issueNoticeOpen: false,
   audit: {},
   autoFixUntil: null,
+  versions: [],
+  preferredVersionId: null,
   aiProvider: 'auto',
   nvidiaModelId: 'nvidia/nemotron-3.5-lightning-30b-a3b',
   saveStatus: 'saved',
@@ -261,6 +279,8 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
       issueNoticeOpen: false,
       audit: {},
       autoFixUntil: null,
+      versions: [],
+      preferredVersionId: null,
       _unreadParts: !pageParts && rawParts ? { raw: rawParts, forCode: saved } : null,
       globalTheme: project.global_theme ?? '',
       saveStatus: previewCode === saved ? 'saved' : 'unsaved',
@@ -317,6 +337,24 @@ export const useWorkflowStore = create<WorkflowState & WorkflowActions>((set, ge
   closeIssueNotice: () => set({ issueNoticeOpen: false }),
   setAudit: (audit) => set({ audit }),
   setAutoFixUntil: (autoFixUntil) => set({ autoFixUntil }),
+
+  recordVersion: (kind, label, parts) => {
+    if (!VERSIONS_ENABLED) return
+    set({ versions: addVersion(get().versions, makeVersion(kind, label, parts)) })
+  },
+
+  clearVersions: () => set({ versions: [], preferredVersionId: null }),
+
+  showVersion: (id) => {
+    const version = get().versions.find((v) => v.id === id)
+    if (!version || get().status === 'generating') return
+    // A version put back by hand is not the run that just finished: the layout
+    // check must not start rebuilding it on its own.
+    set({ pageParts: version.parts, brief: version.parts.brief, autoFixUntil: null, rebuildError: null })
+    get().setPreviewCode(version.code)
+  },
+
+  setPreferredVersion: (preferredVersionId) => set({ preferredVersionId }),
 
   setAiProvider: (aiProvider) => {
     set({ aiProvider })

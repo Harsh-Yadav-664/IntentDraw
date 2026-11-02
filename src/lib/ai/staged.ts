@@ -65,6 +65,12 @@ export interface SectionStageResult {
   ms?: number
   /** What still looks generated, as a ready rebuild note. */
   note?: string
+  /**
+   * The first answer, when the look correction replaced it. Kept so the two
+   * can be compared (versions.ts) — the correction is judged by counting
+   * tells in code, which is not the same as looking better.
+   */
+  firstDraft?: { code: string; model?: string }
   error?: string
 }
 
@@ -194,6 +200,7 @@ export async function generateSectionStage(
         code = fixAiLook(code).code
         let tells = scanAiLook(code)
         let doubled = ownNavigation(code, sectionNames, pageSections)
+        let firstDraft: SectionStageResult['firstDraft']
         const badness = (t: typeof tells, d: string[]) => t.filter(x => x.severity === 'P0').length + d.length
         if (badness(tells, doubled) > 0) {
           const problems = [
@@ -208,6 +215,7 @@ export async function generateSectionStage(
             const againTells = ok ? scanAiLook(again) : null
             const againDoubled = ok ? ownNavigation(again, sectionNames, pageSections) : null
             if (againTells && againDoubled && badness(againTells, againDoubled) < badness(tells, doubled)) {
+              firstDraft = { code, model }
               code = again
               tells = againTells
               doubled = againDoubled
@@ -228,7 +236,7 @@ export async function generateSectionStage(
           doubled.length > 0 ? 'Draws its own navigation bar under the page\'s real one — remove it and start with the section\'s content.' : '',
           aiLookNote(tells),
         ].filter(Boolean).join(' ')
-        return { success: true, code, provider: current, model, ms: Date.now() - started, note: note || undefined }
+        return { success: true, code, provider: current, model, ms: Date.now() - started, note: note || undefined, firstDraft }
       } catch (err) {
         errors[current] = err instanceof Error ? err.message : String(err)
         console.warn(`[Staged section ${sectionNames.join(',')}] ${current} failed:`, errors[current])
