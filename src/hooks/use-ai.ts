@@ -6,6 +6,7 @@ import { assembleParts, cleanMeta, replaceSection, SCENE_NAME, type PageParts, t
 import type { DesignBrief } from '@/lib/ai/brief'
 import { withImageMap } from '@/lib/images/slots'
 import { laneWidth, resolveProvider, type ProviderName } from '@/lib/ai/provider-choice'
+import { VERSIONS_ENABLED, withBlockCode } from '@/lib/ai/versions'
 
 /**
  * Hook for AI operations: generate a page, stop a generation, and rebuild one
@@ -94,6 +95,7 @@ export function useAI() {
   const setPageParts = useWorkflowStore((s) => s.setPageParts)
   const setRebuild = useWorkflowStore((s) => s.setRebuild)
   const setAutoFixUntil = useWorkflowStore((s) => s.setAutoFixUntil)
+  const recordVersion = useWorkflowStore((s) => s.recordVersion)
   const aiProvider = useWorkflowStore((s) => s.aiProvider)
   const nvidiaModelId = useWorkflowStore((s) => s.nvidiaModelId)
 
@@ -126,6 +128,8 @@ export function useAI() {
     setRebuild(null)
     setBuildPlan(null)
     setAutoFixUntil(null)
+    // The page on screen stays comparable with what this run makes.
+    if (previous.parts) recordVersion('earlier', 'The page before this run', previous.parts)
     setGenerationProgress({
       label: regions.length > 0 ? 'Reading your drawing and prompt' : 'Understanding your idea',
       done: 0,
@@ -149,13 +153,21 @@ export function useAI() {
     // Pictures for each block are made while the next section is built —
     // chained, so one image request runs at a time.
     let imageWork: Promise<void> = Promise.resolve()
+    // For comparing versions (dev): each block's pictures, and the answers the
+    // server's look check replaced. Keyed by the block's section list.
+    const pictures = new Map<string, Record<string, string>>()
+    const drafts: Array<{ sections: string[]; code: string; provider?: string; model?: string }> = []
+    // Each block's code before its pictures were mapped in.
+    const original = new Map<SectionBlock, string>()
     const paintImages = (block: SectionBlock, slot: number) => {
       imageWork = imageWork.then(async () => {
         const made = await requestImages(block.code, brief?.imagery ?? '', signal)
         const index = blocks.indexOf(block)
         if (!made || index < 0 || !shellCode || signal.aborted) return
+        pictures.set(block.sections.join(','), made)
         const code = withImageMap(block.code, made)
         blocks[index] = { ...block, code }
+        original.set(blocks[index], block.code)
         completed[slot] = code
         const pass = assembleProgressive(shellCode, completed, pending)
         if (pass.code) setPreviewCode(pass.code)
@@ -167,8 +179,8 @@ export function useAI() {
     }
 
     /** The parts of whatever was built — the whole page, or what a stop left behind. */
-    const keepParts = (unbuilt: string[]): boolean => {
-      if (!shellCode || !brief) return false
+    const keepParts = (unbuilt: string[]): PageParts | null => {
+      if (!shellCode || !brief) return null
       const parts: PageParts = {
         shellCode,
         sceneCode,
@@ -184,10 +196,29 @@ export function useAI() {
       // Assembled from the parts themselves, so the saved page and the saved
       // parts always agree — that is what lets a reload restore them.
       const assembled = assembleParts(parts)
-      if (!assembled.code) return false
+      if (!assembled.code) return null
       setPageParts(parts)
       setPreviewCode(assembled.code)
-      return true
+      return parts
+    }
+
+    /**
+     * Keeps, for comparison, every page this run produced on its way to the
+     * final one — no extra model calls, only what was already made: the answers
+     * the look check replaced, and the page before its pictures arrived.
+     */
+    const keepVersions = (final: PageParts, label: string) => {
+      if (!VERSIONS_ENABLED) return
+      for (const draft of drafts) {
+        const made = pictures.get(draft.sections.join(','))
+        const parts = withBlockCode(final, draft.sections, made ? withImageMap(draft.code, made) : draft.code, { provider: draft.provider, model: draft.model })
+        if (parts) recordVersion('first-answer', `${draft.sections.join(', ')}: first answer, before the look check replaced it`, parts)
+      }
+      if (pictures.size > 0) {
+        const plain = { ...final, blocks: final.blocks.map((b) => ({ ...b, code: original.get(b) ?? b.code })) }
+        recordVersion('before-pictures', 'Before the generated pictures', plain)
+      }
+      recordVersion('run', label, final)
     }
 
     try {
@@ -338,6 +369,10 @@ export function useAI() {
             if (blockCode && !problem) {
               completed.push(blockCode)
               const block: SectionBlock = { sections: sectionNames, code: blockCode, ...cleanMeta(sectionResult.data) }
+              const draft = sectionResult.data?.firstDraft
+              if (VERSIONS_ENABLED && typeof draft?.code === 'string' && draft.code) {
+                drafts.push({ sections: sectionNames, code: draft.code, provider: block.provider, model: typeof draft.model === 'string' ? draft.model : block.model })
+              }
               blocks.push(block)
               paintImages(block, completed.length - 1)
               pending = pending.filter((name) => !sectionNames.includes(name))
@@ -380,7 +415,8 @@ export function useAI() {
       await atMost(imageWork, Math.max(3000, Math.min(IMAGE_WAIT_MS, startedAt + RUN_BUDGET_MS - Date.now())))
       if (signal.aborted) throw new DOMException('Stopped', 'AbortError')
 
-      keepParts([])
+      const final = keepParts([])
+      if (final) keepVersions(final, 'Finished run')
       setAutoFixUntil(startedAt + AUTO_FIX_WINDOW_MS)
       setStatus('preview_ready')
 
@@ -406,7 +442,9 @@ export function useAI() {
         // rebuilt one section at a time.
         const built = new Set(blocks.flatMap((b) => b.sections))
         const unbuilt = plannedSections.filter((name) => !built.has(name) && !failed.includes(name))
-        if (!keepParts(unbuilt)) {
+        const kept = keepParts(unbuilt)
+        if (kept) keepVersions(kept, 'Stopped run')
+        else {
           setPageParts(previous.parts)
           setBrief(previous.brief)
         }
@@ -424,7 +462,7 @@ export function useAI() {
       setGenerationProgress(null)
       setBuildPlan(null)
     }
-  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBuildPlan, setBrief, setPageParts, setRebuild, setAutoFixUntil])
+  }, [regions, groups, globalTheme, aiProvider, nvidiaModelId, exportToPng, setStatus, setError, setPreviewCode, setGenerationProgress, setBuildPlan, setBrief, setPageParts, setRebuild, setAutoFixUntil, recordVersion])
 
   /** Stops the generation in flight. Sections already built are kept. */
   const cancelGeneration = useCallback(() => {
@@ -436,7 +474,7 @@ export function useAI() {
    * instead of a full run. The rest of the page, and the user's drawing, stay
    * exactly as they are; on failure the old section is kept.
    */
-  const rebuildSection = useCallback(async (name: string, note?: string): Promise<boolean> => {
+  const rebuildSection = useCallback(async (name: string, note?: string, options: { auto?: boolean } = {}): Promise<boolean> => {
     const { pageParts: parts, rebuildingSection, status } = useWorkflowStore.getState()
     if (!parts || rebuildingSection || status === 'generating') return false
 
@@ -485,6 +523,14 @@ export function useAI() {
         setRebuild(null, { section: name, message: `The new ${name} did not compile (${problem}). The old version is kept.` })
         return false
       }
+      // Both pages stay comparable: the rebuild is judged by eye, not assumed better.
+      recordVersion('earlier', `Before ${name} was rebuilt`, parts)
+      const draft = result.data.firstDraft
+      if (VERSIONS_ENABLED && typeof draft?.code === 'string' && draft.code) {
+        const first = replaceSection(parts, name, made ? withImageMap(draft.code, made as Record<string, string>) : draft.code, { ...cleanMeta(result.data), model: typeof draft.model === 'string' ? draft.model : undefined })
+        recordVersion('first-answer', `${name}: first answer, before the look check replaced it`, first)
+      }
+      recordVersion(options.auto ? 'auto-fix' : 'rebuild', options.auto ? `${name} rebuilt by the layout check` : `${name} rebuilt${note?.trim() ? ` — “${note.trim().slice(0, 60)}”` : ''}`, next)
       setPageParts(next)
       setPreviewCode(assembled.code)
       setRebuild(null)
@@ -496,7 +542,7 @@ export function useAI() {
       setRebuild(null, { section: name, message: 'Network error — the old version is kept.' })
       return false
     }
-  }, [globalTheme, aiProvider, nvidiaModelId, setRebuild, setPageParts, setPreviewCode, setError])
+  }, [globalTheme, aiProvider, nvidiaModelId, setRebuild, setPageParts, setPreviewCode, setError, recordVersion])
 
   return {
     isGenerating,

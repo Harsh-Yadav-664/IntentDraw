@@ -12,6 +12,7 @@ import { useAI } from '@/hooks/use-ai'
 import { listSections, MAX_SECTION_NOTE_CHARS } from '@/lib/ai/page-parts'
 import type { AIProvider } from '@/types'
 import { ANCHOR_TEXT, ROLE_LABEL } from './reading'
+import { Versions } from './versions-panel'
 
 const PROVIDERS: Array<{ value: AIProvider; label: string; hint: string }> = [
   { value: 'auto', label: 'Auto', hint: 'Gemini builds the first screen and content, Groq the navigation, footer and forms' },
@@ -278,6 +279,7 @@ export function BuildPanel({ onShowOutput, onEditReading, onUpgrade }: { onShowO
 
       <Reading onEditReading={onEditReading} />
       <Sections />
+      <Versions />
 
       <div className="px-4 py-4">
         <div className="mono-label mb-2.5 text-faint">Coming soon</div>

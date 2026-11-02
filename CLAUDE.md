@@ -174,6 +174,12 @@ A full run is understand + shell + one call per batch; when one section is weak 
 - `replaceSection()` is pure: the new block goes ahead of older blocks, the old definition is removed (a single-section block is dropped whole, helpers included), and any *other* section or `IntentScene` the new block redefines is stripped first. `assembleParts()` always puts the scene block first, and `IntentScene` is never listed as a section — nothing can replace the user's drawing.
 - Replaced the unwired `POST /api/regenerate-region` path, which predated the staged pipeline, the brief and the scene.
 
+### Comparing versions (dev only — `versions.ts`, `<Versions />`)
+
+A run does not end at one page, and each later step used to discard what it replaced: generated pictures replace the palette art; the server's look check swaps a section's first answer for a second one judged only by counting tells in code; right after the run the layout check rebuilds up to two sections **on its own** (`issue.tsx`); the user rebuilds sections. The owner watched a page get *worse* at that last step and could not get the middle one back. (Providers never race: a fallback runs only when the one before it failed, so there is never a second provider's page to choose from.)
+- In development (or with `NEXT_PUBLIC_COMPARE_VERSIONS=true`) every one of those pages is kept in `workflow-store.versions` (in memory, max 12, deduped by code) and listed under the Sections list: show one to put it back (its parts become the page's, so it is what saves), star one to log the choice. **No version costs a model call** — the section route only returns the replaced `firstDraft` it already had.
+- A star POSTs a `PreferenceRecord` to `/api/preferences` (404 in production): the prompt, provider setting, every version's per-section models, and `contested` — each section that differs between the starred page and another, with the model on each side and what kind of step the loser was. Appended to `.system_generated/version-preferences.jsonl`; `npx tsx scripts/preference-report.ts` tallies wins/losses per model and per step. Nothing reads it to choose models yet — that waits for enough data.
+
 ### Assembling generated pieces (`src/lib/ai/assemble.ts`)
 
 Independently generated blocks don't coordinate, so assembly is where their collisions get resolved. It is pure and client-safe (the browser assembles partial results).

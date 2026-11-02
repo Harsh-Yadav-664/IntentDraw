@@ -87,7 +87,7 @@ export function useIssueWatcher() {
             for (const name of broken) {
               if (Date.now() > autoFixUntil) break
               toast(`Fixing the layout of ${name}`, { description: notes[name]?.replace(/^Layout check: /, '') })
-              await rebuild.current(name, notes[name])
+              await rebuild.current(name, notes[name], { auto: true })
             }
           })()
         }

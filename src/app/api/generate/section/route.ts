@@ -6,6 +6,7 @@ import { normalizeBrief } from '@/lib/ai/brief'
 import { designTokens } from '@/lib/ai/site-design'
 import { MAX_SECTION_NOTE_CHARS } from '@/lib/ai/page-parts'
 import { resolveProvider } from '@/lib/ai/provider'
+import { VERSIONS_ENABLED } from '@/lib/ai/versions'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
@@ -92,7 +93,15 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      data: { code: result.code, provider: result.provider, model: result.model, ms: result.ms, note: result.note },
+      data: {
+        code: result.code,
+        provider: result.provider,
+        model: result.model,
+        ms: result.ms,
+        note: result.note,
+        // The answer the look correction replaced — only where versions are compared.
+        firstDraft: VERSIONS_ENABLED ? result.firstDraft : undefined,
+      },
     })
   } catch (error) {
     console.error('[API generate/section]', error)
