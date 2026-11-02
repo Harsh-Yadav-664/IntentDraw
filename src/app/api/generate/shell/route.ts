@@ -6,6 +6,7 @@ import { recentDesigns } from '@/lib/ai/recent-designs'
 import { applyBriefToRegions, normalizeBrief } from '@/lib/ai/brief'
 import { understandRequest } from '@/lib/ai/understand'
 import { generateShellStage } from '@/lib/ai/staged'
+import { resolveProvider } from '@/lib/ai/provider'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
@@ -75,7 +76,7 @@ export async function POST(request: Request) {
           prompt: finalPrompt,
           regions: rawRegions,
           groups: validGroups,
-          provider: provider ?? 'gemini',
+          provider: resolveProvider(provider),
           nvidiaModelId,
           imageBase64: imageData,
           recentDesigns: await recentDesigns(userId),
@@ -92,7 +93,7 @@ export async function POST(request: Request) {
         prompt: finalPrompt,
         tokens,
         globalTheme,
-        provider: provider ?? 'gemini',
+        provider: resolveProvider(provider),
         nvidiaModelId,
         brief,
       }

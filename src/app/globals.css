@@ -1,155 +1,229 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@import "shadcn/tailwind.css";
 
-/* Force dark mode by default on the :root */
-:root {
-  /* Deep Black Base */
-  --background: oklch(0.10 0 0); 
-  --foreground: oklch(0.95 0 0); 
-  
-  /* Panels and Cards - slightly lighter than black */
-  --card: oklch(0.12 0 0);
-  --card-foreground: oklch(0.95 0 0);
-  --popover: oklch(0.12 0 0);
-  --popover-foreground: oklch(0.95 0 0);
-  
-  /* Primary Accent: Vibrant Golden Yellow */
-  --primary: oklch(0.85 0.16 85);
-  --primary-foreground: oklch(0.10 0 0);
-  
-  /* Secondary: Deep Charcoal */
-  --secondary: oklch(0.18 0 0);
-  --secondary-foreground: oklch(0.90 0 0);
-  
-  /* Muted */
-  --muted: oklch(0.18 0 0);
-  --muted-foreground: oklch(0.65 0 0);
-  
-  /* Accent hover state */
-  --accent: oklch(0.20 0 0);
-  --accent-foreground: oklch(0.95 0 0);
-  
-  /* Destructive/Red */
-  --destructive: oklch(0.55 0.20 25);
-  --destructive-foreground: oklch(0.95 0 0);
-  
-  /* Borders and Inputs */
-  --border: oklch(0.20 0 0);
-  --input: oklch(0.18 0 0);
-  --ring: oklch(0.85 0.16 85);
-  
-  /* Charts (warm tones) */
-  --chart-1: oklch(0.85 0.16 85);
-  --chart-2: oklch(0.85 0.08 75);
-  --chart-3: oklch(0.70 0.12 45);
-  --chart-4: oklch(0.60 0.10 35);
-  --chart-5: oklch(0.50 0.08 25);
-  
-  /* Radius */
-  --radius: 0.75rem;
-
-  /* Custom UI tokens */
-  --glass-bg: rgba(10, 10, 10, 0.65);
-  --glass-border: rgba(255, 255, 255, 0.08);
-}
-
-.dark {
-  /* No need to redefine, root is already dark */
-}
+/*
+ * IntentDraw's own interface: one design system for the app (dashboard, editor,
+ * settings, auth). The marketing page has its own look and its own sheet
+ * (app/landing.css), scoped under .landing-page.
+ *
+ * Colour roles, not colours: every surface reads --c-* so the light theme is a
+ * swap of these values on <html data-theme="light">, nothing else.
+ */
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
-  --font-mono: var(--font-geist-mono);
-  --font-display: var(--font-outfit);
-  --color-sidebar-ring: var(--ring);
-  --color-sidebar-border: var(--border);
-  --color-sidebar-accent-foreground: var(--accent-foreground);
-  --color-sidebar-accent: var(--accent);
-  --color-sidebar-primary-foreground: var(--primary-foreground);
-  --color-sidebar-primary: var(--primary);
-  --color-sidebar-foreground: var(--foreground);
-  --color-sidebar: var(--background);
-  --color-chart-5: var(--chart-5);
-  --color-chart-4: var(--chart-4);
-  --color-chart-3: var(--chart-3);
-  --color-chart-2: var(--chart-2);
-  --color-chart-1: var(--chart-1);
-  --color-ring: var(--ring);
-  --color-input: var(--input);
-  --color-border: var(--border);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-accent: var(--accent);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-muted: var(--muted);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-secondary: var(--secondary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-primary: var(--primary);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-popover: var(--popover);
-  --color-card-foreground: var(--card-foreground);
-  --color-card: var(--card);
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
+  --color-bg: var(--c-bg);
+  --color-bg2: var(--c-bg2);
+  --color-surface: var(--c-surface);
+  --color-surface2: var(--c-surface2);
+  --color-surface3: var(--c-surface3);
+  --color-line: var(--c-line);
+  --color-line2: var(--c-line2);
+  --color-ink: var(--c-ink);
+  --color-muted: var(--c-muted);
+  --color-faint: var(--c-faint);
+  --color-accent: var(--c-accent);
+  --color-accent2: var(--c-accent2);
+  --color-onaccent: var(--c-onaccent);
+  --color-danger: var(--c-danger);
+  --color-ok: var(--c-ok);
+  --color-warn: var(--c-warn);
+
+  /* Older components still speak shadcn's names; point them at the same roles. */
+  --color-background: var(--c-bg);
+  --color-foreground: var(--c-ink);
+  --color-primary: var(--c-accent);
+  --color-primary-foreground: var(--c-onaccent);
+  --color-muted-foreground: var(--c-muted);
+  --color-destructive: var(--c-danger);
+  --color-border: var(--c-line);
+  --color-ring: var(--c-accent);
+
+  --shadow-plate: var(--c-shadow);
+  --font-display: var(--app-font-display);
+  --font-sans: var(--app-font-sans);
+  --font-mono: var(--app-font-mono);
 }
 
-/* Panel surface.
-   A backdrop-filter was dropped here: it can never be cached, so every panel
-   using it re-rasterized a blur of everything behind it on each paint. At the
-   opacity this design uses the visual difference is imperceptible, and the app
-   stops dropping frames while typing. */
-.glass-panel {
-  background: var(--glass-bg);
-  border: 1px solid var(--glass-border);
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+:root {
+  /* Plain CSS reads these; next/font defines the --font-* faces on <html>. */
+  --app-font-display: var(--font-instrument), Georgia, "Times New Roman", serif;
+  --app-font-sans: var(--font-plex), ui-sans-serif, system-ui, sans-serif;
+  --app-font-mono: var(--font-plex-mono), ui-monospace, "SFMono-Regular", monospace;
 }
 
-/* Micro-animations */
-.hover-lift {
-  transition: transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.2s ease;
-}
-.hover-lift:hover {
-  transform: translateY(-4px);
-  box-shadow: 0 12px 40px 0 rgba(0, 0, 0, 0.4);
+/* Dark is the default; a nested [data-theme="dark"] (the marketing page)
+   stays dark even when the app is set to light. */
+:root,
+[data-theme="dark"] {
+  color-scheme: dark;
+  --c-bg: #0a0a0b;
+  --c-bg2: #0f0f11;
+  --c-surface: #141417;
+  --c-surface2: #1a1a1e;
+  --c-surface3: #222227;
+  --c-line: rgba(255, 255, 255, 0.075);
+  --c-line2: rgba(255, 255, 255, 0.14);
+  --c-ink: #f4f1ec;
+  --c-muted: #a5a099;
+  --c-faint: #8a847c;
+  --c-accent: #facc15;
+  --c-accent2: #fde047;
+  --c-onaccent: #14110a;
+  --c-danger: #e5735c;
+  --c-ok: #7dd3a0;
+  --c-warn: #f0b357;
+  --c-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset, 0 18px 50px -30px rgba(0, 0, 0, 0.9);
 }
 
-.glow-text {
-  text-shadow: 0 0 20px oklch(0.75 0.15 75 / 0.5);
-}
-
-body {
-  background-color: var(--background);
-  color: var(--foreground);
+[data-theme="light"] {
+  color-scheme: light;
+  --c-bg: #f6f2ec;
+  --c-bg2: #fbf8f3;
+  --c-surface: #ffffff;
+  --c-surface2: #f0ebe3;
+  --c-surface3: #e6dfd5;
+  --c-line: rgba(23, 20, 15, 0.11);
+  --c-line2: rgba(23, 20, 15, 0.2);
+  --c-ink: #17140f;
+  --c-muted: #6b6156;
+  --c-faint: #6e655b;
+  --c-accent: #96690a;
+  --c-accent2: #7f5807;
+  --c-onaccent: #fff8e7;
+  --c-danger: #b8402c;
+  --c-ok: #2f7d51;
+  --c-warn: #a86a12;
+  --c-shadow: 0 1px 0 rgba(255, 255, 255, 0.7) inset, 0 18px 46px -32px rgba(60, 45, 25, 0.5);
 }
 
 @layer base {
-  * {
-    @apply border-border outline-ring/50;
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   body {
-    @apply bg-background text-foreground;
+    background-color: var(--c-bg);
+    color: var(--c-ink);
+    font-family: var(--app-font-sans);
+    font-weight: 400;
+  }
+  ::selection {
+    background: var(--c-accent);
+    color: var(--c-onaccent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--c-accent);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  input,
+  textarea,
+  select,
+  button {
+    font-family: inherit;
+  }
+  input:focus,
+  textarea:focus,
+  select:focus {
+    outline: none;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--app-font-display);
+    font-weight: 400;
+    letter-spacing: -0.015em;
+  }
+  * {
+    border-color: var(--c-line);
+    scrollbar-width: thin;
+    scrollbar-color: var(--c-line2) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 9px;
+    height: 9px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: var(--c-line2);
+    border-radius: 9px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
   }
 }
 
-/* Custom Scrollbar for Dark Theme */
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+@layer components {
+  .mono-label {
+    font-family: var(--app-font-mono);
+    font-size: 10.5px;
+    line-height: 1;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    font-weight: 500;
+  }
+  .tab-num {
+    font-variant-numeric: tabular-nums;
+    font-family: var(--app-font-mono);
+  }
+  .dot-grid {
+    background-image: radial-gradient(circle at 1px 1px, var(--c-line2) 1px, transparent 0);
+    background-size: 22px 22px;
+    background-position: -1px -1px;
+  }
+  .sketch-field {
+    background-color: var(--c-bg2);
+    background-image:
+      radial-gradient(circle at 1px 1px, var(--c-line) 1px, transparent 0),
+      linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.12));
+    background-size: 22px 22px, 100% 100%;
+  }
 }
-::-webkit-scrollbar-track {
-  background: transparent;
+
+@keyframes shimmer-slide {
+  from {
+    background-position: -180% 0;
+  }
+  to {
+    background-position: 180% 0;
+  }
 }
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 4px;
+.shimmer {
+  background-image: linear-gradient(
+    90deg,
+    transparent 0%,
+    var(--c-line) 38%,
+    var(--c-line2) 50%,
+    var(--c-line) 62%,
+    transparent 100%
+  );
+  background-size: 180% 100%;
+  animation: shimmer-slide 1.7s linear infinite;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.25);
+
+@keyframes soft-pulse {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+.pulse-dot {
+  animation: soft-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import ts from 'typescript'
-import { exportHtml, exportSource, slugify } from './export'
+import { exportHtml, exportSource, sandboxedPage, slugify } from './export'
 import { wrapReactForPreview } from './utils/sanitize'
 
 // A page with the collision the render-time repair fixes, so export must fix it too.
@@ -41,5 +41,18 @@ describe('export', () => {
 
     const preview = wrapReactForPreview(PAGE)
     expect(preview).toContain('e.preventDefault(); e.stopPropagation();')
+  })
+})
+
+describe('opening a site in a new tab', () => {
+  it('runs the generated page only inside a sandboxed frame', () => {
+    const page = sandboxedPage(exportHtml(PAGE, 'Café "Sol" & co'), 'Café "Sol" & co')
+    expect(page).toContain('sandbox="allow-scripts')
+    expect(page).not.toContain('allow-same-origin')
+    // The whole site is one attribute value: no raw quote can end it early.
+    const srcdoc = page.slice(page.indexOf('srcdoc="') + 8)
+    expect(srcdoc.indexOf('"')).toBe(srcdoc.lastIndexOf('"'))
+    // No script runs in the wrapper itself.
+    expect(page.slice(0, page.indexOf('srcdoc='))).not.toContain('<script')
   })
 })

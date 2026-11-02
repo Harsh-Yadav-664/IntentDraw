@@ -15,6 +15,7 @@ import {
 } from './prompts'
 import { resolveDesignTokens } from './design-tokens'
 import { repairGeneratedCode } from './repair'
+import { resolveProvider, type ProviderName } from './provider-choice'
 import { assembleFile } from './assemble'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
@@ -31,7 +32,7 @@ import type { AIProvider, Region, RegionGroup } from '@/types'
 // more headroom than Groq's dedicated fast endpoint, but not Gemini's: Gemini's
 // 120s covers vision plus in-band 429 retries, neither of which applies here
 // (openrouter.ts does its own 429 wait, which the backstop below accounts for).
-const PROVIDER_TIMEOUT_MS: Record<AIProvider, number> = {
+const PROVIDER_TIMEOUT_MS: Record<ProviderName, number> = {
   gemini: 120000,
   groq: 45000,
   nvidia: 75000,
@@ -81,7 +82,7 @@ function humanizeProviderError(raw: string | undefined): string {
   return raw.split('\n')[0].slice(0, 140)
 }
 
-export type ProviderName = AIProvider
+export { resolveProvider, type ProviderName } from './provider-choice'
 
 /**
  * One provider call, with that provider's timeout plus a backstop in case an
@@ -92,7 +93,14 @@ export async function callProvider(
   p: ProviderName,
   systemPrompt: string,
   userMessage: string,
-  options: { nvidiaModelId?: string; openrouterModelId?: string; imageBase64?: string; geminiDeadlineMs?: number } = {}
+  options: {
+    nvidiaModelId?: string
+    openrouterModelId?: string
+    imageBase64?: string
+    geminiDeadlineMs?: number
+    /** Told which model answered — a provider walks its own list of models. */
+    onModel?: (model: string) => void
+  } = {}
 ): Promise<string> {
   // How long Gemini may spend walking its model chain before the next provider
   // gets a turn. geminiGenerate stops on its own; the backstop is a safety net.
@@ -109,13 +117,14 @@ export async function callProvider(
   const imageBase64 = options.imageBase64?.replace(/^data:image\/\w+;base64,/, '')
 
   const call = async (): Promise<string> => {
-    if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId)
+    const { onModel } = options
+    if (p === 'nvidia') return nvidiaGenerate(systemPrompt, userMessage, nvidiaModelId, onModel)
     // Groq switches to its vision model when an image is attached.
-    if (p === 'groq') return groqGenerate(systemPrompt, userMessage, { imageBase64 })
+    if (p === 'groq') return groqGenerate(systemPrompt, userMessage, { imageBase64, onModel })
     // OpenRouter swaps to a vision-capable free model on its own when an image
     // is attached, so the drawing isn't silently dropped.
     if (p === 'openrouter') {
-      return openrouterGenerate(systemPrompt, userMessage, openrouterModelId, { imageBase64 })
+      return openrouterGenerate(systemPrompt, userMessage, openrouterModelId, { imageBase64, onModel })
     }
 
     const contentParts: Part[] = [{ text: systemPrompt }, { text: userMessage }]
@@ -124,7 +133,7 @@ export async function callProvider(
     }
     // geminiGenerate retries free-tier 429s (honoring the server's
     // retryDelay) before giving up and letting the chain fall through.
-    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini, deadlineMs: geminiDeadlineMs })
+    return geminiGenerate(contentParts, { perAttemptTimeoutMs: PROVIDER_TIMEOUT_MS.gemini, deadlineMs: geminiDeadlineMs, onModel })
   }
 
   // Gemini and OpenRouter both retry through free-tier 429s in-band (honoring
@@ -155,7 +164,8 @@ function openrouterConfigured(): boolean {
  * and shouldn't displace the known-good Gemini path, but it is worth one more
  * attempt once everything else has failed.
  */
-export function buildFallbackChain(provider: ProviderName): ProviderName[] {
+export function buildFallbackChain(choice: AIProvider): ProviderName[] {
+  const provider = resolveProvider(choice)
   const tail = openrouterConfigured() ? (['openrouter'] as ProviderName[]) : []
   if (provider === 'openrouter') return ['openrouter', 'gemini', 'groq', 'nvidia']
   // NVIDIA goes last: its free endpoints routinely take longer than a request

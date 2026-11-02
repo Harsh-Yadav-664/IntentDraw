@@ -40,14 +40,15 @@ export const GROQ_VISION_MODEL = 'qwen/qwen3.8-27b'
 export async function groqGenerate(
   systemPrompt: string,
   userPrompt: string,
-  options: { imageBase64?: string } = {}
+  options: { imageBase64?: string; onModel?: (model: string) => void } = {}
 ): Promise<string> {
   const client = getClient()
-  const { imageBase64 } = options
+  const { imageBase64, onModel } = options
+  // An attached image switches to the vision model — see GROQ_VISION_MODEL.
+  const model = imageBase64 ? GROQ_VISION_MODEL : GROQ_TEXT_MODEL
 
   const completion = await client.chat.completions.create({
-    // An attached image switches to the vision model — see GROQ_VISION_MODEL.
-    model: imageBase64 ? GROQ_VISION_MODEL : GROQ_TEXT_MODEL,
+    model,
     messages: [
       { role: 'system', content: systemPrompt },
       imageBase64
@@ -71,5 +72,6 @@ export async function groqGenerate(
     max_tokens: 5000,
   })
 
+  onModel?.(model)
   return completion.choices[0]?.message?.content || ''
 }

@@ -33,9 +33,15 @@ export const OPENROUTER_TEXT_MODELS = [
 ] as const
 export const OPENROUTER_DEFAULT_MODEL: string = OPENROUTER_TEXT_MODELS[0]
 
-/** Free models that accept image input (catalogue `input_modalities` includes "image"). */
+/**
+ * Free models that accept image input (catalogue `input_modalities` includes "image").
+ * Re-verified 2026-10-20: qwen3.8-27b:free had left the free catalogue;
+ * nemotron-3.5-super-vl read a test drawing correctly in <1s. Not usable:
+ * minimax-m3.1-flash:free (400 — reasoning cannot be turned off, and every
+ * call here turns it off), inkling:free (403 — agent harnesses only).
+ */
 export const OPENROUTER_VISION_MODELS = [
-  'qwen/qwen3.8-27b:free',
+  'nvidia/nemotron-3.5-super-vl:free',
   'google/gemma-4-31b-it:free',
   'google/gemma-4-26b-a4b-it:free',
 ] as const
@@ -115,6 +121,8 @@ function describeFailure(status: number, body: string): string {
 export interface OpenRouterOptions {
   /** Raw base64 PNG (no data-URL prefix). Forces a vision-capable model. */
   imageBase64?: string
+  /** Told which model OpenRouter actually routed to. */
+  onModel?: (model: string) => void
 }
 
 /**
@@ -136,7 +144,7 @@ export async function openrouterGenerate(
     )
   }
 
-  const { imageBase64 } = options
+  const { imageBase64, onModel } = options
   // Sending an image to a text-only model is silently dropped upstream, so an
   // image means the vision list. A caller's explicit pick goes first.
   const preferred: readonly string[] = imageBase64 ? OPENROUTER_VISION_MODELS : OPENROUTER_TEXT_MODELS
@@ -222,6 +230,7 @@ export async function openrouterGenerate(
       const finish = result?.choices?.[0]?.finish_reason ?? 'unknown'
       throw new Error(`OpenRouter returned no content (finish_reason: ${finish})`)
     }
+    onModel?.(typeof result?.model === 'string' ? result.model : models[0])
     return content
   }
 

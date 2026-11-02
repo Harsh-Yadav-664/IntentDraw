@@ -1,11 +1,11 @@
 import type { Region, RegionGroup } from '@/types'
 import { PRESETS, resolveByKeywords, stablePresetFor } from './design-tokens'
-import { sanitizeUserPrompt } from './prompt-rules'
+import { sanitizeUserPrompt, todayLine } from './prompt-rules'
 import { simplifyToBudget } from './shape-path'
 import { insideShare, looksHandwritten, perceiveDrawing } from './perception'
-import { ANCHORS, describeIntentSignals, intentSignals, type Anchor, type IntentSignal } from './intent'
+import { ANCHORS, PAGE_WIDE, describeIntentSignals, intentSignals, type Anchor, type IntentSignal } from './intent'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
-import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, type SceneForm } from './scene'
+import { CANVAS_WIDTH, SCENE_FORMS, absolutePoints, fitCircle, isRound, type SceneForm } from './scene'
 import { CORNERS, DENSITIES, HEADINGS, HERO_COMPOSITIONS, SURFACES, describeDesign, fontMenu, normalizeDesign, type SiteDesign } from './site-design'
 import type { RecentSite } from './recent-designs'
 import { PRODUCT_PRINCIPLE } from './principle'
@@ -69,6 +69,13 @@ export interface BriefPalette {
   secondary: string
 }
 
+export interface BriefFacts {
+  address: string
+  phone: string
+  email: string
+  hours: string
+}
+
 export interface DesignBrief {
   summary: string
   audience: string
@@ -76,6 +83,13 @@ export interface DesignBrief {
   tone: string[]
   concept: string
   signature: string
+  /** Art direction shared by every picture on the site, so they read as one shoot. */
+  imagery: string
+  /**
+   * The site's hard facts, decided once. Sections are written in separate calls
+   * and each used to invent its own — one page gave two different addresses.
+   */
+  facts: BriefFacts
   /** The template version of this site, named so the build can steer away from it. */
   generic: string
   /** The one name the whole site uses — sections are built in separate calls and used to invent different ones. */
@@ -145,6 +159,8 @@ Name a layout element by its purpose ("Navigation", "Key achievements row") and 
 THE SITE AND ITS SECTIONS
 Work out who it is for, what they must be able to do, and the content it really needs — real specifics (actual product categories, believable names, concrete numbers), never "Feature 1".
 Plan 5-8 sections as PascalCase component names in page order, each with a one-line purpose naming its actual content.
+- Every section has its own job. Never plan two that cover the same thing — address, hours, booking and contact for one place are ONE section (a "Visit" with all of it), not Locations + Reservations + Contact.
+- facts: the site's hard facts, decided once — address, phone, email, opening hours — when this kind of site shows them, believable for its place (or the user's own); "" when it doesn't need one. Every section uses exactly these.
 - The drawn pages are the top of the site, in order: what is drawn on page 1 belongs to the first section (the hero), page 2 to the next, and so on. Set each element's "section" that way.
 - The site does NOT end where the drawing ends. After the drawn pages, plan the rest of what this site needs (work, about, pricing, testimonials, contact, footer …).
 - A navigation bar, when the site needs one, is its own first section; the footer its own last section.
@@ -154,6 +170,7 @@ MAKING IT UNLIKE ANY TEMPLATE
 - generic: first, one sentence describing the template version of this site — what any AI site builder would produce for this prompt (its usual palette, fonts and hero). Every choice below must differ from it.
 - concept: one sentence — the idea the whole site is built around, tied to this business and, if there is one, to the drawing. An idea, not a style adjective.
 - signature: one specific element no template has.
+- imagery: one line of art direction that every picture on the site shares, so they look like one shoot or one illustrator's work: the medium, the light, the setting and the colour mood, in this palette. Concrete, never adjectives alone.
 - avoid: 3 clichés this kind of site usually falls into.
 - palette: 5 hex colours that belong to the concept. Don't default to Tailwind's stock blue/purple/slate unless the concept demands them.
 - styleId: the closest base style, used only to pick structural references — "neosleek" (stark, sharp), "playful_pop" (rounded, bright), "elegant_serif" (editorial, refined), "glassmorphism" (dark, luminous).
@@ -180,7 +197,7 @@ The message may name a DESIGN LENS — a craft to borrow a way of seeing from. L
 drawing.reading is ONE plain sentence naming what the drawing shows and where, in the user's terms. No region numbers, no reasoning.
 
 Respond with JSON only, no markdown, exactly this shape:
-{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
+{"brand":"","generic":"","summary":"","audience":"","primaryAction":"","tone":[""],"concept":"","signature":"","imagery":"","facts":{"address":"","phone":"","email":"","hours":""},"avoid":["","",""],"palette":{"background":"#","surface":"#","text":"#","accent":"#","secondary":"#"},"styleId":"","design":{"displayFont":"","bodyFont":"","corners":"","surfaces":"","density":"","headings":"","hero":""},"sections":[{"name":"","purpose":""}],"drawing":{"reading":"","elements":[{"name":"","regions":[1],"role":"","form":null,"depth":0,"placement":"","render":"","motion":null,"section":"","anchor":"exact"}]}}`
 
 /**
  * Ordinary crafts with their own way of seeing, one handed to the understanding
@@ -234,7 +251,7 @@ export function buildUnderstandUserMessage(
   recentDesigns: RecentSite[] = [],
   lens: string = pickLens()
 ): string {
-  const parts: string[] = []
+  const parts: string[] = [todayLine()]
   if (recentDesigns.length > 0) {
     parts.push(
       "THE USER'S RECENT SITES — this one must not look related to any of them:\n" +
@@ -335,6 +352,19 @@ function palette(v: unknown): BriefPalette | null {
     out[key] = value.toUpperCase()
   }
   return out
+}
+
+const EMAIL = /^[^\s@"<>]+@[^\s@"<>]+\.[a-z]{2,}$/i
+
+function facts(v: unknown): BriefFacts {
+  const f = (v && typeof v === 'object' ? v : {}) as Record<string, unknown>
+  const email = str(f.email, 80)
+  return {
+    address: str(f.address, 140),
+    phone: str(f.phone, 40).replace(/[^\d+()./ -]/g, '').trim(),
+    email: EMAIL.test(email) ? email : '',
+    hours: str(f.hours, 140),
+  }
 }
 
 /** "Hero section" / "hero-section" → "HeroSection". Anything that can't be a component name is dropped. */
@@ -461,7 +491,8 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       anchor: defaultAnchor(role),
     })
   }
-  const settled = reconcile(out, intentSignals(prompt, regions), regions)
+  const signals = intentSignals(prompt, regions)
+  const settled = pageWideArt(splitRoundBodies(reconcile(out, signals, regions), regions), signals, prompt)
   return keepPagesTogether(mergeIntoSpheres(settled, regions), regions, sectionNames)
 }
 
@@ -511,7 +542,10 @@ function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region
       case 'background':
         role = base.role === 'decoration' ? 'decoration' : 'illustration'
         form = base.role === 'illustration' && base.form ? base.form : closed ? 'shape' : 'line'
-        placement = 'section-background'
+        // "the main background the content scrolls over" is the whole page's.
+        // Forcing every prompt background to one section put a real run's
+        // scenery behind its first screen only.
+        placement = sig.scope === 'page' ? 'page-background' : 'section-background'
         break
       case 'decoration':
         role = 'decoration'
@@ -536,6 +570,54 @@ function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region
     out.push(settled)
   }
   return out
+}
+
+/**
+ * A round stroke grouped with ridge or band strokes is a round body standing
+ * behind them, not one more ridge. A real run grouped two hills and an arc
+ * drawn between them as one "silhouette"; the arc was closed to the ground and
+ * stood in front of the hills as a pale slab. Perception had already measured
+ * it as a circular arc — this makes that measurement count.
+ *
+ * Only when the fitted centre sits clearly above the others' ground: a hill
+ * drawn as a neat semicircle has its centre on the ground and stays a hill.
+ */
+function splitRoundBodies(els: BriefElement[], regions: Region[]): BriefElement[] {
+  const out: BriefElement[] = []
+  for (const e of els) {
+    if (e.role !== 'illustration' || (e.form !== 'silhouette' && e.form !== 'band') || e.regions.length < 2) {
+      out.push(e)
+      continue
+    }
+    const members = regions.filter(r => e.regions.includes(r.regionNumber))
+    const ground = Math.max(...members.map(r => r.geometry.y + r.geometry.height))
+    const round = members.filter(r => {
+      if (r.geometry.type !== 'circle' && !isRound(r)) return false
+      const fit = r.geometry.type === 'circle'
+        ? { cy: r.geometry.y + r.geometry.height / 2, r: r.geometry.height / 2 }
+        : fitCircle(absolutePoints(r))
+      return !!fit && fit.cy < ground - fit.r * 0.3
+    })
+    if (round.length === 0 || round.length === members.length) {
+      out.push(e)
+      continue
+    }
+    const ids = round.map(r => r.regionNumber)
+    out.push({ ...e, regions: e.regions.filter(n => !ids.includes(n)) })
+    out.push({ ...e, name: `${e.name} — round body`.slice(0, 60), regions: ids, form: 'disc', depth: Math.max(0, e.depth - 1) })
+  }
+  return out
+}
+
+/**
+ * "Use my drawing as the main background the content scrolls over", with no
+ * shape named: the picture goes behind the whole page. When the prompt names
+ * shapes, `reconcile` has already applied this to exactly those.
+ */
+function pageWideArt(els: BriefElement[], signals: IntentSignal[], prompt: string): BriefElement[] {
+  if (signals.some(s => s.source === 'prompt' && s.kind === 'background')) return els
+  if (!/\b(?:background|backdrop|bg)\b/i.test(prompt) || !PAGE_WIDE.test(prompt.toLowerCase())) return els
+  return els.map(e => (e.role === 'illustration' ? { ...e, placement: 'page-background' as const } : e))
 }
 
 /**
@@ -632,6 +714,8 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
     tone: strList(b.tone, 5, 30),
     concept: str(b.concept, 320),
     signature: str(b.signature, 280),
+    imagery: str(b.imagery, 200),
+    facts: facts(b.facts),
     generic: str(b.generic, 240),
     brand: str(b.brand, 60),
     avoid: strList(b.avoid, 4, 140),
@@ -753,6 +837,13 @@ export function renderBrief(brief: DesignBrief, mode: 'shell' | 'section'): stri
   if (site.length > 0) lines.push(site.join(' '))
   if (brief.brand) lines.push(`Name on the site: ${brief.brand} — use exactly this wherever a name appears (logo, headings, footer, copy).`)
   lines.push('Write real content only: no placeholder names or text ("Your Name", "John Doe", "Creator\'s Name", "Lorem ipsum", "Company"), no generic filler lines.')
+  const factLine = [
+    brief.facts.address && `address ${brief.facts.address}`,
+    brief.facts.phone && `phone ${brief.facts.phone}`,
+    brief.facts.email && `email ${brief.facts.email}`,
+    brief.facts.hours && `hours ${brief.facts.hours}`,
+  ].filter(Boolean)
+  if (factLine.length > 0) lines.push(`Facts — use exactly these wherever they appear, never other ones: ${factLine.join(' · ')}.`)
   if (brief.concept) lines.push(`Concept: ${brief.concept}`)
   if (brief.signature) lines.push(`Signature element (must appear, executed well): ${brief.signature}`)
   if (brief.avoid.length > 0) lines.push(`Avoid these clichés: ${brief.avoid.join('; ')}`)

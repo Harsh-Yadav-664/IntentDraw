@@ -9,44 +9,16 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { createAdminClient } from '@/lib/supabase/server'
+import { toThumbnail } from '@/lib/projects/thumbnail'
 
-/** Reference width the canvas draws against — thumbnails normalise against it. */
-const CANVAS_WIDTH = 1280
-const CANVAS_HEIGHT = 1000
-const MAX_THUMBNAIL_SHAPES = 24
-
-export interface ProjectThumbnail {
-  shapes: Array<{ x: number; y: number; w: number; h: number; type: string }>
-  total: number
+/** How many sections the last generation planned (0 when nothing was built yet). */
+function sectionCountOf(canvasData: unknown): number {
+  const parts = (canvasData as { pageParts?: { sections?: unknown } } | null)?.pageParts
+  return Array.isArray(parts?.sections) ? parts.sections.length : 0
 }
 
-/**
- * Reduces a saved canvas to a handful of normalised (0-1) boxes the dashboard
- * can draw as a wireframe. Older projects stored a bare `Region[]` rather than
- * `{ regions, groups }`, so both shapes are accepted.
- */
-function toThumbnail(canvasData: unknown): ProjectThumbnail | null {
-  const regions = Array.isArray(canvasData)
-    ? canvasData
-    : (canvasData as { regions?: unknown[] } | null)?.regions
-
-  if (!Array.isArray(regions) || regions.length === 0) return null
-
-  const shapes = regions
-    .slice(0, MAX_THUMBNAIL_SHAPES)
-    .map((region) => (region as { geometry?: Record<string, number | string> }).geometry)
-    .filter((g): g is Record<string, number | string> => !!g)
-    .map((g) => ({
-      x: +(Number(g.x) / CANVAS_WIDTH).toFixed(4),
-      y: +(Number(g.y) / CANVAS_HEIGHT).toFixed(4),
-      w: +(Number(g.width) / CANVAS_WIDTH).toFixed(4),
-      h: +(Number(g.height) / CANVAS_HEIGHT).toFixed(4),
-      type: String(g.type ?? 'rectangle'),
-    }))
-    .filter((s) => Number.isFinite(s.x) && Number.isFinite(s.y) && s.w > 0 && s.h > 0)
-
-  return shapes.length > 0 ? { shapes, total: regions.length } : null
-}
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const MAX_PROMPT_CHARS = 8000
 
 // =============================================================================
 // GET — List user's projects
@@ -87,6 +59,7 @@ export async function GET() {
       ...project,
       hasOutput: typeof generated_code === 'string' && generated_code.length > 0,
       thumbnail: toThumbnail(canvas_data),
+      sectionCount: sectionCountOf(canvas_data),
     }))
 
     return NextResponse.json({ success: true, data: { projects: summarized } })
@@ -114,18 +87,53 @@ export async function POST(request: Request) {
       )
     }
 
-    const body = await request.json()
-    const { name = 'Untitled Project' } = body as { name?: string }
-
+    const body = (await request.json().catch(() => ({}))) as {
+      name?: unknown
+      prompt?: unknown
+      canvas_data?: unknown
+      duplicateOf?: unknown
+    }
     const admin = createAdminClient()
+
+    // A new project is empty, starts from an example (prompt + drawing), or is
+    // a copy of one of the user's own projects. A copy is never public.
+    let row: { name: string; prompt: string; canvas_data: unknown; generated_code: string | null; global_theme?: string | null } = {
+      name: typeof body.name === 'string' ? body.name : 'Untitled Project',
+      prompt: typeof body.prompt === 'string' ? body.prompt.slice(0, MAX_PROMPT_CHARS) : '',
+      canvas_data: body.canvas_data && typeof body.canvas_data === 'object' ? body.canvas_data : null,
+      generated_code: null,
+    }
+    if (typeof body.duplicateOf === 'string') {
+      if (!UUID.test(body.duplicateOf)) {
+        return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 })
+      }
+      const { data: source } = await admin
+        .from('projects')
+        .select('name, prompt, canvas_data, generated_code, global_theme')
+        .eq('id', body.duplicateOf)
+        .eq('user_id', user.id)
+        .single()
+      if (!source) {
+        return NextResponse.json({ success: false, error: 'Project not found' }, { status: 404 })
+      }
+      row = {
+        name: `${source.name} (copy)`,
+        prompt: source.prompt ?? '',
+        canvas_data: source.canvas_data,
+        generated_code: source.generated_code,
+        global_theme: source.global_theme,
+      }
+    }
+
     const { data: project, error } = await admin
       .from('projects')
       .insert({
         user_id: user.id,
-        name: name.trim().slice(0, 100) || 'Untitled Project',
-        canvas_data: null,
-        prompt: '',
-        generated_code: null,
+        name: row.name.trim().slice(0, 100) || 'Untitled Project',
+        canvas_data: row.canvas_data as never,
+        prompt: row.prompt,
+        generated_code: row.generated_code,
+        ...(row.global_theme !== undefined ? { global_theme: row.global_theme } : {}),
         is_public: false,
       })
       .select('id, name, created_at, updated_at')

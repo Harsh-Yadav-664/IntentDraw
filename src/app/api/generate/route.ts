@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { generateCode } from '@/lib/ai/provider'
+import { generateCode, resolveProvider } from '@/lib/ai/provider'
 import { checkRateLimit, incrementUsage, getUsageStats } from '@/lib/middleware/rate-limit'
 import { createClient } from '@/lib/supabase/server'
 import type { AIProvider, Region, RegionGroup } from '@/types'
@@ -99,7 +99,7 @@ export async function POST(request: Request) {
     console.log(`[Generate] user=${userId} | ${validRegions.length} regions | prompt: "${finalPrompt.substring(0, 100)}..."`)
 
     // --- Call AI ---
-    const result = await generateCode(validRegions, finalPrompt, globalTheme, provider, nvidiaModelId, imageData, validGroups)
+    const result = await generateCode(validRegions, finalPrompt, globalTheme, resolveProvider(provider), nvidiaModelId, imageData, validGroups)
 
     if (!result.success || !result.code) {
       return NextResponse.json(

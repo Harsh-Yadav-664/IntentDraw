@@ -12,7 +12,7 @@
 
 import type { Region, RegionGroup } from '@/types'
 import type { DesignBrief } from './brief'
-import { assembleProgressive, splitTopLevelChunks, type AssembleResult } from './assemble'
+import { assembleProgressive, splitTopLevelChunks, type AssembleOptions, type AssembleResult } from './assemble'
 
 /** How much of a per-section rebuild note reaches the model. */
 export const MAX_SECTION_NOTE_CHARS = 300
@@ -24,7 +24,16 @@ export const SCENE_NAME = 'IntentScene'
 export interface SectionBlock {
   sections: string[]
   code: string
+  /** The provider and model that wrote it, and how long it took — so a weak section can be traced to a weak model. */
+  provider?: string
+  model?: string
+  ms?: number
+  /** What still looks generated (ai-look.ts), as a ready rebuild note. */
+  note?: string
 }
+
+/** Metadata a section call returns alongside its code. */
+export type BlockMeta = Pick<SectionBlock, 'provider' | 'model' | 'ms' | 'note'>
 
 export interface PageParts {
   shellCode: string
@@ -48,14 +57,14 @@ export interface PageParts {
 export type SectionStatus = 'built' | 'failed' | 'pending'
 
 /** Sections the user may rebuild, in page order. The scene is never one of them. */
-export function listSections(parts: PageParts): Array<{ name: string; status: SectionStatus }> {
-  const built = new Set(parts.blocks.flatMap(b => b.sections))
+export function listSections(parts: PageParts): Array<{ name: string; status: SectionStatus } & BlockMeta> {
   return parts.sections
     .filter(name => name !== SCENE_NAME)
-    .map(name => ({
-      name,
-      status: built.has(name) ? 'built' : parts.failed.includes(name) ? 'failed' : 'pending',
-    }))
+    .map(name => {
+      const block = parts.blocks.find(b => b.sections.includes(name))
+      if (!block) return { name, status: parts.failed.includes(name) ? 'failed' : 'pending' }
+      return { name, status: 'built', ...cleanMeta(block) }
+    })
 }
 
 /** Sections no block defines yet — they render as placeholders. */
@@ -68,12 +77,12 @@ export function missingSections(parts: PageParts): string[] {
  * Assembles the page from its parts. The scene block goes first: assembly keeps
  * the first definition of every name, so no section can replace the drawing.
  */
-export function assembleParts(parts: PageParts): AssembleResult {
+export function assembleParts(parts: PageParts, options?: AssembleOptions): AssembleResult {
   const blocks = [
     ...(parts.sceneCode ? [parts.sceneCode] : []),
     ...parts.blocks.map(b => b.code),
   ]
-  return assembleProgressive(parts.shellCode, blocks, missingSections(parts))
+  return assembleProgressive(parts.shellCode, blocks, missingSections(parts), options)
 }
 
 const IMPORT_START = /^\s*import\s/
@@ -112,7 +121,7 @@ function withoutDeclarations(code: string, names: Set<string>): string {
  *   section's declaration goes, so its siblings keep their helpers.
  * - A failed section is simply no longer failed.
  */
-export function replaceSection(parts: PageParts, name: string, code: string): PageParts {
+export function replaceSection(parts: PageParts, name: string, code: string, meta: BlockMeta = {}): PageParts {
   if (name === SCENE_NAME) throw new Error('The drawing cannot be rebuilt as a section.')
   if (!parts.sections.includes(name)) throw new Error(`${name} is not a section of this page.`)
 
@@ -124,15 +133,26 @@ export function replaceSection(parts: PageParts, name: string, code: string): Pa
       if (!block.sections.includes(name)) return block
       const remaining = block.sections.filter(s => s !== name)
       if (remaining.length === 0) return null
-      return { sections: remaining, code: withoutDeclarations(block.code, new Set([name])) }
+      return { ...block, sections: remaining, code: withoutDeclarations(block.code, new Set([name])) }
     })
     .filter((b): b is SectionBlock => b !== null)
 
   return {
     ...parts,
-    blocks: [{ sections: [name], code: newCode }, ...oldBlocks],
+    blocks: [{ sections: [name], code: newCode, ...cleanMeta(meta) }, ...oldBlocks],
     failed: parts.failed.filter(s => s !== name),
   }
+}
+
+/** Only short strings and a sane duration survive — this crosses the client and is saved. */
+export function cleanMeta(meta: unknown): BlockMeta {
+  const m = (meta && typeof meta === 'object' ? meta : {}) as Record<string, unknown>
+  const out: BlockMeta = {}
+  if (typeof m.provider === 'string' && m.provider) out.provider = m.provider.slice(0, 40)
+  if (typeof m.model === 'string' && m.model) out.model = m.model.slice(0, 80)
+  if (typeof m.ms === 'number' && Number.isFinite(m.ms) && m.ms >= 0) out.ms = Math.min(Math.round(m.ms), 3_600_000)
+  if (typeof m.note === 'string' && m.note) out.note = m.note.slice(0, MAX_SECTION_NOTE_CHARS)
+  return out
 }
 
 /**
@@ -158,9 +178,13 @@ export function parseSavedParts(raw: unknown, generatedCode: string | null | und
     groups: Array.isArray(p.groups) ? p.groups : [],
     prompt: p.prompt,
     sections: p.sections,
-    blocks: p.blocks,
+    blocks: p.blocks.map(b => ({ sections: b.sections, code: b.code, ...cleanMeta(b) })),
     failed: p.failed,
   }
 
-  return assembleParts(parts).code === generatedCode ? parts : null
+  if (assembleParts(parts).code === generatedCode) return parts
+  // A page saved before assembly resolved import/component name collisions:
+  // the parts are genuine (they reproduce the page under the old rules), and
+  // reassembling them now repairs it. The caller shows that repaired page.
+  return assembleParts(parts, { legacyCollisions: true }).code === generatedCode ? parts : null
 }

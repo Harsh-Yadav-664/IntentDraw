@@ -23,6 +23,7 @@ const ROUTES = [
   '/api/generate/understand',
   '/api/generate/shell',
   '/api/generate/section',
+  '/api/generate/images',
   '/api/image',
   '/api/models',
 ]

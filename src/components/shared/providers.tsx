@@ -18,16 +18,22 @@ export function Providers({ children }: ProvidersProps) {
   return (
     <AuthProvider>
       {children}
-      <Toaster 
-        richColors 
-        position="bottom-right"
+      <Toaster
+        position="bottom-center"
+        gap={8}
         toastOptions={{
-          duration: 4000,
+          unstyled: true,
+          duration: 3600,
           classNames: {
-            error: 'bg-red-50 border-red-200 text-red-800',
-            success: 'bg-green-50 border-green-200 text-green-800',
-            warning: 'bg-yellow-50 border-yellow-200 text-yellow-800',
-            info: 'bg-blue-50 border-blue-200 text-blue-800',
+            toast:
+              'flex items-center gap-2.5 rounded-[10px] border border-line bg-surface2 px-3.5 py-2.5 text-[12.5px] leading-snug text-ink shadow-plate',
+            title: 'font-normal',
+            description: 'text-[11.5px] text-muted',
+            icon: 'shrink-0 [&_svg]:h-4 [&_svg]:w-4',
+            success: '[&_[data-icon]]:text-ok',
+            error: '[&_[data-icon]]:text-danger',
+            warning: '[&_[data-icon]]:text-warn',
+            info: '[&_[data-icon]]:text-faint',
           },
         }}
       />

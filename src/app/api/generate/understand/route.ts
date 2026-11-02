@@ -4,6 +4,7 @@ import { createClient } from '@/lib/supabase/server'
 import { applyBriefToRegions } from '@/lib/ai/brief'
 import { understandRequest } from '@/lib/ai/understand'
 import { recentDesigns } from '@/lib/ai/recent-designs'
+import { resolveProvider } from '@/lib/ai/provider'
 import type { AIProvider, Region, RegionGroup } from '@/types'
 
 // Model calls here run 20-70s (Gemini thinks before it answers). Vercel caps a
@@ -61,7 +62,7 @@ export async function POST(request: Request) {
       prompt: prompt.trim(),
       regions: validRegions,
       groups: Array.isArray(groups) ? groups : [],
-      provider: provider ?? 'gemini',
+      provider: resolveProvider(provider),
       nvidiaModelId,
       imageBase64: imageData,
       // Other projects only: regenerating this one may keep its own look.

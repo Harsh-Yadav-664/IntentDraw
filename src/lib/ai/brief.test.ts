@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyBriefToRegions, describeScene, normalizeBrief, parseJsonObject, toComponentName } from './brief'
+import { applyBriefToRegions, describeScene, normalizeBrief, parseJsonObject, renderBrief, toComponentName } from './brief'
 import type { Region } from '@/types'
 
 function region(regionNumber: number, type: 'rectangle' | 'freeform' | 'arrow'): Region {
@@ -117,5 +117,29 @@ describe('applyBriefToRegions', () => {
       'decorative',
       'relational',
     ])
+  })
+})
+
+describe('the site facts', () => {
+  it('are decided once and handed to every section', () => {
+    const brief = normalizeBrief(
+      {
+        summary: 'A taqueria',
+        facts: { address: 'Calle de la Luz 12, Puebla', phone: '+52 222 555 0101 <b>', email: 'hola@casadelsol.mx', hours: 'Tue–Sun 1pm–11pm' },
+      },
+      [],
+      'a mexican restaurant'
+    )
+    expect(brief.facts).toEqual({ address: 'Calle de la Luz 12, Puebla', phone: '+52 222 555 0101', email: 'hola@casadelsol.mx', hours: 'Tue–Sun 1pm–11pm' })
+    const text = renderBrief(brief, 'section')
+    expect(text).toContain('Facts — use exactly these')
+    expect(text).toContain('address Calle de la Luz 12, Puebla · phone +52 222 555 0101')
+  })
+
+  it('are empty — and unmentioned — when the model gives none or junk', () => {
+    const brief = normalizeBrief({ summary: 'A portfolio', facts: { email: 'not an email', address: 42 } }, [], 'my portfolio')
+    expect(brief.facts).toEqual({ address: '', phone: '', email: '', hours: '' })
+    expect(renderBrief(brief, 'section')).not.toContain('Facts —')
+    expect(normalizeBrief({}, [], 'x').facts.address).toBe('')
   })
 })

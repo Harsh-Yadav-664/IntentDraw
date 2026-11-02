@@ -5,7 +5,17 @@ import { generateUUID } from '@/lib/utils'
 import type Konva from 'konva'
 
 /** The Konva stage, as far as exporting needs it. */
-type StageExporter = Pick<Konva.Stage, 'toDataURL' | 'getLayers' | 'width' | 'height' | 'scaleX'>
+type StageExporter = Pick<Konva.Stage, 'toDataURL' | 'getLayers' | 'position' | 'find'>
+
+/**
+ * The scale the drawing is exported at for vision models — roughly what the
+ * old full-width canvas produced, and independent of the editor's zoom, so
+ * the same drawing always reaches the model the same size.
+ */
+const EXPORT_SCALE = 0.8
+
+/** How far a duplicate lands from its original, in canvas units. */
+const DUPLICATE_OFFSET = 24
 
 interface HistoryEntry {
   regions: Region[]
@@ -38,6 +48,13 @@ interface CanvasStore {
 
   addRegion: (geometry: RegionGeometry) => void
   updateRegionGeometry: (id: string, updates: Partial<RegionGeometry>) => void
+  /** Several shapes moved or resized at once (a drag, a transform) — one undo step. */
+  setRegionGeometries: (updates: Array<{ id: string; geometry: Partial<RegionGeometry> }>) => void
+  /** Move shapes by a distance in canvas units (arrow-key nudges) — one undo step. */
+  translateRegions: (ids: string[], dx: number, dy: number) => void
+  /** Copies the shapes a little down and to the right, and selects the copies. */
+  duplicateRegions: (ids: string[]) => string[]
+  selectAll: () => void
   updateRegionIntent: (id: string, intent: string) => void
   /** The user's one-click answer to "what is this, and where does it go?" — null clears it. */
   setRegionTag: (regionNumbers: number[], tag: RegionTag | null) => void
@@ -84,15 +101,49 @@ export function regionsInGroup(regions: Region[], groupId: string): Region[] {
   return regions.filter(r => r.groupId === groupId)
 }
 
-// Region colors - Professional wireframe palette
-export const REGION_COLORS = [
-  '#8b949e', // Muted Gray
-  '#58a6ff', // Muted Blue
-  '#3fb950', // Muted Green
-  '#bc8cff', // Muted Purple
-  '#d29922', // Muted Yellow
-  '#f85149', // Muted Red
-]
+// Region label colours — the one place the interface allows a second hue.
+export const REGION_COLORS = ['#FACC15', '#7DD3A0', '#F08A6B', '#7FB2E5', '#C3A6F0', '#E9C46A']
+
+/** A region's colour, by its number. */
+export function regionColor(regionNumber: number): string {
+  return REGION_COLORS[(Math.max(1, regionNumber) - 1) % REGION_COLORS.length]
+}
+
+/** Shapes shifted by (dx, dy). Paths are relative to x/y, so they move with it. */
+export function translated(regions: Region[], ids: string[], dx: number, dy: number, now = new Date().toISOString()): Region[] {
+  return regions.map((r) =>
+    ids.includes(r.id)
+      ? { ...r, geometry: { ...r.geometry, x: r.geometry.x + dx, y: r.geometry.y + dy }, updatedAt: now }
+      : r
+  )
+}
+
+/**
+ * Copies of the given shapes, offset so they don't sit exactly on top of the
+ * originals, numbered after every existing region. Copies keep the description
+ * and tag but not the group — a copy is a new thing until the user says so.
+ */
+export function duplicates(regions: Region[], ids: string[], newId: () => string, now = new Date().toISOString()): Region[] {
+  let next = regions.length
+  return regions
+    .filter((r) => ids.includes(r.id))
+    .map((r) => ({
+      ...r,
+      id: newId(),
+      regionNumber: ++next,
+      geometry: {
+        ...r.geometry,
+        x: r.geometry.x + DUPLICATE_OFFSET,
+        y: r.geometry.y + DUPLICATE_OFFSET,
+        path: r.geometry.path?.map((p) => ({ ...p })),
+      },
+      groupId: null,
+      tag: r.tag ? { ...r.tag } : undefined,
+      generatedCode: null,
+      createdAt: now,
+      updatedAt: now,
+    }))
+}
 
 export const useCanvasStore = create<CanvasStore>((set, get) => {
   const syncHistoryFlags = () => {
@@ -202,6 +253,46 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
         ),
       }))
       pushHistory()
+    },
+
+    setRegionGeometries: (updates) => {
+      const byId = new Map(updates.map((u) => [u.id, u.geometry]))
+      let changed = false
+      const now = new Date().toISOString()
+      const regions = get().regions.map((r) => {
+        const patch = byId.get(r.id)
+        if (!patch) return r
+        const geometry = normalizeGeometry({ ...r.geometry, ...patch })
+        if (JSON.stringify(geometry) === JSON.stringify(r.geometry)) return r
+        changed = true
+        return { ...r, geometry, updatedAt: now }
+      })
+      // A drag ends once per dragged shape; only the first carries a change.
+      if (!changed) return
+      set({ regions })
+      pushHistory()
+    },
+
+    translateRegions: (ids, dx, dy) => {
+      if (ids.length === 0 || (dx === 0 && dy === 0)) return
+      set((state) => ({ regions: translated(state.regions, ids, dx, dy) }))
+      pushHistory()
+    },
+
+    duplicateRegions: (ids) => {
+      const { regions, visibility } = get()
+      const copies = duplicates(regions, ids, generateUUID)
+      if (copies.length === 0) return []
+      const nextVisibility = { ...visibility }
+      copies.forEach((c) => { nextVisibility[c.id] = true })
+      set({ regions: [...regions, ...copies], visibility: nextVisibility, selectedRegionIds: copies.map((c) => c.id) })
+      pushHistory()
+      return copies.map((c) => c.id)
+    },
+
+    selectAll: () => {
+      const { regions, visibility } = get()
+      set({ selectedRegionIds: regions.filter((r) => visibility[r.id] !== false).map((r) => r.id) })
     },
 
     updateRegionIntent: (id, intent) => {
@@ -346,54 +437,71 @@ export const useCanvasStore = create<CanvasStore>((set, get) => {
       const stage = get()._stageInstance
       if (!stage) return null
       const { regions } = get()
-
-      // Only the drawn area, at 1x. The whole stage is several pages tall and
-      // mostly empty; at the old pixelRatio 2 it made a multi-megabyte image
-      // that slowed every request and spent vision tokens on blank canvas.
-      // Positions reach the model as text; the image only conveys how the
-      // strokes look, so cropping loses nothing.
-      let crop: { x: number; y: number; width: number; height: number } | undefined
-      if (regions.length > 0) {
-        // Region geometry is in logical units; the layer is scaled to the stage.
-        const layer = stage.getLayers()[0]
-        const scale = layer ? layer.scaleX() : 1
-        const pad = 24
-        const minX = Math.min(...regions.map(r => r.geometry.x))
-        const minY = Math.min(...regions.map(r => r.geometry.y))
-        const maxX = Math.max(...regions.map(r => r.geometry.x + r.geometry.width))
-        const maxY = Math.max(...regions.map(r => r.geometry.y + r.geometry.height))
-        const x = Math.max(0, minX * scale - pad)
-        const y = Math.max(0, minY * scale - pad)
-        crop = {
-          x,
-          y,
-          width: Math.min(stage.width() - x, (maxX - minX) * scale + pad * 2),
-          height: Math.min(stage.height() - y, (maxY - minY) * scale + pad * 2),
-        }
-      }
-
-      // A background rect so the image isn't transparent (dark strokes on
-      // transparency read as nothing to a vision model).
       const layer = stage.getLayers()[0]
+      if (!layer) return null
+
+      // The editor's stage is the size of the visible window and scrolls; the
+      // export draws the whole drawing at a fixed scale, from the origin.
+      const previousPosition = stage.position()
+      const previousScale = layer.scale()
+      const shownOnScreenOnly = stage.find('.screen-only')
+      const shownInExportOnly = stage.find('.export-only')
+      stage.position({ x: 0, y: 0 })
+      layer.scale({ x: EXPORT_SCALE, y: EXPORT_SCALE })
+      shownOnScreenOnly.forEach((n) => n.hide())
+      shownInExportOnly.forEach((n) => n.show())
+
+      // Only the drawn area. The canvas is several pages tall and mostly empty;
+      // positions reach the model as text, the image only conveys how the
+      // strokes look, so cropping loses nothing.
+      const pad = 24
+      const visible = regions.filter((r) => get().visibility[r.id] !== false)
+      const drawn = visible.length > 0 ? visible : regions
+      const minX = Math.min(...drawn.map((r) => r.geometry.x))
+      const minY = Math.min(...drawn.map((r) => r.geometry.y))
+      const maxX = Math.max(...drawn.map((r) => r.geometry.x + r.geometry.width))
+      const maxY = Math.max(...drawn.map((r) => r.geometry.y + r.geometry.height))
+      const crop =
+        drawn.length > 0
+          ? {
+              x: Math.max(0, Math.floor(minX * EXPORT_SCALE - pad)),
+              y: Math.max(0, Math.floor(minY * EXPORT_SCALE - pad)),
+              width: Math.ceil((maxX - minX) * EXPORT_SCALE + pad * 2),
+              height: Math.ceil((maxY - minY) * EXPORT_SCALE + pad * 2),
+            }
+          : { x: 0, y: 0, width: 1024, height: 640 }
+
+      // A background so the image isn't transparent (dark strokes on
+      // transparency read as nothing to a vision model).
       const KonvaGlobal = typeof window !== 'undefined'
         ? (window as unknown as { Konva?: typeof Konva }).Konva
         : undefined
-      if (!layer || !KonvaGlobal) return stage.toDataURL({ pixelRatio: 1, ...crop })
+      const bgRect = KonvaGlobal
+        ? new KonvaGlobal.Rect({
+            x: crop.x / EXPORT_SCALE,
+            y: crop.y / EXPORT_SCALE,
+            width: crop.width / EXPORT_SCALE,
+            height: crop.height / EXPORT_SCALE,
+            fill: '#0A0A0B',
+            listening: false,
+          })
+        : null
+      if (bgRect) {
+        layer.add(bgRect)
+        bgRect.moveToBottom()
+      }
 
-      const bgRect = new KonvaGlobal.Rect({
-        x: 0,
-        y: 0,
-        width: stage.width() / (layer.scaleX() || 1),
-        height: stage.height() / (layer.scaleY() || 1),
-        fill: '#0A0A0B',
-        listening: false,
-      })
-      layer.add(bgRect)
-      bgRect.moveToBottom()
-      layer.draw()
-      const dataUrl = stage.toDataURL({ pixelRatio: 1, ...crop })
-      bgRect.destroy()
-      layer.draw()
+      let dataUrl: string | null = null
+      try {
+        dataUrl = stage.toDataURL({ pixelRatio: 1, ...crop })
+      } finally {
+        bgRect?.destroy()
+        shownInExportOnly.forEach((n) => n.hide())
+        shownOnScreenOnly.forEach((n) => n.show())
+        layer.scale(previousScale)
+        stage.position(previousPosition)
+        layer.batchDraw()
+      }
       return dataUrl
     },
 

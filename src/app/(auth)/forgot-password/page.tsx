@@ -2,115 +2,59 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { ArrowLeft, Mail } from 'lucide-react'
 import { useAuth } from '@/hooks/use-auth'
 import { forgotPasswordSchema } from '@/lib/validations/auth'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { AlertCircle, Loader2, CheckCircle2, ArrowLeft } from 'lucide-react'
+import { Button, Field } from '@/components/kit/kit'
+import { AuthShell, FormNote } from '@/components/auth/auth-shell'
 
 export default function ForgotPasswordPage() {
   const { resetPassword, isSubmitting } = useAuth()
-  
   const [email, setEmail] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
+  const [sent, setSent] = useState(false)
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
-    setSuccess(false)
-
-    // Validate
     const result = forgotPasswordSchema.safeParse({ email })
     if (!result.success) {
-      // Zod v4 uses .issues instead of .errors
-      setError(result.error.issues[0]?.message || 'Invalid email')
+      setError(result.error.issues[0]?.message || 'Enter a valid email address.')
       return
     }
-
-    // Send reset email
     const { error: resetError } = await resetPassword(email)
-    
-    if (resetError) {
-      setError(resetError.message)
-    } else {
-      setSuccess(true)
-    }
+    if (resetError) setError(resetError.message)
+    else setSent(true)
   }
 
   return (
-    <Card className="w-full max-w-md shadow-lg">
-      <CardHeader className="text-center space-y-1">
-        <CardTitle className="text-2xl font-bold">Reset your password</CardTitle>
-        <CardDescription>
-          Enter your email and we&apos;ll send you a reset link
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        {success ? (
-          <div className="space-y-4">
-            <div className="p-4 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-start gap-3">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400 flex-shrink-0 mt-0.5" />
-              <div>
-                <h3 className="font-medium text-emerald-200">Check your email</h3>
-                <p className="text-sm text-emerald-300 mt-1">
-                  We&apos;ve sent a password reset link to <strong>{email}</strong>
-                </p>
-              </div>
-            </div>
-            <Button asChild variant="outline" className="w-full">
-              <Link href="/login">
-                <ArrowLeft className="mr-2 h-4 w-4" />
-                Back to Sign In
-              </Link>
-            </Button>
+    <AuthShell
+      eyebrow="Reset"
+      title={sent ? 'Check your email.' : 'Forgot your password?'}
+      sub={sent ? 'If there’s an account for that address, a reset link is on its way.' : 'We’ll email you a link to choose a new one.'}
+    >
+      {sent ? (
+        <div className="space-y-5">
+          <div className="flex items-center gap-3 rounded-[10px] border border-line bg-surface px-4 py-3.5">
+            <Mail size={15} className="text-accent" />
+            <div className="text-[13px] text-ink">{email}</div>
           </div>
-        ) : (
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-              <div className="p-3 rounded-lg bg-destructive/10 border border-destructive/30 flex items-start gap-2">
-                <AlertCircle className="h-5 w-5 text-destructive flex-shrink-0 mt-0.5" />
-                <p className="text-sm text-destructive">{error}</p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                name="email"
-                type="email"
-                placeholder="you@example.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                disabled={isSubmitting}
-                autoComplete="email"
-                autoFocus
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={isSubmitting}>
-              {isSubmitting ? (
-                <>
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Sending...
-                </>
-              ) : (
-                'Send Reset Link'
-              )}
-            </Button>
-
-            <p className="text-center text-sm text-muted-foreground">
-              Remember your password?{' '}
-              <Link href="/login" className="text-primary hover:text-primary/80 hover:underline font-medium">
-                Sign in
-              </Link>
-            </p>
-          </form>
-        )}
-      </CardContent>
-    </Card>
+          <Link href="/login" className="inline-flex items-center gap-1.5 text-[12.5px] text-accent hover:underline">
+            <ArrowLeft size={12} /> Back to sign in
+          </Link>
+        </div>
+      ) : (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          {error && <FormNote tone="error">{error}</FormNote>}
+          <Field label="Email" type="email" placeholder="you@studio.com" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus disabled={isSubmitting} />
+          <Button type="submit" variant="primary" size="lg" className="w-full" disabled={isSubmitting}>
+            {isSubmitting ? 'Sending…' : 'Send reset link'}
+          </Button>
+          <Link href="/login" className="inline-flex items-center gap-1.5 pt-4 text-[12.5px] text-accent hover:underline">
+            <ArrowLeft size={12} /> Back to sign in
+          </Link>
+        </form>
+      )}
+    </AuthShell>
   )
 }

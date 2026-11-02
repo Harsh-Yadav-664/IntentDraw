@@ -232,6 +232,117 @@ export function splitTopLevelChunks(code: string): Array<{ name: string | null; 
   return chunks
 }
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+
+/**
+ * Points one block's uses of an imported name at its new alias.
+ *
+ * JSX tags are always renamed. Bare references (`icon: Navigation`,
+ * `{Navigation}`) are renamed only in value positions, and only when the block
+ * doesn't define the name itself — the same word in visible text or a string
+ * ("Navigation") must stay as written.
+ */
+function renameUses(body: string, from: string, to: string, tagsOnly: boolean): string {
+  const name = escapeRegExp(from)
+  const renamed = body.replace(new RegExp(`(<\\/?)${name}(?=[\\s/>])`, 'g'), (_, open: string) => open + to)
+  if (tagsOnly) return renamed
+  return renamed.replace(
+    new RegExp(`([=(\\[,:?{|&]\\s*)${name}(?=\\s*[,)\\]};\\n]|\\s*$)`, 'g'),
+    (_, before: string) => before + to
+  )
+}
+
+/**
+ * An import and a component cannot share a name in one file.
+ *
+ * Blocks are written independently, so one section imports the lucide icon
+ * `Navigation` (or `Menu`, `Contact`, `Map`, `Gallery`…) while another section
+ * IS the component `Navigation`. Merged into one file that is a fatal
+ * "Duplicate declaration" — a real run lost the whole page to it. The block
+ * that imported the name meant the import, so its import is aliased and its
+ * own uses are pointed at the alias; the component keeps its name.
+ */
+function aliasCollidingImports(
+  blocks: Array<{ imports: ParsedImports; body: string }>,
+  declared: Set<string>
+): void {
+  const taken = new Set(declared)
+  for (const block of blocks) {
+    for (const map of block.imports.named.values()) for (const local of map.keys()) taken.add(local)
+    for (const local of block.imports.defaults.values()) taken.add(local)
+    for (const local of block.imports.namespaces.values()) taken.add(local)
+  }
+
+  // One alias per name across the file, so two blocks importing the same icon agree.
+  const aliases = new Map<string, string>()
+  const aliasFor = (local: string, moduleName: string) => {
+    const known = aliases.get(local)
+    if (known) return known
+    let alias = local + (moduleName === 'lucide-react' ? 'Icon' : 'Import')
+    while (taken.has(alias)) alias += '_'
+    taken.add(alias)
+    aliases.set(local, alias)
+    return alias
+  }
+
+  for (const block of blocks) {
+    const own = new Set(splitTopLevelChunks(block.body).map(chunk => chunk.name))
+    const rename = (local: string, alias: string) => {
+      block.body = renameUses(block.body, local, alias, own.has(local))
+    }
+
+    for (const [moduleName, specifiers] of block.imports.named) {
+      for (const [local, spec] of [...specifiers]) {
+        if (!declared.has(local)) continue
+        const alias = aliasFor(local, moduleName)
+        const imported = spec.split(/\s+as\s+/)[0].trim()
+        specifiers.delete(local)
+        specifiers.set(alias, `${imported} as ${alias}`)
+        rename(local, alias)
+      }
+    }
+    for (const [moduleName, local] of [...block.imports.defaults]) {
+      if (!declared.has(local)) continue
+      const alias = aliasFor(local, moduleName)
+      block.imports.defaults.set(moduleName, alias)
+      rename(local, alias)
+    }
+  }
+}
+
+/**
+ * One block, before it is stored: an import that shares its name with a
+ * section this same block defines is the import (a section never renders
+ * itself), so it is aliased and its JSX uses follow. Left to the generic
+ * repair, the import would be dropped and `<Navigation className="w-4" />`
+ * inside the footer would render the whole navigation bar.
+ */
+export function aliasSectionImports(code: string, sectionNames: string[]): string {
+  const imports = emptyImports()
+  const block = { imports, body: splitImports(code, imports) }
+  const own = new Set(splitTopLevelChunks(block.body).map(chunk => chunk.name))
+  const colliding = new Set(sectionNames.filter(name => own.has(name)))
+  const imported = [
+    ...[...imports.named.values()].flatMap(map => [...map.keys()]),
+    ...imports.defaults.values(),
+  ]
+  if (!imported.some(local => colliding.has(local))) return code
+
+  aliasCollidingImports([block], colliding)
+  const rendered = renderImports(imports)
+  return rendered ? `${rendered}\n\n${block.body.trim()}\n` : block.body
+}
+
+function mergeImports(into: ParsedImports, from: ParsedImports): void {
+  for (const [moduleName, specifiers] of from.named) {
+    const merged = into.named.get(moduleName) ?? new Map<string, string>()
+    for (const [local, spec] of specifiers) merged.set(local, spec)
+    into.named.set(moduleName, merged)
+  }
+  for (const [moduleName, local] of from.defaults) into.defaults.set(moduleName, local)
+  for (const [moduleName, local] of from.namespaces) into.namespaces.set(moduleName, local)
+}
+
 /** Keeps the first definition of each name and drops later duplicates. */
 function dedupeDeclarations(blocks: string[], alreadyDeclared: Iterable<string> = []): string[] {
   const seen = new Set<string>(alreadyDeclared)
@@ -269,9 +380,18 @@ export function placeholderComponent(name: string): string {
 export function assembleProgressive(
   shellCode: string,
   completedBlocks: string[],
-  pendingNames: string[]
+  pendingNames: string[],
+  options?: AssembleOptions
 ): AssembleResult {
-  return assembleFile(shellCode, [...completedBlocks, ...pendingNames.map(placeholderComponent)])
+  return assembleFile(shellCode, [...completedBlocks, ...pendingNames.map(placeholderComponent)], options)
+}
+
+export interface AssembleOptions {
+  /**
+   * Assemble the way it was done before import/component name collisions were
+   * resolved. Only for recognising pages saved back then (see parseSavedParts).
+   */
+  legacyCollisions?: boolean
 }
 
 export interface AssembleResult {
@@ -284,22 +404,38 @@ export interface AssembleResult {
  * Builds the final file: merged imports, then every section component, then the
  * shell's `export default App` last so it can reference them.
  */
-export function assembleFile(shellCode: string, sectionCodes: string[]): AssembleResult {
-  const imports = emptyImports()
-  const shellBody = splitImports(shellCode, imports)
+export function assembleFile(shellCode: string, sectionCodes: string[], options?: AssembleOptions): AssembleResult {
+  const shell = { imports: emptyImports(), body: '' }
+  shell.body = splitImports(shellCode, shell.imports)
+  const shellBody = shell.body
   // The shell's own declarations win: a section that redefines one of them
   // would be a fatal redeclaration.
   const shellDeclared = splitTopLevelChunks(shellBody)
     .map(chunk => chunk.name)
     .filter((name): name is string => name !== null)
 
-  const sectionBodies = dedupeDeclarations(
-    sectionCodes
-      .filter(code => code && code.trim().length > 0)
-      .map(code => stripDefaultExport(splitImports(code, imports)).trim())
-      .filter(Boolean),
-    shellDeclared
-  )
+  const blocks = sectionCodes
+    .filter(code => code && code.trim().length > 0)
+    .map(code => {
+      const blockImports = emptyImports()
+      return { imports: blockImports, body: stripDefaultExport(splitImports(code, blockImports)).trim() }
+    })
+
+  if (!options?.legacyCollisions) {
+    const declared = new Set(shellDeclared)
+    for (const block of blocks) {
+      for (const chunk of splitTopLevelChunks(block.body)) if (chunk.name) declared.add(chunk.name)
+    }
+    // The shell is built in code and imports nothing that collides; only the
+    // model-written blocks are rewritten.
+    aliasCollidingImports(blocks, declared)
+  }
+
+  const imports = emptyImports()
+  mergeImports(imports, shell.imports)
+  for (const block of blocks) mergeImports(imports, block.imports)
+
+  const sectionBodies = dedupeDeclarations(blocks.map(block => block.body).filter(Boolean), shellDeclared)
 
   const exportIndex = shellBody.indexOf('export default')
   if (exportIndex === -1) {

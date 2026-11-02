@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server'
 import { updateSession } from '@/lib/supabase/middleware'
+import { safeRedirect } from '@/lib/auth/redirect'
 
 // =============================================================================
 // Route Configuration
@@ -9,6 +10,7 @@ import { updateSession } from '@/lib/supabase/middleware'
 const PROTECTED_ROUTES = [
   '/dashboard',
   '/project',
+  '/settings',
 ]
 
 // Routes only for unauthenticated users (redirect to dashboard if logged in)
@@ -65,15 +67,15 @@ export async function middleware(request: NextRequest) {
   // Protected routes: redirect to login if not authenticated
   if (isProtectedRoute && !user) {
     const loginUrl = new URL('/login', request.url)
-    // Store the original URL to redirect back after login
-    loginUrl.searchParams.set('redirect', pathname)
+    // Store the original URL (with its query, e.g. ?example=) to return to after login
+    loginUrl.searchParams.set('redirect', pathname + request.nextUrl.search)
     return NextResponse.redirect(loginUrl)
   }
 
   // Auth routes: redirect to dashboard if already authenticated
   if (isAuthRoute && user) {
     // Check if there's a redirect parameter
-    const redirectTo = request.nextUrl.searchParams.get('redirect')
+    const redirectTo = safeRedirect(request.nextUrl.searchParams.get('redirect'))
     if (redirectTo && !AUTH_ROUTES.some(r => redirectTo.startsWith(r))) {
       // Redirect to the original intended destination
       return NextResponse.redirect(new URL(redirectTo, request.url))

@@ -1,24 +1,17 @@
-import { Metadata } from 'next'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import type { Metadata } from 'next'
+import { AuthShell } from '@/components/auth/auth-shell'
 import { SignupForm } from '@/components/auth/signup-form'
+import { FREE_DAILY_GENERATIONS } from '@/lib/plans'
 
 export const metadata: Metadata = {
-  title: 'Create Account',
+  title: 'Create an account',
   description: 'Create your IntentDraw account',
 }
 
 export default function SignupPage() {
   return (
-    <Card className="w-full max-w-md shadow-lg">
-      <CardHeader className="text-center space-y-1">
-        <CardTitle className="text-2xl font-bold">Create your account</CardTitle>
-        <CardDescription>
-          Start designing for free — no credit card required
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <SignupForm />
-      </CardContent>
-    </Card>
+    <AuthShell eyebrow="Start free" title="Start with a sketch." sub={`${FREE_DAILY_GENERATIONS} generations a day, no card. Your drawing stays private.`}>
+      <SignupForm />
+    </AuthShell>
   )
 }

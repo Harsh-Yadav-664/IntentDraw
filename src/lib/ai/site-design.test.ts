@@ -164,3 +164,29 @@ describe('comment-style labels', () => {
     expect(enforceDesign(code, { ...SHARP, corners: 'pill' })).toBe(`<p className="text-sm leading-relaxed">Three critical deployments</p>`)
   })
 })
+
+describe('photos keep their colour', () => {
+  const travel = `<img className="w-full h-full object-cover grayscale contrast-125 hover:grayscale-0 transition-all" />`
+
+  it('drops the blanket grayscale on a photo filling its frame', () => {
+    const out = enforceDesign(travel, SHARP)
+    expect(out).not.toMatch(/(^|[\s"])grayscale(?=[\s"])/)
+    expect(out).toContain('object-cover')
+  })
+
+  it('keeps it on a black-and-white site, and on logos', () => {
+    expect(enforceDesign(travel, SHARP, { monochrome: true })).toContain(' grayscale ')
+    const logo = `<img className="h-8 w-auto object-contain grayscale opacity-60 hover:grayscale-0" />`
+    expect(enforceDesign(logo, SHARP)).toContain('grayscale opacity-60')
+  })
+})
+
+describe('the build knows what day it is', () => {
+  it('states the date and forbids past years', async () => {
+    const { todayLine, MONOCHROME } = await import('./prompt-rules')
+    expect(todayLine(new Date('2026-10-20T10:00:00Z'))).toMatch(/TODAY IS 2026-10-20\..*2026 or later/)
+    expect(buildUnderstandUserMessage('a travel site', [], [], false)).toMatch(/^TODAY IS \d{4}-\d{2}-\d{2}/)
+    expect(MONOCHROME.test('a black and white photography portfolio')).toBe(true)
+    expect(MONOCHROME.test('a natural theme travel site')).toBe(false)
+  })
+})
