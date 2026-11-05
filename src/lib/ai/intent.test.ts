@@ -230,3 +230,13 @@ describe('a drawn triangle asked to be 3D', () => {
     expect(promptSignals('make region 1 3d', [box(1, 0, 0, 200, 200)])[0]).toMatchObject({ object: 'cube' })
   })
 })
+
+describe('a note asking for a photo', () => {
+  it('keeps "background image of the city" a box for a real photo, but "use my sketch as the background" stays the drawing', () => {
+    const photo = { ...box(1, 0, 0, 1280, 700), intent: 'background image of the city at night' }
+    expect(intentSignals('', [photo]).find(s => s.source === 'note')).toMatchObject({ kind: 'content', anchor: 'exact' })
+    expect(normalizeBrief({}, [photo], '').drawing.elements[0].role).toBe('layout')
+    const sketch = { ...box(2, 0, 0, 1280, 700), intent: 'use my sketch as the background image' }
+    expect(intentSignals('', [sketch]).find(s => s.source === 'note')).toMatchObject({ kind: 'background' })
+  })
+})

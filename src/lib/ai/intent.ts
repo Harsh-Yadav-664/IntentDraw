@@ -297,7 +297,7 @@ export function noteSignals(regions: Region[], groups: RegionGroup[] = []): Inte
     const lower = note.toLowerCase()
     const read = readClause(lower, lower, members, regions)
     let kind = read.kind
-    if (kind === 'picture' && PHOTO.test(note)) kind = 'content'
+    if (asksForPhoto(kind, note)) kind = 'content'
     if (!kind) continue
     out.push({
       ...read,
@@ -318,7 +318,7 @@ export function noteSignals(regions: Region[], groups: RegionGroup[] = []): Inte
       : [{ ...readClause(note.toLowerCase(), note.toLowerCase(), [region.regionNumber], regions), confidence: 0, source: 'prompt' as const, why: '' }]
     for (const read of reads) {
       let kind = read.kind
-      if (kind === 'picture' && PHOTO.test(note)) kind = 'content'
+      if (asksForPhoto(kind, note)) kind = 'content'
       out.push({
         ...read,
         kind,
@@ -334,6 +334,18 @@ export function noteSignals(regions: Region[], groups: RegionGroup[] = []): Inte
 }
 
 const PHOTO = /\b(?:photo|photograph|image|portrait|headshot|picture of|pic of|of me|of us|selfie|logo)\b/i
+// Words that point at the user's own drawing: then a "background" or
+// "picture" really is the drawing, painted by the scene.
+const THE_DRAWING = /\b(?:drawing|drawn|sketch|scene|scenery|illustrat\w*|paint\w*|doodle)\b/i
+
+/**
+ * A note asking for a photo — "a picture of me", "background image of the
+ * city" — wants a real image in that box, built by the section, not the box
+ * painted as art by the scene (a flat coloured shape).
+ */
+function asksForPhoto(kind: IntentKind | undefined, note: string): boolean {
+  return (kind === 'picture' || kind === 'background') && PHOTO.test(note) && !THE_DRAWING.test(note)
+}
 
 // =============================================================================
 // Layer 4 — geometry priors
