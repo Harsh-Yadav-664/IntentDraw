@@ -313,6 +313,60 @@ function columnsOf(slots: Slot[]): Slot[][] {
  * content as positioned columns with exact classes, pictures that are already
  * painted behind it, and arrows. '' when nothing was drawn in these sections.
  */
+/**
+ * What the user drew deliberately unlike its neighbours, said out loud.
+ *
+ * Models "correct" one bigger or offset element back to the repeated pattern
+ * 70–96% of the time (Pattern over Pixels, research R11): three cards drawn
+ * with the middle one twice as wide come back as three equal cards. So rows of
+ * three or more boxes are found here, and any member clearly wider, taller or
+ * offset from its siblings is named with its measured difference.
+ */
+export function drawnIrregularities(regions: Region[]): string[] {
+  const boxes = regions.filter(r => r.geometry.type === 'rectangle' && !looksHandwritten(r))
+  const median = (xs: number[]) => {
+    const v = [...xs].sort((a, b) => a - b)
+    return v.length % 2 ? v[(v.length - 1) / 2] : (v[v.length / 2 - 1] + v[v.length / 2]) / 2
+  }
+  // Rows: boxes whose vertical extents mostly overlap, lined up left to right.
+  const rows: Region[][] = []
+  for (const box of [...boxes].sort((a, b) => a.geometry.y - b.geometry.y)) {
+    const g = box.geometry
+    const row = rows.find(rw => rw.some(o => {
+      const shared = Math.min(o.geometry.y + o.geometry.height, g.y + g.height) - Math.max(o.geometry.y, g.y)
+      return shared > 0.4 * Math.min(o.geometry.height, g.height)
+    }))
+    if (row) row.push(box)
+    else rows.push([box])
+  }
+  const out: string[] = []
+  for (const row of rows) {
+    if (row.length < 3) continue
+    row.sort((a, b) => a.geometry.x - b.geometry.x)
+    const w = median(row.map(r => r.geometry.width))
+    const h = median(row.map(r => r.geometry.height))
+    const top = median(row.map(r => r.geometry.y))
+    const odd = row.flatMap(r => {
+      const g = r.geometry
+      const says: string[] = []
+      const fw = g.width / w
+      const fh = g.height / h
+      if (fw >= 1.3) says.push(`${fw.toFixed(1)}× as wide`)
+      else if (fw <= 0.77) says.push(`${Math.round(fw * 100)}% as wide`)
+      if (fh >= 1.3) says.push(`${fh.toFixed(1)}× as tall`)
+      else if (fh <= 0.77) says.push(`${Math.round(fh * 100)}% as tall`)
+      const shift = (g.y - top) / h
+      if (Math.abs(shift) >= 0.25) says.push(`set ${Math.abs(Math.round(shift * 100))}% of a box's height ${shift > 0 ? 'lower' : 'higher'}`)
+      return says.length > 0 ? [{ r, says }] : []
+    })
+    // With no clear majority there is no pattern to break.
+    if (odd.length === 0 || odd.length > (row.length - 1) / 2) continue
+    const others = (r: Region) => row.filter(o => o !== r && !odd.some(x => x.r === o)).map(o => `R${o.regionNumber}`).join(', ')
+    for (const { r, says } of odd) out.push(`R${r.regionNumber} is ${says.join(' and ')} compared with ${others(r)}`)
+  }
+  return out
+}
+
 export function describeDrawnSections(
   sectionNames: string[],
   brief: DesignBrief | undefined,
@@ -425,6 +479,13 @@ export function describeDrawnSections(
       } else if (e.role !== 'layout' && e.role !== 'object') {
         lines.push(`- "${e.name}" (${ids(e)}, ${ROLE_TEXT[e.role]}) at ${where(at)}${e.render ? ` — ${e.render}` : ''} — ALREADY PAINTED behind this section by <${SCENE_COMPONENT} />. Do not draw it, import it or cover it: keep that area free of panels, cards and text.`)
       }
+    }
+
+    // Deliberate differences among the drawn boxes, so they aren't evened out.
+    const drawnHere = regions.filter(r => own.some(x => (x.e.role === 'layout' || x.e.role === 'object') && x.e.regions.includes(r.regionNumber)))
+    const irregular = drawnIrregularities(drawnHere)
+    if (irregular.length > 0) {
+      lines.push(`- DRAWN ON PURPOSE — keep these differences; do NOT even the row out into equal items: ${irregular.join('; ')}. Make that item correspondingly bigger, smaller or offset (e.g. its own wider grid span or a taller card).`)
     }
 
     if (lines.length === 0) continue
