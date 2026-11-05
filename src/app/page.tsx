@@ -16,7 +16,7 @@ import './landing.css'
 
 const FAQ: Array<[string, string]> = [
   ['Do I have to draw?', 'Not at all. A sentence is enough to make a complete site. Drawing gives you more control over the layout and the artwork when you want it.'],
-  ['Can I change just one part of my site?', 'Yes. Pick a section, say what to change, and rebuild only that section. Everything else stays as you left it.'],
+  ['Can I change just one part of my site?', 'Yes. Click any words or picture on the built site to change them in place, with no waiting — put your own photos in the same way. For bigger changes, pick a section, say what to change, and rebuild only that section. Everything else stays as you left it.'],
   ['What do I get when I export?', 'A standalone HTML website that runs anywhere, or the React source to take into your own project. Your work remains yours.'],
   ['Will other people see my drawing or prompt?', 'No. A shared link shows only the finished site. Your drawing and your instructions stay in your private workspace.'],
   ['Will two of my sites look the same?', 'No. Each site gets its own typefaces, colours, corners and first screen, and IntentDraw avoids repeating the look of your recent sites.'],
