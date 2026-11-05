@@ -60,3 +60,15 @@ describe('readable ink on solid backgrounds', () => {
     expect(wrapReactForPreview(page, { export: { title: 'x' } })).toContain('__fixPageContrast(__inkRatio)')
   })
 })
+
+describe('the frozen backdrop', () => {
+  it('plays every scroll reveal out before pausing, so sections below the first screen are not blank', () => {
+    const html = wrapReactForPreview('export default function App() { return <h1>Hi</h1> }', { freeze: true })
+    const freeze = html.slice(html.indexOf('function __freeze'))
+    const reveal = freeze.indexOf('t.animation.progress(1)')
+    expect(reveal).toBeGreaterThan(-1)
+    // Revealed before the timeline is paused and before the triggers are killed.
+    expect(reveal).toBeLessThan(freeze.indexOf('globalTimeline.pause()'))
+    expect(reveal).toBeLessThan(freeze.indexOf('t.kill()'))
+  })
+})

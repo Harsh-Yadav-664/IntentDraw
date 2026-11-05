@@ -368,7 +368,21 @@ export function wrapReactForPreview(
     function __freeze() {
       // Read by animation loops the runtime renders itself (IntentScene spheres).
       window.__intentdrawFrozen = true;
-      try { if (window.gsap) { window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.pause(); } } catch (e) {}
+      // Scroll reveals first. A tween owned by a ScrollTrigger is paused until
+      // its trigger is reached, so finishing the global timeline leaves it at
+      // its start — opacity 0 — and killing the trigger then kept every
+      // section below the first screen blank in the backdrop. Each trigger's
+      // reveal (its animation, or the tween its onEnter starts) is played out.
+      try {
+        if (window.ScrollTrigger && window.ScrollTrigger.getAll) {
+          window.ScrollTrigger.getAll().forEach(function(t){
+            try { if (t.vars && typeof t.vars.onEnter === 'function') t.vars.onEnter(t); } catch (e) {}
+            try { if (t.animation) t.animation.progress(1); } catch (e) {}
+          });
+        }
+      } catch (e) {}
+      // Twice: delayed calls fired by the first pass (ScrollTrigger.batch) start tweens of their own.
+      try { if (window.gsap) { window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.pause(); } } catch (e) {}
       try {
         if (window.ScrollTrigger && window.ScrollTrigger.getAll) {
           window.ScrollTrigger.getAll().forEach(function(t){ try { t.kill(); } catch (e) {} });
