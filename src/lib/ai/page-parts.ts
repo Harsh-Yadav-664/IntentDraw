@@ -13,6 +13,7 @@
 import type { Region, RegionGroup } from '@/types'
 import type { DesignBrief } from './brief'
 import { assembleProgressive, splitTopLevelChunks, type AssembleOptions, type AssembleResult } from './assemble'
+import { userImagesOf, withUserImages } from '@/lib/edit/user-images'
 
 /** How much of a per-section rebuild note reaches the model. */
 export const MAX_SECTION_NOTE_CHARS = 300
@@ -120,22 +121,29 @@ function withoutDeclarations(code: string, names: Set<string>): string {
  *   dropped whole, helpers included; in a multi-section block only this
  *   section's declaration goes, so its siblings keep their helpers.
  * - A failed section is simply no longer failed.
+ * - Pictures the user swapped in (edit mode) are carried over to the new block.
  */
 export function replaceSection(parts: PageParts, name: string, code: string, meta: BlockMeta = {}): PageParts {
   if (name === SCENE_NAME) throw new Error('The drawing cannot be rebuilt as a section.')
   if (!parts.sections.includes(name)) throw new Error(`${name} is not a section of this page.`)
 
   const others = new Set([SCENE_NAME, ...parts.sections.filter(s => s !== name)])
-  const newCode = withoutDeclarations(code, others)
+  let newCode = withoutDeclarations(code, others)
+  // Pictures the user put in (edit mode) outlive the block they were set in.
+  let kept: Record<string, string> = {}
 
   const oldBlocks = parts.blocks
     .map(block => {
       if (!block.sections.includes(name)) return block
       const remaining = block.sections.filter(s => s !== name)
-      if (remaining.length === 0) return null
+      if (remaining.length === 0) {
+        kept = { ...kept, ...userImagesOf(block.code) }
+        return null
+      }
       return { ...block, sections: remaining, code: withoutDeclarations(block.code, new Set([name])) }
     })
     .filter((b): b is SectionBlock => b !== null)
+  if (Object.keys(kept).length > 0) newCode = withUserImages(newCode, { ...kept, ...userImagesOf(newCode) })
 
   return {
     ...parts,

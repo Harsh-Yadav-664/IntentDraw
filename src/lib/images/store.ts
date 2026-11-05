@@ -65,10 +65,10 @@ export async function imageExists(config: StoreConfig, path: string): Promise<bo
   return !!res?.ok
 }
 
-export async function uploadImage(config: StoreConfig, path: string, bytes: Uint8Array): Promise<void> {
+export async function uploadImage(config: StoreConfig, path: string, bytes: Uint8Array, contentType: 'image/jpeg' | 'image/png' | 'image/webp' = 'image/jpeg'): Promise<void> {
   const res = await fetch(`${config.url}/storage/v1/object/${IMAGE_BUCKET}/${path}`, {
     method: 'POST',
-    headers: { ...headers(config), 'Content-Type': 'image/jpeg', 'x-upsert': 'true', 'Cache-Control': 'max-age=31536000' },
+    headers: { ...headers(config), 'Content-Type': contentType, 'x-upsert': 'true', 'Cache-Control': 'max-age=31536000' },
     body: Buffer.from(bytes),
     signal: AbortSignal.timeout(15000),
   })
