@@ -89,7 +89,7 @@ Done 2026-10-03: the new interface (landing, sign-in, dashboard, editor, setting
 3. **Real site thumbnails on the dashboard.** Cards show the drawing (or the prompt). A picture of the built site is stronger, but a sandboxed frame can't screenshot itself and a live frame per card is heavy — same blocker as the visual critic (§4.4). Options: one lazily mounted frozen frame for the hovered card, or a server-side render at save time.
 4. **Light theme pass.** Walk every screen in light mode, the editor canvas especially (ghost backdrop opacity, region colours on paper).
 5. **Editor on small screens.** Below 1024px the editor shows "best on a desktop". A read-only view of the built site there would be better than a dead end.
-6. **OG image** for shared links and the landing page; a favicon in the new mark.
+6. ~~**OG image** for shared links and the landing page; a favicon in the new mark.~~ — done 2026-11-05 (`app/opengraph-image.tsx` via next/og, `app/icon.svg`; set `NEXT_PUBLIC_APP_URL` in production so the card's URL is absolute). Shared *generated* sites (`/p/[id]`) still have no card of their own.
 7. ~~**Empty prompt + drawing.**~~ — **done 2026-11-05** (`run-prompt.ts`; shape notes are now parsed in code too, `noteSignals`). The owner's rule is "a short prompt, or none, must be enough", but Generate still requires a sentence. Let a drawing with tags/descriptions build on its own.
 8. **Bring-your-own-key, version history, several screens per project, custom domains, billing** — all shown as "Coming soon" in the app; each is a real feature to build (see §4), not a UI task.
 
