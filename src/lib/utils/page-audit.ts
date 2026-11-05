@@ -60,12 +60,36 @@ export function auditPage(ratio: (a: number[], b: number[]) => number): AuditFin
   }
   const vw = document.documentElement.clientWidth
   const vh = window.innerHeight || 800
+  // Any CSS colour as [r, g, b, a]. Browsers report oklch()/lab()/color()
+  // as written, which the rgb pattern can't read — those are painted onto a
+  // 1px canvas and read back. Null means unknown, never "transparent".
+  let probe: CanvasRenderingContext2D | null = null
   const parse = (c: string) => {
-    const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/.exec(c)
-    if (!m) return null
-    let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
-    if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
-    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    if (!c) return null
+    if (c === 'transparent') return [0, 0, 0, 0]
+    const m = /^rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(c)
+    if (m) {
+      let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
+      if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
+      return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    }
+    try {
+      if (!probe) {
+        const canvas = document.createElement('canvas')
+        canvas.width = 1
+        canvas.height = 1
+        probe = canvas.getContext('2d', { willReadFrequently: true })
+      }
+      if (!probe) return null
+      probe.clearRect(0, 0, 1, 1)
+      probe.fillStyle = '#000'
+      probe.fillStyle = c
+      probe.fillRect(0, 0, 1, 1)
+      const d = probe.getImageData(0, 0, 1, 1).data
+      return [d[0], d[1], d[2], d[3] / 255]
+    } catch {
+      return null
+    }
   }
   const shown = (el: Element) => {
     const s = getComputedStyle(el)
@@ -103,7 +127,11 @@ export function auditPage(ratio: (a: number[], b: number[]) => number): AuditFin
         break
       }
       const c = parse(ns.backgroundColor)
-      if (c && c[3] > 0) {
+      if (!c) {
+        unknown = true
+        break
+      }
+      if (c[3] > 0) {
         // Composite what has been seen so far over this layer.
         const a = bg[3] + c[3] * (1 - bg[3])
         bg = [0, 1, 2].map(i => (bg[i] * bg[3] + c[i] * c[3] * (1 - bg[3])) / (a || 1)).concat([a])
@@ -261,12 +289,36 @@ export function auditNote(findings: AuditFinding[], max = 300): string {
  * Embedded as source text like `auditPage`: self-contained, no destructuring.
  */
 export function fixPageContrast(ratio: (a: number[], b: number[]) => number): number {
+  // Any CSS colour as [r, g, b, a]. Browsers report oklch()/lab()/color()
+  // as written, which the rgb pattern can't read — those are painted onto a
+  // 1px canvas and read back. Null means unknown, never "transparent".
+  let probe: CanvasRenderingContext2D | null = null
   const parse = (c: string) => {
-    const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/.exec(c)
-    if (!m) return null
-    let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
-    if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
-    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    if (!c) return null
+    if (c === 'transparent') return [0, 0, 0, 0]
+    const m = /^rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(c)
+    if (m) {
+      let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
+      if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
+      return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    }
+    try {
+      if (!probe) {
+        const canvas = document.createElement('canvas')
+        canvas.width = 1
+        canvas.height = 1
+        probe = canvas.getContext('2d', { willReadFrequently: true })
+      }
+      if (!probe) return null
+      probe.clearRect(0, 0, 1, 1)
+      probe.fillStyle = '#000'
+      probe.fillStyle = c
+      probe.fillRect(0, 0, 1, 1)
+      const d = probe.getImageData(0, 0, 1, 1).data
+      return [d[0], d[1], d[2], d[3] / 255]
+    } catch {
+      return null
+    }
   }
   let fixed = 0
   document.querySelectorAll('body *').forEach(el => {
@@ -290,7 +342,9 @@ export function fixPageContrast(ratio: (a: number[], b: number[]) => number): nu
       const ns = getComputedStyle(node)
       if ((ns.backgroundImage && ns.backgroundImage !== 'none') || node.classList.contains('intent-scene') || node.querySelector(':scope > .intent-scene')) return
       const c = parse(ns.backgroundColor)
-      if (c && c[3] > 0) {
+      // A colour that can't be read is unknown: leave the text alone.
+      if (!c) return
+      if (c[3] > 0) {
         const a = bg[3] + c[3] * (1 - bg[3])
         bg = [0, 1, 2].map(i => (bg[i] * bg[3] + c[i] * c[3] * (1 - bg[3])) / (a || 1)).concat([a])
         if (a > 0.99) break
