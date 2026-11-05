@@ -115,6 +115,7 @@ Load-bearing details:
 The owner's rule: **a short prompt — or none — must be enough for the drawing to be understood.** For every shape the engine decides WHAT it is (content, text, picture, 3D object, background, decoration, motion path, arrow), WHERE it goes (`anchor`: exact | anywhere | behind) and HOW it behaves, from layered evidence:
 1. **One-click tags** on the shape (`Region.tag`, set from `<RegionIntentChips />` in the Layers panel or by correcting an element in "What I understood"). Final — applied last.
 2. **The prompt, parsed in code** (`promptSignals`): region references, ranges ("R2 to R4"), "and all regions inside it" (expanded by containment), and words for 3D/cube/sphere/background/anywhere/interactive/animated. Survives typos. Enforced on the brief by `reconcile` in brief.ts.
+   **What the user wrote on a shape** (`noteSignals`, source `note`) is parsed the same way and applied after the prompt (a tag still wins): "a 3d rotating cube" typed on R1 builds the code cube exactly like the same words in the prompt. Before this, per-shape notes only reached the model as a quoted hint. A note naming other shapes ("R2 to R4 are my projects") speaks for those; "a photo/picture of me" stays a layout box (a photo slot), never drawn art.
 3. **The model reading the image** (understanding stage).
 4. **Geometry priors** (`geometrySignals`): top strip = nav, full-screen box = background, equal boxes in a row = cards, handwriting = text, circle with marks = globe/emblem. Shown to the model as hints only; dropped when a tag or the prompt already settled the shape.
 - **Role `object`** (forms `cube` | `sphere`): built in code by `objects.ts` (a CSS-3D glass cube in the palette — spins, tilts to the pointer, drag to rotate, click to spin, turns with scroll; the globe as a placed SVG object) and **placed by the page shell** above its section at the drawn box (`lg:left-[x%] lg:top-[y vh] …`), dropping into the flow on phones. Sections are told to keep that spot clear. Objects without a code form are built by the section in that exact slot. A real run filed "region 1 … a 3d rotating cube" as a flat painted shape and built the cube two sections away — that's why objects never go through a model.
@@ -157,7 +158,7 @@ Exact geometry handed to the model was not enough: across real runs, models stil
 
 `npx tsx scripts/diagnose-staged.ts <project.json> [brief.json] [--prompts]` prints the normalized reading, shell, batches and every section's drawing block with zero API calls — use it before spending quota.
 
-This works identically whether the structure came from a drawing or from the prompt alone, so **prompt-only generation is staged too**.
+This works identically whether the structure came from a drawing or from the prompt alone, so **prompt-only generation is staged too**. The reverse holds as well: **a drawing with no prompt builds** (`promptForRun` in `run-prompt.ts` substitutes a neutral drawing-only instruction that names no shape and implies no background, so the shapes, tags and notes decide).
 
 Why it's built this way — all four matter, don't collapse it back into one call:
 - The user sees progress and a partially rendered page instead of a blank two-minute wait. `assembleProgressive()` fills not-yet-built sections with placeholder components so the page can render after every stage.

@@ -511,7 +511,9 @@ function defaultAnchor(role: ElementRole): Anchor {
 function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region[]): BriefElement[] {
   let out = els
   // Tags last: they are the user's final word, over anything the prompt implied.
-  const order = [...signals].sort((x, y) => (x.source === 'tag' ? 1 : 0) - (y.source === 'tag' ? 1 : 0))
+  // A shape's own note is more specific than the prompt, so it applies after it.
+  const rank = (s: IntentSignal) => (s.source === 'tag' ? 2 : s.source === 'note' ? 1 : 0)
+  const order = [...signals].sort((x, y) => rank(x) - rank(y))
   for (const sig of order) {
     if (sig.source === 'geometry' || sig.confidence < 0.85) continue
     const holders = out.filter(e => e.regions.some(n => sig.regions.includes(n)))
@@ -615,7 +617,7 @@ function splitRoundBodies(els: BriefElement[], regions: Region[]): BriefElement[
  * shapes, `reconcile` has already applied this to exactly those.
  */
 function pageWideArt(els: BriefElement[], signals: IntentSignal[], prompt: string): BriefElement[] {
-  if (signals.some(s => s.source === 'prompt' && s.kind === 'background')) return els
+  if (signals.some(s => (s.source === 'prompt' || s.source === 'note') && s.kind === 'background')) return els
   if (!/\b(?:background|backdrop|bg)\b/i.test(prompt) || !PAGE_WIDE.test(prompt.toLowerCase())) return els
   return els.map(e => (e.role === 'illustration' ? { ...e, placement: 'page-background' as const } : e))
 }

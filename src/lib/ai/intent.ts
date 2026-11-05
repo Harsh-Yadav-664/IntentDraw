@@ -37,8 +37,8 @@ export interface IntentSignal {
   animated?: boolean
   /** A background the user wants behind the whole page, not one section. */
   scope?: 'page'
-  source: 'tag' | 'prompt' | 'geometry'
-  /** Tags are 1, explicit prompt references 0.9, geometry priors ≤ 0.6. */
+  source: 'tag' | 'note' | 'prompt' | 'geometry'
+  /** Tags are 1, explicit prompt references and shape notes 0.9, geometry priors ≤ 0.6. */
   confidence: number
   why: string
 }
@@ -119,6 +119,38 @@ function expand(first: string, rest: string): number[] {
   return out
 }
 
+/** What one clause of the user's words says about the shapes it names. */
+function readClause(own: string, clause: string, numbers: number[], regions: Region[]): Omit<IntentSignal, 'source' | 'confidence' | 'why' | 'regions'> & { regions: number[] } {
+    const has = (k: keyof typeof WORDS) => WORDS[k].test(own) || (k === 'object' && WORDS.object.test(clause))
+    let kind: IntentKind | undefined
+    if (has('object')) kind = 'object'
+    else if (has('background')) kind = 'background'
+    else if (has('motion')) kind = 'motion'
+    else if (has('decoration')) kind = 'decoration'
+    else if (has('content')) kind = 'content'
+    else if (has('picture')) kind = 'picture'
+
+    let object: ObjectForm | undefined
+    if (kind === 'object') {
+      if (WORDS.cube.test(clause)) object = 'cube'
+      else if (WORDS.sphere.test(clause)) object = 'sphere'
+      else {
+        const main = regions.find(r => r.regionNumber === numbers[0])
+        object = main?.geometry.type === 'circle' ? 'sphere' : main?.geometry.type === 'rectangle' ? 'cube' : undefined
+      }
+    }
+
+    return {
+      regions: [...new Set(numbers)],
+      kind,
+      anchor: WORDS.anywhere.test(own) ? 'anywhere' : kind === 'background' ? 'behind' : 'exact',
+      object,
+      interactive: WORDS.interactive.test(own) || undefined,
+      animated: WORDS.animated.test(own) || undefined,
+      scope: kind === 'background' && WORDS.pageWide.test(own) ? 'page' : undefined,
+    }
+}
+
 /**
  * Every place the prompt talks about a shape by number, with what it says
  * about it. Only what is said in the clause attached to the reference counts —
@@ -147,40 +179,55 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
       numbers = [...numbers, ...inner.map(r => r.regionNumber)]
     }
 
-    const has = (k: keyof typeof WORDS) => WORDS[k].test(own) || (k === 'object' && WORDS.object.test(clause))
-    let kind: IntentKind | undefined
-    if (has('object')) kind = 'object'
-    else if (has('background')) kind = 'background'
-    else if (has('motion')) kind = 'motion'
-    else if (has('decoration')) kind = 'decoration'
-    else if (has('content')) kind = 'content'
-    else if (has('picture')) kind = 'picture'
-
-    let object: ObjectForm | undefined
-    if (kind === 'object') {
-      if (WORDS.cube.test(clause)) object = 'cube'
-      else if (WORDS.sphere.test(clause)) object = 'sphere'
-      else {
-        const main = regions.find(r => r.regionNumber === numbers[0])
-        object = main?.geometry.type === 'circle' ? 'sphere' : main?.geometry.type === 'rectangle' ? 'cube' : undefined
-      }
-    }
-
+    const read = readClause(own, clause, numbers, regions)
     signals.push({
-      regions: [...new Set(numbers)],
-      kind,
-      anchor: WORDS.anywhere.test(own) ? 'anywhere' : kind === 'background' ? 'behind' : 'exact',
-      object,
-      interactive: WORDS.interactive.test(own) || undefined,
-      animated: WORDS.animated.test(own) || undefined,
-      scope: kind === 'background' && WORDS.pageWide.test(own) ? 'page' : undefined,
+      ...read,
       source: 'prompt',
-      confidence: kind ? 0.9 : 0.6,
+      confidence: read.kind ? 0.9 : 0.6,
       why: `the prompt says: "${prompt.slice(start, end).trim().slice(0, 140)}"`,
     })
   })
   return signals
 }
+
+/**
+ * What the user wrote ON a shape (the selection bar or the Layers panel),
+ * parsed like the prompt. Before this only the model ever read those notes, so
+ * "a 3d rotating cube" typed on R1 was a suggestion while the same words in the
+ * main prompt were enforced — and describing shapes one by one is the whole
+ * point of the per-shape field.
+ *
+ * A note that names other shapes ("R2 to R4 are my projects") speaks for those;
+ * otherwise it speaks for its own shape. "A picture/photo of me" asks for a
+ * photo in a layout box, not for drawn art, so it never becomes `picture`.
+ */
+export function noteSignals(regions: Region[]): IntentSignal[] {
+  const out: IntentSignal[] = []
+  for (const region of regions) {
+    const note = region.intent?.trim()
+    if (!note) continue
+    const named = promptSignals(note, regions)
+    const reads = named.length > 0
+      ? named.map(s => ({ ...s, regions: s.regions }))
+      : [{ ...readClause(note.toLowerCase(), note.toLowerCase(), [region.regionNumber], regions), confidence: 0, source: 'prompt' as const, why: '' }]
+    for (const read of reads) {
+      let kind = read.kind
+      if (kind === 'picture' && PHOTO.test(note)) kind = 'content'
+      out.push({
+        ...read,
+        kind,
+        object: kind === 'object' ? read.object : undefined,
+        anchor: kind === read.kind ? read.anchor : 'exact',
+        source: 'note',
+        confidence: kind ? 0.9 : 0.6,
+        why: `the user's note on R${region.regionNumber}: "${note.slice(0, 120)}"`,
+      })
+    }
+  }
+  return out
+}
+
+const PHOTO = /\b(?:photo|photograph|image|portrait|headshot|picture of|pic of|of me|of us|selfie|logo)\b/i
 
 // =============================================================================
 // Layer 4 — geometry priors
@@ -250,7 +297,7 @@ export function geometrySignals(regions: Region[]): IntentSignal[] {
 // =============================================================================
 
 export function intentSignals(prompt: string, regions: Region[]): IntentSignal[] {
-  const firm = [...tagSignals(regions), ...promptSignals(prompt, regions)].filter(s => s.kind || s.anchor)
+  const firm = [...tagSignals(regions), ...promptSignals(prompt, regions), ...noteSignals(regions)].filter(s => s.kind || s.anchor)
   const settled = new Set(firm.filter(s => s.kind).flatMap(s => s.regions))
   // A geometry guess about a shape the user already explained is just noise.
   const guesses = geometrySignals(regions).filter(s => !s.regions.every(n => settled.has(n)))
@@ -274,8 +321,8 @@ export function describeIntentSignals(signals: IntentSignal[]): string {
       s.interactive ? 'interactive' : null,
       s.animated ? 'animated' : null,
     ].filter(Boolean).join(', ')
-    const label = s.source === 'tag' ? 'USER' : s.source === 'prompt' ? 'PROMPT' : 'GEOMETRY'
+    const label = s.source === 'tag' ? 'USER' : s.source === 'note' ? 'NOTE' : s.source === 'prompt' ? 'PROMPT' : 'GEOMETRY'
     return `- ${ids(s.regions)} → ${what} [${label}: ${s.why}]`
   })
-  return `WHAT CODE ALREADY WORKED OUT (USER items are final; PROMPT items are what the user wrote — follow them; GEOMETRY items are likely but the image may show otherwise):\n${lines.join('\n')}`
+  return `WHAT CODE ALREADY WORKED OUT (USER items are final; PROMPT and NOTE items are what the user wrote, in the prompt or on the shape — follow them; GEOMETRY items are likely but the image may show otherwise):\n${lines.join('\n')}`
 }

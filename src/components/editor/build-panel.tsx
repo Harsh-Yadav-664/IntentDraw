@@ -92,8 +92,8 @@ export function BuildPanel({ onShowOutput, onEditReading, onUpgrade }: { onShowO
   }, [aiProvider])
 
   const generate = async () => {
-    if (!draft.trim()) {
-      toast.warning('Add a sentence about the site first — even a short one.')
+    if (!draft.trim() && regions.length === 0) {
+      toast.warning('Draw something or add a sentence about the site first — even a short one.')
       promptRef.current?.focus()
       return
     }
@@ -124,7 +124,11 @@ export function BuildPanel({ onShowOutput, onEditReading, onUpgrade }: { onShowO
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           disabled={isGenerating}
-          placeholder="Describe the site you want — who it's for, what it sells, how it should feel…"
+          placeholder={
+            regions.length > 0
+              ? 'Optional with a drawing — say who the site is for and how it should feel, or just build from the shapes and what you wrote on them…'
+              : "Describe the site you want — who it's for, what it sells, how it should feel…"
+          }
           className="w-full resize-y rounded-[10px] border border-line bg-surface2 p-3 text-[12.5px] leading-[1.6] text-ink transition-colors duration-150 placeholder:text-faint focus:border-accent disabled:opacity-60"
         />
 

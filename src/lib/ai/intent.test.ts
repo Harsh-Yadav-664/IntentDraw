@@ -82,3 +82,45 @@ describe('the cube run, end to end in code', () => {
     expect(block).not.toMatch(/painted behind/)
   })
 })
+
+describe('what the user wrote on a shape, parsed like the prompt', () => {
+  it('builds the cube from a note on R1 with a prompt that says nothing about it', () => {
+    const noted = cubeRegions.map(r => ({ ...r, intent: 'a 3d rotating cube, interactive with the mouse' }))
+    const prompt = 'a dark portfolio website, green and glassy'
+    const brief = normalizeBrief(cube.brief, noted, prompt)
+    const el = brief.drawing.elements.find(e => e.regions.includes(1))!
+    expect(el).toMatchObject({ role: 'object', form: 'cube', anchor: 'exact' })
+    expect(describeIntentSignals(intentSignals(prompt, noted))).toMatch(/R1 → 3D object \(cube\).*\[NOTE: the user's note on R1/)
+  })
+
+  it('reads "a photo of me" as a box for a photo, never as drawn art', () => {
+    const shapes = [box(1, 100, 100, 300, 300), box(2, 500, 100, 300, 300)]
+    shapes[0].intent = 'a picture of me'
+    shapes[1].intent = 'a painted landscape picture with mountains'
+    const [photo, art] = intentSignals('', shapes).filter(s => s.source === 'note')
+    expect(photo).toMatchObject({ regions: [1], kind: 'content', anchor: 'exact' })
+    expect(art).toMatchObject({ regions: [2], kind: 'picture' })
+  })
+
+  it('lets a note speak for the shapes it names', () => {
+    const shapes = [box(1, 0, 0, 1280, 700), box(2, 100, 100, 200, 200), box(3, 400, 100, 200, 200)]
+    shapes[0].intent = 'R2 to R3 are my project cards'
+    const notes = intentSignals('', shapes).filter(s => s.source === 'note')
+    expect(notes).toHaveLength(1)
+    expect(notes[0]).toMatchObject({ regions: [2, 3], kind: 'content' })
+  })
+
+  it('applies a note after the prompt, and a one-click tag after both', () => {
+    const shapes = [box(1, 100, 100, 300, 300)]
+    shapes[0].intent = 'the background behind everything'
+    const brief = normalizeBrief({}, shapes, 'make region 1 a 3d cube')
+    expect(brief.drawing.elements.find(e => e.regions.includes(1))?.role).not.toBe('object')
+    const tagged = [{ ...shapes[0], tag: { kind: 'object' as const } }]
+    expect(normalizeBrief({}, tagged, 'make region 1 a 3d cube').drawing.elements.find(e => e.regions.includes(1))?.role).toBe('object')
+  })
+
+  it('changes nothing when no shape has a note — the prompt-only path is untouched', () => {
+    expect(intentSignals('a bakery', [])).toEqual([])
+    expect(intentSignals(cube.prompt, cubeRegions).some(s => s.source === 'note')).toBe(false)
+  })
+})

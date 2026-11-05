@@ -157,7 +157,7 @@ export function Editor({ projectId, isPublic, onPublicChange }: { projectId: str
   const setView = (v: 'design' | 'output') => setViewMode(v === 'output' ? 'preview' : 'canvas')
 
   const generate = () => {
-    if (isGenerating || !prompt.trim()) return
+    if (isGenerating || (!prompt.trim() && useCanvasStore.getState().regions.length === 0)) return
     void generateCode()
   }
   useKeyboardShortcuts({ enabled: view === 'design', onGenerate: generate })

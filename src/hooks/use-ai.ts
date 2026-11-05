@@ -5,6 +5,7 @@ import { assembleProgressive } from '@/lib/ai/assemble'
 import { assembleParts, cleanMeta, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
 import type { DesignBrief } from '@/lib/ai/brief'
 import { withImageMap } from '@/lib/images/slots'
+import { promptForRun } from '@/lib/ai/run-prompt'
 import { laneWidth, resolveProvider, type ProviderName } from '@/lib/ai/provider-choice'
 
 /**
@@ -104,9 +105,9 @@ export function useAI() {
     // Read at call time, not from this render's closure: the prompt composer
     // flushes its debounced draft into the store and calls this in the same
     // tick, so the closure's `prompt` would still be the previous text.
-    const prompt = useWorkflowStore.getState().prompt
-    if (!prompt.trim()) {
-      setError('Please enter a prompt describing your design.')
+    const prompt = promptForRun(useWorkflowStore.getState().prompt, regions)
+    if (!prompt) {
+      setError('Draw something or write a sentence about the site first.')
       return false
     }
     if (activeRun) return false
