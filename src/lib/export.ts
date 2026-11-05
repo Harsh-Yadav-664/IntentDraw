@@ -22,9 +22,22 @@ export function slugify(name: string): string {
   return slug || 'website'
 }
 
-/** A single HTML file that runs in any browser: open it, or upload it to any static host. */
-export function exportHtml(code: string, projectName: string, appOrigin?: string): string {
-  return wrapReactForPreview(code, { export: { title: projectName }, appOrigin })
+/** What a published page says about itself: the site's own name and the brief's one-line summary. */
+export interface SiteMeta {
+  brand?: string | null
+  summary?: string | null
+}
+
+/**
+ * A single HTML file that runs in any browser: open it, or upload it to any
+ * static host. Titled with the site's own name when the brief has one (the
+ * project name is the user's working title), with a description and link
+ * preview tags from the brief's summary.
+ */
+export function exportHtml(code: string, projectName: string, appOrigin?: string, meta: SiteMeta = {}): string {
+  const brand = typeof meta.brand === 'string' ? meta.brand.trim() : ''
+  const summary = typeof meta.summary === 'string' ? meta.summary.trim() : ''
+  return wrapReactForPreview(code, { export: { title: brand || projectName, description: summary || undefined }, appOrigin })
 }
 
 /**

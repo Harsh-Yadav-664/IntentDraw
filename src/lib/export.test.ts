@@ -39,7 +39,9 @@ describe('export', () => {
 
   it('exports a website whose links work, unlike the preview', () => {
     const site = exportHtml(PAGE, 'Tiles <Co>')
-    expect(site).toContain('<title>Tiles Co</title>')
+    // Escaped, so the name shows as written and can't inject markup.
+    expect(site).toContain('<title>Tiles &lt;Co&gt;</title>')
+    expect(site).not.toContain('<Co>')
     expect(site).not.toContain('e.preventDefault(); e.stopPropagation();')
 
     const preview = wrapReactForPreview(PAGE)
@@ -90,5 +92,23 @@ describe('the .tsx export carries the pictures the preview shows', () => {
     const out = exportSource(code, 'Cafe')
     expect(out).toMatch(/300x200\/bread\/2 {2}→ {2}https:\/\/x\.supabase\.co/)
     expect(resolvePictures(PICTURE_PAGE)).toEqual({ code: PICTURE_PAGE, unresolved: [] })
+  })
+})
+
+describe('a published page says what it is', () => {
+  const page = 'export default function App() { return <h1>Hi</h1> }'
+
+  it('is titled with the site name and carries a description and link-preview tags', () => {
+    const html = exportHtml(page, 'cafe test 3', undefined, { brand: 'Marrow & Ash', summary: 'A twelve-seat wood-fire kitchen in Porto. "Book" tonight <now>.' })
+    expect(html).toContain('<title>Marrow &amp; Ash</title>')
+    expect(html).toContain('<meta name="description" content="A twelve-seat wood-fire kitchen in Porto. &quot;Book&quot; tonight &lt;now&gt;.">')
+    expect(html).toContain('<meta property="og:title" content="Marrow &amp; Ash">')
+    expect(html).toContain('<meta property="og:description"')
+  })
+
+  it('falls back to the project name, and the editor preview carries none of it', () => {
+    expect(exportHtml(page, 'Tiles Co')).toContain('<title>Tiles Co</title>')
+    expect(exportHtml(page, 'Tiles Co')).not.toContain('name="description"')
+    expect(wrapReactForPreview(page)).not.toContain('og:title')
   })
 })

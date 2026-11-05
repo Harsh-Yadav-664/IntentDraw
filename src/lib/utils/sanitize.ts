@@ -88,7 +88,7 @@ export function wrapReactForPreview(
     /** Overrides the detected origin, e.g. when rendering outside the app. */
     appOrigin?: string
     /** A file the user downloads and publishes, rather than the in-app preview. */
-    export?: { title?: string }
+    export?: { title?: string; description?: string }
     /**
      * What a keyword image becomes: `art` (default) — a composition drawn in
      * code in the site's palette (image-art.ts); `photos` — a stock photo via
@@ -131,7 +131,21 @@ export function wrapReactForPreview(
       e.preventDefault(); e.stopPropagation();
     }, true);
   `;
-  const title = (options?.export?.title || 'Website').replace(/[<>&"]/g, '').slice(0, 120);
+  // Escaped, not stripped: "Marrow & Ash" is a name, not an injection.
+  const escapeHtml = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const title = escapeHtml((options?.export?.title || 'Website').replace(/\s+/g, ' ').trim().slice(0, 120));
+  // A site that is published needs to say what it is: search results and link
+  // previews read these. Exports only — the editor's frame is never shared.
+  const description = escapeHtml((options?.export?.description || '').replace(/\s+/g, ' ').trim().slice(0, 200));
+  const shareMeta = options?.export
+    ? [
+        description ? `<meta name="description" content="${description}">` : '',
+        `<meta property="og:type" content="website">`,
+        `<meta property="og:title" content="${title}">`,
+        description ? `<meta property="og:description" content="${description}">` : '',
+        `<meta name="twitter:card" content="summary">`,
+      ].filter(Boolean).join('\n  ')
+    : '';
 
   const systemScript = `
     // Functions below are embedded from the app's own source (fn.toString()).
@@ -633,6 +647,7 @@ if (typeof window.__RenderComponent !== "undefined") {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
+  ${shareMeta}
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
