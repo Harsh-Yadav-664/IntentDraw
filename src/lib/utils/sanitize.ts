@@ -297,9 +297,19 @@ export function wrapReactForPreview(
           var h = c.slice(1); if (h.length === 3) h = h.replace(/./g, '$&$&');
           var n = parseInt(h, 16); return isNaN(n) ? null : [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
         }
-        var m = c.match(/[\\d.]+/g);
-        if (!m || m.length < 3) return null;
-        return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+        if (c.indexOf('rgb') === 0) {
+          var m = c.match(/[\\d.]+/g);
+          if (!m || m.length < 3) return null;
+          return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+        }
+        // oklch()/lab()/color(): painted on a 1px canvas and read back.
+        try {
+          var cv = document.createElement('canvas'); cv.width = 1; cv.height = 1;
+          var cx = cv.getContext('2d'); if (!cx) return null;
+          cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+          var d = cx.getImageData(0, 0, 1, 1).data;
+          return [d[0], d[1], d[2], d[3] / 255];
+        } catch (e) { return null; }
       }
       function lum(c) {
         var v = [c[0], c[1], c[2]].map(function(x) { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
