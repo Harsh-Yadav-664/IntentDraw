@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
-import { cloudflareImageConfig, generateFluxImage } from '@/lib/images/cloudflare'
+import { AllowanceSpentError, cloudflareImageConfig, generateFluxImage, imageAllowanceSpent } from '@/lib/images/cloudflare'
 import { findImageSlots, imagePrompt, type ImageSlot } from '@/lib/images/slots'
 import { ensureImageBucket, imageExists, imagePath, imageStoreConfig, publicImageUrl, uploadImage } from '@/lib/images/store'
 
@@ -45,6 +45,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ success: true, data: { images: {}, skipped: 'not configured' } })
   }
 
+  if (imageAllowanceSpent()) {
+    // Today's free images are used up: the page draws its pictures in code until the reset.
+    return NextResponse.json({ success: true, data: { images: {}, skipped: 'daily allowance spent' } })
+  }
+
   // One picture per subject: a carousel often shows the same dish at two sizes,
   // and the model's output is square anyway — every size maps to one image.
   const bySubject = new Map<string, ImageSlot[]>()
@@ -79,13 +84,15 @@ export async function POST(request: Request) {
       for (const slot of slots) images[slot.key] = publicImageUrl(store, path)
     } catch (error) {
       failures.push(error instanceof Error ? error.message : String(error))
+      if (error instanceof AllowanceSpentError) spent = true
     }
   }
 
+  let spent = false
   const queue = [...subjects]
   await Promise.all(
     Array.from({ length: Math.min(PARALLEL, queue.length) }, async () => {
-      for (let next = queue.shift(); next && !deadline.aborted; next = queue.shift()) await make(next)
+      for (let next = queue.shift(); next && !deadline.aborted && !spent; next = queue.shift()) await make(next)
     })
   )
   if (failures.length > 0) console.warn(`[api/generate/images] ${failures.length}/${subjects.length} failed:`, failures[0])
