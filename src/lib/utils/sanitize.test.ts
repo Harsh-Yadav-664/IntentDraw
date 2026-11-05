@@ -52,3 +52,11 @@ describe('edit mode and legibility in the runtime', () => {
     expect(wrapReactForPreview(page)).toContain('worst >= (large ? 3 : 4.5)')
   })
 })
+
+describe('readable ink on solid backgrounds', () => {
+  it('runs the contrast fixer in the preview and in exported sites', () => {
+    const page = 'export default function App() { return <h1>Hi</h1> }'
+    expect(wrapReactForPreview(page)).toContain('__fixPageContrast(__inkRatio)')
+    expect(wrapReactForPreview(page, { export: { title: 'x' } })).toContain('__fixPageContrast(__inkRatio)')
+  })
+})

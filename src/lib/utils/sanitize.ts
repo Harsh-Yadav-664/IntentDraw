@@ -3,7 +3,7 @@ import { softenSceneOverlays } from '@/lib/ai/repair'
 import { rewriteImageUrl } from './image-url'
 import { fontHead } from '@/lib/design/fonts'
 import { artImage, keywordImage, NEUTRAL_ART_PALETTE, readPaletteMarker } from './image-art'
-import { auditPage, contrastRatio } from './page-audit'
+import { auditPage, contrastRatio, fixPageContrast } from './page-audit'
 import { imageKey } from '@/lib/images/slots'
 import { editModeRuntime } from '@/lib/edit/frame-edit'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
@@ -322,6 +322,15 @@ export function wrapReactForPreview(
       }
     }
     window.addEventListener('load', function(){ setTimeout(__legibleOverArt, 300); setTimeout(__legibleOverArt, 2500); });
+    // Text unreadable on the solid colour behind it gets its own ink nudged
+    // until it reads (page-audit.ts) — previews and exported sites alike. Twice:
+    // once things render, once entrance animations have settled.
+    var __inkRatio = (${contrastRatio.toString()});
+    var __fixPageContrast = (${fixPageContrast.toString()});
+    window.addEventListener('load', function(){
+      setTimeout(function(){ try { __fixPageContrast(__inkRatio); } catch (e) {} }, 600);
+      setTimeout(function(){ try { __fixPageContrast(__inkRatio); } catch (e) {} }, 2800);
+    });
     ${options?.export || options?.freeze ? '' : `
     // Edit mode (lib/edit/frame-edit.ts): off until the editor turns it on.
     (${editModeRuntime.toString()})();`}

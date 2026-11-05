@@ -229,3 +229,77 @@ export function auditNote(findings: AuditFinding[], max = 300): string {
   }
   return note.replace(/; $/, '.')
 }
+
+/**
+ * Text that fails contrast against the solid colour behind it, fixed in place.
+ *
+ * The audit above only reports; a dark-grey name on a near-black section still
+ * shipped. Here the text's own colour is moved toward white or black — in small
+ * steps, only as far as WCAG needs (4.5:1, or 3:1 for large text) — so its hue
+ * and the design survive and only the unreadable ink changes. Runs in the
+ * preview and in exported sites, before the audit, so what is fixed is not
+ * also reported.
+ *
+ * Never touched: gradient or clipped text, text over images, gradients or the
+ * user's drawing (unknowable from CSS — the drawing has its own halo), and
+ * nearly transparent text (a reveal still running).
+ *
+ * Embedded as source text like `auditPage`: self-contained, no destructuring.
+ */
+export function fixPageContrast(ratio: (a: number[], b: number[]) => number): number {
+  const parse = (c: string) => {
+    const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/.exec(c)
+    if (!m) return null
+    let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
+    if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
+    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+  }
+  let fixed = 0
+  document.querySelectorAll('body *').forEach(el => {
+    if (/^(SCRIPT|STYLE|NOSCRIPT|SVG|TITLE|OPTION)$/i.test(el.tagName) || el.closest('svg, .intent-scene, [data-intentdraw-editing]')) return
+    let own = false
+    for (let i = 0; i < el.childNodes.length; i++) {
+      const node = el.childNodes[i]
+      if (node.nodeType === 3 && (node.textContent || '').trim().length > 1) own = true
+    }
+    if (!own) return
+    const s = getComputedStyle(el)
+    if (s.display === 'none' || s.visibility === 'hidden') return
+    if (s.textShadow && s.textShadow !== 'none') return
+    const clip = s.getPropertyValue('-webkit-background-clip') || s.getPropertyValue('background-clip')
+    const fill = parse(s.getPropertyValue('-webkit-text-fill-color') || '')
+    if (clip === 'text' || (fill && fill[3] < 0.5)) return
+    const fg = parse(s.color)
+    if (!fg || fg[3] < 0.5) return
+    let bg = [0, 0, 0, 0]
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      const ns = getComputedStyle(node)
+      if ((ns.backgroundImage && ns.backgroundImage !== 'none') || node.classList.contains('intent-scene') || node.querySelector(':scope > .intent-scene')) return
+      const c = parse(ns.backgroundColor)
+      if (c && c[3] > 0) {
+        const a = bg[3] + c[3] * (1 - bg[3])
+        bg = [0, 1, 2].map(i => (bg[i] * bg[3] + c[i] * c[3] * (1 - bg[3])) / (a || 1)).concat([a])
+        if (a > 0.99) break
+      }
+    }
+    if (bg[3] < 0.99) bg = [0, 1, 2].map(i => bg[i] * bg[3] + 255 * (1 - bg[3])).concat([1])
+    const text = [0, 1, 2].map(i => fg[i] * fg[3] + bg[i] * (1 - fg[3]))
+    const size = parseFloat(s.fontSize) || 16
+    const large = size >= 24 || (size >= 18.6 && (parseInt(s.fontWeight, 10) || 400) >= 700)
+    const need = large ? 3 : 4.5
+    if (ratio(text, bg) >= need - 0.05) return
+    // Toward whichever end can be read on this background.
+    const end = ratio([255, 255, 255], bg) >= ratio([0, 0, 0], bg) ? 255 : 0
+    for (let k = 1; k <= 25; k++) {
+      const t = k / 25
+      const next = text.map(v => Math.round(v + (end - v) * t))
+      if (ratio(next, bg) >= need || k === 25) {
+        ;(el as HTMLElement).style.setProperty('color', 'rgb(' + next.join(',') + ')', 'important')
+        el.setAttribute('data-ink-fixed', '')
+        fixed++
+        return
+      }
+    }
+  })
+  return fixed
+}
