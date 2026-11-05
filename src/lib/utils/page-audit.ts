@@ -11,9 +11,11 @@
  * finding as its note — the same path as ai-look.ts.
  *
  * Rules that keep it honest:
- *   - Animations are ignored, not waited for: opacity is not read and the
- *     check runs once things settle, because a ScrollTrigger reveal keeps
- *     content below the fold transparent until it is scrolled to.
+ *   - Animations are ignored, not waited for: opacity is not read for
+ *     contrast and the check runs once things settle, because a ScrollTrigger
+ *     reveal keeps content below the fold transparent until it is scrolled to.
+ *     For the same reason, text that is currently invisible never counts as
+ *     overlapping: an unrevealed item is still offset by its entrance.
  *   - Text over a background image, a gradient or the user's drawing is
  *     skipped for contrast (unknowable from CSS; the drawing has its own halo).
  *
@@ -127,11 +129,23 @@ export function auditPage(ratio: (a: number[], b: number[]) => number): AuditFin
     add('overflow', wide || null, `the page is ${document.documentElement.scrollWidth - vw}px wider than the window — something overflows sideways`)
   }
 
-  // 3. Text drawn over other text.
-  for (let i = 0; i < texts.length; i++) {
-    for (let j = i + 1; j < texts.length; j++) {
-      const a = texts[i]
-      const b = texts[j]
+  // 3. Text drawn over other text. Only text a reader can see: a scroll reveal
+  // that hasn't fired yet keeps its items invisible AND still offset (a card
+  // waiting to slide in sits 100px over its neighbour), which is not a broken
+  // layout — and "broken" findings can trigger an automatic rebuild.
+  const faded = (el: Element) => {
+    let alpha = 1
+    for (let node: Element | null = el; node && node !== document.body; node = node.parentElement) {
+      alpha *= parseFloat(getComputedStyle(node).opacity) || 0
+      if (alpha < 0.05) return true
+    }
+    return false
+  }
+  const visible = texts.filter(t => !faded(t.el))
+  for (let i = 0; i < visible.length; i++) {
+    for (let j = i + 1; j < visible.length; j++) {
+      const a = visible[i]
+      const b = visible[j]
       if (a.el.contains(b.el) || b.el.contains(a.el)) continue
       const w = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left)
       const h = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top)
