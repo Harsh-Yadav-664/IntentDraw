@@ -112,3 +112,17 @@ describe('a published page says what it is', () => {
     expect(wrapReactForPreview(page)).not.toContain('og:title')
   })
 })
+
+describe('the share link preview image', () => {
+  const page = 'export default function App() { return <h1>Hi</h1> }'
+
+  it('is set only when the share route passes a real URL, and switches the card to a large image', () => {
+    const shared = exportHtml(page, 'x', 'https://app.example', { brand: 'Cafe', image: 'https://app.example/p/1/card' })
+    expect(shared).toContain('<meta property="og:image" content="https://app.example/p/1/card">')
+    expect(shared).toContain('<meta name="twitter:card" content="summary_large_image">')
+    expect(exportHtml(page, 'x', undefined, { image: 'javascript:alert(1)' })).not.toContain('og:image')
+    expect(exportHtml(page, 'x', undefined, { image: 'https://a.b/c" onload="x' })).not.toContain('og:image')
+    // A download carries no image that depends on our server.
+    expect(exportHtml(page, 'x')).not.toContain('og:image')
+  })
+})

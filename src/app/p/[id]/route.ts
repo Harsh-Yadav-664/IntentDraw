@@ -49,7 +49,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!project || !project.is_public || !project.generated_code) return notFound()
 
   const origin = new URL(request.url).origin
-  const html = exportHtml(project.generated_code, project.name, origin, { brand: project.brand, summary: project.summary })
+  const html = exportHtml(project.generated_code, project.name, origin, { brand: project.brand, summary: project.summary, image: `${origin}/p/${id}/card` })
 
   return new Response(html, {
     headers: {

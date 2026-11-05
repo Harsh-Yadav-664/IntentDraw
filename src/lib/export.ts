@@ -26,6 +26,8 @@ export function slugify(name: string): string {
 export interface SiteMeta {
   brand?: string | null
   summary?: string | null
+  /** Link-preview image URL — only the share route sets it (downloads stay self-contained). */
+  image?: string | null
 }
 
 /**
@@ -37,7 +39,7 @@ export interface SiteMeta {
 export function exportHtml(code: string, projectName: string, appOrigin?: string, meta: SiteMeta = {}): string {
   const brand = typeof meta.brand === 'string' ? meta.brand.trim() : ''
   const summary = typeof meta.summary === 'string' ? meta.summary.trim() : ''
-  return wrapReactForPreview(code, { export: { title: brand || projectName, description: summary || undefined }, appOrigin })
+  return wrapReactForPreview(code, { export: { title: brand || projectName, description: summary || undefined, image: meta.image || undefined }, appOrigin })
 }
 
 /**

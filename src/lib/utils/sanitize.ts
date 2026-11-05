@@ -88,7 +88,7 @@ export function wrapReactForPreview(
     /** Overrides the detected origin, e.g. when rendering outside the app. */
     appOrigin?: string
     /** A file the user downloads and publishes, rather than the in-app preview. */
-    export?: { title?: string; description?: string }
+    export?: { title?: string; description?: string; image?: string }
     /**
      * What a keyword image becomes: `art` (default) — a composition drawn in
      * code in the site's palette (image-art.ts); `photos` — a stock photo via
@@ -137,13 +137,17 @@ export function wrapReactForPreview(
   // A site that is published needs to say what it is: search results and link
   // previews read these. Exports only — the editor's frame is never shared.
   const description = escapeHtml((options?.export?.description || '').replace(/\s+/g, ' ').trim().slice(0, 200));
+  // Only an absolute https URL (the share route's card) — never anything a page could inject.
+  const rawImage = options?.export?.image || '';
+  const image = /^https?:\/\/[^\s"'<>]+$/.test(rawImage) ? escapeHtml(rawImage) : '';
   const shareMeta = options?.export
     ? [
         description ? `<meta name="description" content="${description}">` : '',
         `<meta property="og:type" content="website">`,
         `<meta property="og:title" content="${title}">`,
         description ? `<meta property="og:description" content="${description}">` : '',
-        `<meta name="twitter:card" content="summary">`,
+        image ? `<meta property="og:image" content="${image}">` : '',
+        `<meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}">`,
       ].filter(Boolean).join('\n  ')
     : '';
 
