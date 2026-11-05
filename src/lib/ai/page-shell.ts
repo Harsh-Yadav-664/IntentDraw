@@ -127,6 +127,18 @@ export function batchPlan(sections: string[], drawn: string[]): string[][] {
   return batches
 }
 
+/**
+ * Where a placed 3D object sits on a phone, where the page is one column: on
+ * the side it was drawn on (a left or right third), at a size following how
+ * big it was drawn. It used to be a centred 16rem square whatever was drawn.
+ */
+export function mobileObjectBox(at: { left: number; width: number }): string {
+  const centre = at.left + at.width / 2
+  const side = centre < 35 ? 'ml-6 mr-auto' : centre > 65 ? 'ml-auto mr-6' : 'mx-auto'
+  const size = at.width < 18 ? 'h-48 w-48' : at.width > 40 ? 'h-72 w-72' : 'h-64 w-64'
+  return `${side} ${size}`
+}
+
 export const BOUNDARY = 'SectionBoundary'
 
 /**
@@ -181,7 +193,7 @@ export function buildPageShell(
         const at = placementOf(o.element, regions)
         if (!at) return ''
         const box = `lg:absolute lg:m-0 lg:left-[${pct(at.left)}] lg:top-[${vh(at.top)}] lg:w-[${pct(at.width)}] lg:h-[${vh(at.height)}]`
-        return `            <div className="pointer-events-auto relative mx-auto my-10 h-64 w-64 ${box}"><${o.name} /></div>`
+        return `            <div className="pointer-events-auto relative my-10 ${mobileObjectBox(at)} ${box}"><${o.name} /></div>`
       })
       .filter(Boolean)
 

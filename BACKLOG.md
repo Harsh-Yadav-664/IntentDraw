@@ -78,7 +78,7 @@ Items marked **(R#)** come from the 2026-10-02 research (§5); the full evidence
 2. ~~**Words that point without numbers:**~~ — **done 2026-11-05** (`describedSignals` in intent.ts: "the circle", "the big box", "the box on the right"; resolved only when the words pick exactly one shape). "the circle", "the box on the right", "the big one" → resolve to shapes by type, position and size.
 3. **Ask when unsure (R3):** when the model and the priors disagree with low confidence, show the question as tag chips in "What I understood" before building (or build with the best guess and highlight it).
 4. **Learn from corrections:** every tag the user changes after a generation is a labelled example of a misread — log them (R15) to tune priors and the prompt.
-5. **Mobile placement for objects** is a centred 16rem square under the section; let the drawing's relative position steer it.
+5. ~~**Mobile placement for objects**~~ — done 2026-11-05 (`mobileObjectBox`: the drawn side and size steer the phone layout). Was: is a centred 16rem square under the section; let the drawing's relative position steer it.
 
 ## 3. The app's own UI
 
