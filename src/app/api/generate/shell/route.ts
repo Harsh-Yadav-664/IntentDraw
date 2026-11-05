@@ -71,7 +71,7 @@ export async function POST(request: Request) {
     // client, so it is re-validated rather than trusted. A caller that skipped
     // that stage gets it run here instead.
     const brief = sentBrief
-      ? normalizeBrief(sentBrief, rawRegions, finalPrompt)
+      ? normalizeBrief(sentBrief, rawRegions, finalPrompt, validGroups)
       : await understandRequest({
           prompt: finalPrompt,
           regions: rawRegions,

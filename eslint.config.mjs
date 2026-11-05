@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Ad hoc manual debug scripts at the root (CommonJS, not shipped, not CI).
+    "test-limits.js",
+    "test-supabase.js",
+    "check-users.js",
+    "setup-dev-user.js",
   ]),
 ]);
 

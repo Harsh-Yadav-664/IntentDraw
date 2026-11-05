@@ -5,7 +5,7 @@ import dynamic from 'next/dynamic'
 import Link from 'next/link'
 import { motion } from 'framer-motion'
 import { ArrowLeft, Check, ChevronsRight, Layers, Monitor, Pencil, Share2, WifiOff } from 'lucide-react'
-import { Button, ButtonLink, Segmented, cx } from '@/components/kit/kit'
+import { Button, Segmented, cx } from '@/components/kit/kit'
 import { LogoMark } from '@/components/kit/sketch'
 import { useCanvasStore } from '@/store/canvas-store'
 import { useWorkflowStore } from '@/store/workflow-store'
@@ -20,6 +20,7 @@ import { ShareDialog } from './share-dialog'
 import { UpgradeDialog } from './upgrade-dialog'
 import { ReadingDialog } from './reading-dialog'
 import { IssueButton, IssueDialog, IssueNotice, useIssueWatcher } from './issue'
+import { SmallScreenView } from './small-screen'
 
 // Konva needs browser APIs.
 const DrawingCanvas = dynamic(() => import('@/components/canvas/drawing-canvas'), {
@@ -157,7 +158,7 @@ export function Editor({ projectId, isPublic, onPublicChange }: { projectId: str
   const setView = (v: 'design' | 'output') => setViewMode(v === 'output' ? 'preview' : 'canvas')
 
   const generate = () => {
-    if (isGenerating || !prompt.trim()) return
+    if (isGenerating || (!prompt.trim() && useCanvasStore.getState().regions.length === 0)) return
     void generateCode()
   }
   useKeyboardShortcuts({ enabled: view === 'design', onGenerate: generate })
@@ -283,29 +284,20 @@ export function Editor({ projectId, isPublic, onPublicChange }: { projectId: str
       </div>
 
       {/* ============================ small screens ============================ */}
-      <div className="fixed inset-0 z-[70] overflow-y-auto bg-bg px-6 py-10 lg:hidden">
-        <div className="flex items-center gap-2">
-          <LogoMark size={18} />
-          <span className="font-display text-[20px]">IntentDraw</span>
-        </div>
-        <h1 className="mt-8 text-[28px] leading-tight text-ink">The editor is best on a desktop.</h1>
-        <p className="mt-4 max-w-[46ch] text-[13.5px] leading-[1.75] text-muted">Drawing and the build panel need a screen at least 1024px wide. Your project is saved — open it on a larger screen to keep going.</p>
-        <div className="mt-8 flex flex-wrap gap-2">
-          <ButtonLink href="/dashboard" variant="primary">
-            Back to projects
-          </ButtonLink>
-          {isPublic && hasOutput && (
-            <a href={`/p/${projectId}`} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center rounded-[10px] border border-line2 px-4 text-[13px] text-ink">
-              Open the live site
-            </a>
-          )}
-        </div>
-      </div>
+      <SmallScreenView onShare={() => setShareOpen(true)} />
 
       <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} projectId={projectId} hasOutput={hasOutput} onChange={onPublicChange} />
       <UpgradeDialog open={upgradeOpen} onClose={() => setUpgradeOpen(false)} usage={stats} />
       <IssueDialog open={issueOpen} onClose={() => setIssueOpen(false)} />
-      <ReadingDialog open={readingOpen} onClose={() => setReadingOpen(false)} onGenerate={generate} generating={isGenerating} />
+      <ReadingDialog
+        open={readingOpen}
+        onClose={() => setReadingOpen(false)}
+        // Only tags change in the dialog, so the reading itself is reused (no understanding call).
+        onGenerate={() => {
+          if (!isGenerating) void generateCode({ reuseReading: true })
+        }}
+        generating={isGenerating}
+      />
     </div>
   )
 }

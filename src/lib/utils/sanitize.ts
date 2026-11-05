@@ -3,8 +3,9 @@ import { softenSceneOverlays } from '@/lib/ai/repair'
 import { rewriteImageUrl } from './image-url'
 import { fontHead } from '@/lib/design/fonts'
 import { artImage, keywordImage, NEUTRAL_ART_PALETTE, readPaletteMarker } from './image-art'
-import { auditPage, contrastRatio } from './page-audit'
+import { auditPage, contrastRatio, fixPageContrast } from './page-audit'
 import { imageKey } from '@/lib/images/slots'
+import { editModeRuntime } from '@/lib/edit/frame-edit'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -87,7 +88,7 @@ export function wrapReactForPreview(
     /** Overrides the detected origin, e.g. when rendering outside the app. */
     appOrigin?: string
     /** A file the user downloads and publishes, rather than the in-app preview. */
-    export?: { title?: string }
+    export?: { title?: string; description?: string; image?: string }
     /**
      * What a keyword image becomes: `art` (default) — a composition drawn in
      * code in the site's palette (image-art.ts); `photos` — a stock photo via
@@ -130,7 +131,25 @@ export function wrapReactForPreview(
       e.preventDefault(); e.stopPropagation();
     }, true);
   `;
-  const title = (options?.export?.title || 'Website').replace(/[<>&"]/g, '').slice(0, 120);
+  // Escaped, not stripped: "Marrow & Ash" is a name, not an injection.
+  const escapeHtml = (v: string) => v.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const title = escapeHtml((options?.export?.title || 'Website').replace(/\s+/g, ' ').trim().slice(0, 120));
+  // A site that is published needs to say what it is: search results and link
+  // previews read these. Exports only — the editor's frame is never shared.
+  const description = escapeHtml((options?.export?.description || '').replace(/\s+/g, ' ').trim().slice(0, 200));
+  // Only an absolute https URL (the share route's card) — never anything a page could inject.
+  const rawImage = options?.export?.image || '';
+  const image = /^https?:\/\/[^\s"'<>]+$/.test(rawImage) ? escapeHtml(rawImage) : '';
+  const shareMeta = options?.export
+    ? [
+        description ? `<meta name="description" content="${description}">` : '',
+        `<meta property="og:type" content="website">`,
+        `<meta property="og:title" content="${title}">`,
+        description ? `<meta property="og:description" content="${description}">` : '',
+        image ? `<meta property="og:image" content="${image}">` : '',
+        `<meta name="twitter:card" content="${image ? 'summary_large_image' : 'summary'}">`,
+      ].filter(Boolean).join('\n  ')
+    : '';
 
   const systemScript = `
     // Functions below are embedded from the app's own source (fn.toString()).
@@ -198,6 +217,13 @@ export function wrapReactForPreview(
     // keyword URLs to the images made for them (lib/images/slots.ts).
     var __imageKey = (${imageKey.toString()});
     function __fixImageUrl(u) {
+      // The user's own pictures (edit mode, lib/edit/user-images.ts) win over everything.
+      var mine = window.__intentdrawUserImages;
+      if (mine) {
+        var own = __imageKey(u);
+        if (own && typeof mine[own] === 'string') return mine[own];
+        if (typeof mine[u] === 'string') return mine[u];
+      }
       var made = window.__intentdrawImages;
       if (made) {
         var key = __imageKey(u);
@@ -213,9 +239,11 @@ export function wrapReactForPreview(
     (function() {
       // Both routes: React assigns the src *property* for images; other code
       // uses setAttribute.
+      // What each picture originally asked for — edit mode replaces by that.
+      var origins = window.__intentdrawOrigSrc = new WeakMap();
       var setAttribute = Element.prototype.setAttribute;
       Element.prototype.setAttribute = function(name, value) {
-        if (name === 'src' && this.tagName === 'IMG' && typeof value === 'string') value = __fixImageUrl(value);
+        if (name === 'src' && this.tagName === 'IMG' && typeof value === 'string') { origins.set(this, value); value = __fixImageUrl(value); }
         return setAttribute.call(this, name, value);
       };
       var srcProp = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
@@ -224,7 +252,10 @@ export function wrapReactForPreview(
           configurable: true,
           enumerable: srcProp.enumerable,
           get: srcProp.get,
-          set: function(value) { srcProp.set.call(this, typeof value === 'string' ? __fixImageUrl(value) : value); },
+          set: function(value) {
+            if (typeof value === 'string') { origins.set(this, value); value = __fixImageUrl(value); }
+            srcProp.set.call(this, value);
+          },
         });
       }
     })();
@@ -266,9 +297,19 @@ export function wrapReactForPreview(
           var h = c.slice(1); if (h.length === 3) h = h.replace(/./g, '$&$&');
           var n = parseInt(h, 16); return isNaN(n) ? null : [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1];
         }
-        var m = c.match(/[\\d.]+/g);
-        if (!m || m.length < 3) return null;
-        return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+        if (c.indexOf('rgb') === 0) {
+          var m = c.match(/[\\d.]+/g);
+          if (!m || m.length < 3) return null;
+          return [+m[0], +m[1], +m[2], m[3] === undefined ? 1 : +m[3]];
+        }
+        // oklch()/lab()/color(): painted on a 1px canvas and read back.
+        try {
+          var cv = document.createElement('canvas'); cv.width = 1; cv.height = 1;
+          var cx = cv.getContext('2d'); if (!cx) return null;
+          cx.fillStyle = '#000'; cx.fillStyle = c; cx.fillRect(0, 0, 1, 1);
+          var d = cx.getImageData(0, 0, 1, 1).data;
+          return [d[0], d[1], d[2], d[3] / 255];
+        } catch (e) { return null; }
       }
       function lum(c) {
         var v = [c[0], c[1], c[2]].map(function(x) { x /= 255; return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); });
@@ -298,12 +339,29 @@ export function wrapReactForPreview(
         var ink = rgb(cs.color);
         if (!ink) continue;
         var worst = Math.min.apply(null, tones.map(function(c) { return ratio(ink, c); }));
-        if (worst >= 3) continue;
+        // WCAG: 4.5:1 for body text, 3:1 for large text (24px, or 18.66px bold).
+        var size = parseFloat(cs.fontSize) || 16;
+        var large = size >= 24 || (size >= 18.66 && (parseInt(cs.fontWeight, 10) || 400) >= 700);
+        if (worst >= (large ? 3 : 4.5)) continue;
         var halo = lum(ink) > 0.4 ? '0,0,0' : '255,255,255';
-        el.style.textShadow = '0 0 1px rgba(' + halo + ',.55), 0 0 10px rgba(' + halo + ',.45), 0 0 26px rgba(' + halo + ',.35)';
+        // The further below the bar, the denser the halo.
+        var k = worst < 2 ? 1.5 : worst < 3 ? 1.2 : 1;
+        el.style.textShadow = '0 0 1px rgba(' + halo + ',' + (.55 * k).toFixed(2) + '), 0 0 10px rgba(' + halo + ',' + (.45 * k).toFixed(2) + '), 0 0 26px rgba(' + halo + ',' + (.35 * k).toFixed(2) + ')';
       }
     }
     window.addEventListener('load', function(){ setTimeout(__legibleOverArt, 300); setTimeout(__legibleOverArt, 2500); });
+    // Text unreadable on the solid colour behind it gets its own ink nudged
+    // until it reads (page-audit.ts) — previews and exported sites alike. Twice:
+    // once things render, once entrance animations have settled.
+    var __inkRatio = (${contrastRatio.toString()});
+    var __fixPageContrast = (${fixPageContrast.toString()});
+    window.addEventListener('load', function(){
+      setTimeout(function(){ try { __fixPageContrast(__inkRatio); } catch (e) {} }, 600);
+      setTimeout(function(){ try { __fixPageContrast(__inkRatio); } catch (e) {} }, 2800);
+    });
+    ${options?.export || options?.freeze ? '' : `
+    // Edit mode (lib/edit/frame-edit.ts): off until the editor turns it on.
+    (${editModeRuntime.toString()})();`}
     ${options?.export ? '' : `
     // What a reader would see wrong — unreadable text, sideways scroll, text on
     // text, empty screens — measured on the rendered page (page-audit.ts) and
@@ -324,7 +382,21 @@ export function wrapReactForPreview(
     function __freeze() {
       // Read by animation loops the runtime renders itself (IntentScene spheres).
       window.__intentdrawFrozen = true;
-      try { if (window.gsap) { window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.pause(); } } catch (e) {}
+      // Scroll reveals first. A tween owned by a ScrollTrigger is paused until
+      // its trigger is reached, so finishing the global timeline leaves it at
+      // its start — opacity 0 — and killing the trigger then kept every
+      // section below the first screen blank in the backdrop. Each trigger's
+      // reveal (its animation, or the tween its onEnter starts) is played out.
+      try {
+        if (window.ScrollTrigger && window.ScrollTrigger.getAll) {
+          window.ScrollTrigger.getAll().forEach(function(t){
+            try { if (t.vars && typeof t.vars.onEnter === 'function') t.vars.onEnter(t); } catch (e) {}
+            try { if (t.animation) t.animation.progress(1); } catch (e) {}
+          });
+        }
+      } catch (e) {}
+      // Twice: delayed calls fired by the first pass (ScrollTrigger.batch) start tweens of their own.
+      try { if (window.gsap) { window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.progress(1); window.gsap.globalTimeline.pause(); } } catch (e) {}
       try {
         if (window.ScrollTrigger && window.ScrollTrigger.getAll) {
           window.ScrollTrigger.getAll().forEach(function(t){ try { t.kill(); } catch (e) {} });
@@ -603,6 +675,7 @@ if (typeof window.__RenderComponent !== "undefined") {
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>${title}</title>
+  ${shareMeta}
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>

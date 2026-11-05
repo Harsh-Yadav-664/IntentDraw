@@ -1,6 +1,7 @@
-import type { IntentAnchor, IntentKind, Region, RegionTag } from '@/types'
+import type { IntentAnchor, IntentKind, Region, RegionGroup, RegionTag } from '@/types'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { insideShare, looksHandwritten } from './perception'
+import { looksTriangular } from './scene'
 
 /**
  * The drawing intent engine's evidence layer: what each shape IS, WHERE it
@@ -23,7 +24,7 @@ import { insideShare, looksHandwritten } from './perception'
 
 export type { IntentKind, RegionTag }
 export type Anchor = IntentAnchor
-export type ObjectForm = 'cube' | 'sphere'
+export type ObjectForm = 'cube' | 'sphere' | 'pyramid'
 
 export const INTENT_KINDS: readonly IntentKind[] = ['content', 'text', 'picture', 'object', 'background', 'decoration', 'motion', 'connector']
 export const ANCHORS: readonly Anchor[] = ['exact', 'anywhere', 'behind']
@@ -37,8 +38,8 @@ export interface IntentSignal {
   animated?: boolean
   /** A background the user wants behind the whole page, not one section. */
   scope?: 'page'
-  source: 'tag' | 'prompt' | 'geometry'
-  /** Tags are 1, explicit prompt references 0.9, geometry priors ≤ 0.6. */
+  source: 'tag' | 'note' | 'prompt' | 'geometry'
+  /** Tags are 1, explicit prompt references and shape notes 0.9, geometry priors ≤ 0.6. */
   confidence: number
   why: string
 }
@@ -64,6 +65,18 @@ export const ANCHOR_LABEL: Record<Anchor, string> = {
 // Layer 1 — the user's tags
 // =============================================================================
 
+/**
+ * The object a shape most likely is when the user asked for a 3D object
+ * without naming one: a circle is a sphere, a drawn triangle a pyramid, a box
+ * a cube. `strict` (words only said "3d") makes no guess for other strokes.
+ */
+export function defaultObjectForm(r: Region, strict = false): ObjectForm | undefined {
+  if (r.geometry.type === 'circle') return 'sphere'
+  if (looksTriangular(r)) return 'pyramid'
+  if (r.geometry.type === 'rectangle') return 'cube'
+  return strict ? undefined : 'cube'
+}
+
 export function tagSignals(regions: Region[]): IntentSignal[] {
   return regions
     .filter(r => r.tag && (r.tag.kind || r.tag.anchor))
@@ -71,7 +84,7 @@ export function tagSignals(regions: Region[]): IntentSignal[] {
       regions: [r.regionNumber],
       kind: r.tag!.kind,
       anchor: r.tag!.anchor ?? (r.tag!.kind === 'background' ? 'behind' : undefined),
-      object: r.tag!.kind === 'object' ? (r.geometry.type === 'circle' ? 'sphere' : 'cube') : undefined,
+      object: r.tag!.kind === 'object' ? defaultObjectForm(r) : undefined,
       source: 'tag' as const,
       confidence: 1,
       why: `the user tagged it${r.tag!.kind ? ` "${KIND_LABEL[r.tag!.kind]}"` : ''}${r.tag!.anchor ? `, "${ANCHOR_LABEL[r.tag!.anchor]}"` : ''}`,
@@ -86,9 +99,10 @@ export function tagSignals(regions: Region[]): IntentSignal[] {
 const REFERENCE = /\b(?:r|region|regions|shape|shapes)\s*#?\s*(\d{1,2})((?:\s*(?:,|and|&|to|-|–|through)\s*(?:r|region)?\s*#?\s*\d{1,2}\b)*)/gi
 
 const WORDS = {
-  object: /\b3d\b|three[- ]?d(?:imensional)?|\bcube\b|\bsphere\b|\bglobe\b|\bball\b|\bplanet\b|\borb\b|\bobject\b|\bmodel\b|\brotating\b|\bspinning\b/,
+  object: /\b3d\b|three[- ]?d(?:imensional)?|\bcube\b|\bsphere\b|\bglobe\b|\bball\b|\bplanet\b|\borb\b|\bpyramids?\b|\btetrahedron\b|\bobject\b|\bmodel\b|\brotating\b|\bspinning\b/,
   cube: /\bcube\b|\bdice\b|\bblock\b/,
   sphere: /\bsphere\b|\bglobe\b|\bball\b|\bplanet\b|\borb\b/,
+  pyramid: /\bpyramids?\b|\btetrahedron\b|\btriangular\b|\btriangle\b/,
   background: /\bbackground\b|\bbehind\b|\bbackdrop\b|\bwallpaper\b|\bbg\b/,
   motion: /\bpath\b|\btravel|\bmoves? along\b|\bfollow(?:s|ing)? the line\b/,
   decoration: /\bdecorat|\bornament|\bswoosh|\bflourish/,
@@ -119,6 +133,107 @@ function expand(first: string, rest: string): number[] {
   return out
 }
 
+/** What one clause of the user's words says about the shapes it names. */
+function readClause(own: string, clause: string, numbers: number[], regions: Region[]): Omit<IntentSignal, 'source' | 'confidence' | 'why' | 'regions'> & { regions: number[] } {
+    const has = (k: keyof typeof WORDS) => WORDS[k].test(own) || (k === 'object' && WORDS.object.test(clause))
+    let kind: IntentKind | undefined
+    if (has('object')) kind = 'object'
+    else if (has('background')) kind = 'background'
+    else if (has('motion')) kind = 'motion'
+    else if (has('decoration')) kind = 'decoration'
+    else if (has('content')) kind = 'content'
+    else if (has('picture')) kind = 'picture'
+
+    let object: ObjectForm | undefined
+    if (kind === 'object') {
+      if (WORDS.pyramid.test(clause)) object = 'pyramid'
+      else if (WORDS.cube.test(clause)) object = 'cube'
+      else if (WORDS.sphere.test(clause)) object = 'sphere'
+      else {
+        const main = regions.find(r => r.regionNumber === numbers[0])
+        object = main ? defaultObjectForm(main, true) : undefined
+      }
+    }
+
+    return {
+      regions: [...new Set(numbers)],
+      kind,
+      anchor: WORDS.anywhere.test(own) ? 'anywhere' : kind === 'background' ? 'behind' : 'exact',
+      object,
+      interactive: WORDS.interactive.test(own) || undefined,
+      animated: WORDS.animated.test(own) || undefined,
+      scope: kind === 'background' && WORDS.pageWide.test(own) ? 'page' : undefined,
+    }
+}
+
+// "the circle", "the big box", "the box on the right", "the line at the top"
+const DESCRIBED = /\b(?:the|that|this|my)\s+(?:(biggest|bigger|big|largest|larger|large|huge|smallest|smaller|small|little|tiny|left|leftmost|right|rightmost|top|upper|topmost|bottom|lower|bottommost|middle|centre|center)\s+)?(circles?|rounds?|boxe?s?|rectangles?|rects?|squares?|lines?|strokes?|curves?|squiggles?|scribbles?|waves?|arrows?|shapes?)\b(?:\s+(?:on|at|in)\s+the\s+(left|right|top|bottom|middle|centre|center))?/gi
+
+const NOUN_TYPE: Array<[RegExp, Region['geometry']['type'] | null]> = [
+  [/^(?:circle|round)/, 'circle'],
+  [/^(?:box|rect|square)/, 'rectangle'],
+  [/^(?:line|stroke|curve|squiggle|scribble|wave)/, 'freeform'],
+  [/^arrow/, 'arrow'],
+  [/^shape/, null],
+]
+
+/** The one shape a described reference points at, or null when it's ambiguous. */
+function resolveDescribed(noun: string, quality: string | undefined, where: string | undefined, regions: Region[]): Region | null {
+  const type = NOUN_TYPE.find(([re]) => re.test(noun.toLowerCase()))
+  if (!type) return null
+  const pool = regions.filter(r => !type[1] || r.geometry.type === type[1])
+  if (pool.length === 0) return null
+  const q = (where ?? quality ?? '').toLowerCase()
+  if (!q) return pool.length === 1 ? pool[0] : null
+  const area = (r: Region) => r.geometry.width * r.geometry.height
+  const cx = (r: Region) => r.geometry.x + r.geometry.width / 2
+  const cy = (r: Region) => r.geometry.y + r.geometry.height / 2
+  const by = (score: (r: Region) => number) => {
+    const sorted = [...pool].sort((a, b) => score(b) - score(a))
+    // Only a clear winner: a near tie means the words don't pick one shape.
+    if (sorted.length > 1 && Math.abs(score(sorted[0]) - score(sorted[1])) < Math.abs(score(sorted[0])) * 0.15 + 1) return null
+    return sorted[0]
+  }
+  if (pool.length === 1) return pool[0]
+  if (/big|larg|huge/.test(q)) return by(area)
+  if (/small|little|tiny/.test(q)) return by(r => -area(r))
+  if (/left/.test(q)) return by(r => -cx(r))
+  if (/right/.test(q)) return by(cx)
+  if (/top|upper/.test(q)) return by(r => -cy(r))
+  if (/bottom|lower/.test(q)) return by(cy)
+  if (/middle|centre|center/.test(q)) {
+    const mid = (Math.min(...pool.map(r => r.geometry.x)) + Math.max(...pool.map(r => r.geometry.x + r.geometry.width))) / 2
+    return by(r => -Math.abs(cx(r) - mid))
+  }
+  return null
+}
+
+/**
+ * Shapes the prompt points at without a number — "make the circle a globe",
+ * "the box on the right is my photo". Resolved only when the words pick out
+ * exactly one shape; otherwise nothing is enforced and the model decides.
+ */
+function describedSignals(prompt: string, regions: Region[], taken: Array<[number, number]>): IntentSignal[] {
+  const out: IntentSignal[] = []
+  const matches = [...prompt.matchAll(DESCRIBED)]
+  matches.forEach((m, i) => {
+    const start = m.index ?? 0
+    if (taken.some(([a, b]) => start >= a && start < b)) return
+    // Plural nouns ("the boxes") name several shapes: not resolved here.
+    if (/s$/i.test(m[2])) return
+    const shape = resolveDescribed(m[2], m[1], m[3], regions)
+    if (!shape) return
+    const nextRef = matches[i + 1]?.index ?? prompt.length
+    const stop = prompt.slice(start).search(/[.!?\n]/)
+    const end = Math.min(nextRef, stop === -1 ? prompt.length : start + stop, start + 220)
+    const own = prompt.slice(start, end).toLowerCase()
+    const read = readClause(own, own, [shape.regionNumber], regions)
+    if (!read.kind) return
+    out.push({ ...read, source: 'prompt', confidence: 0.9, why: `the prompt says: "${prompt.slice(start, end).trim().slice(0, 140)}" (R${shape.regionNumber})` })
+  })
+  return out
+}
+
 /**
  * Every place the prompt talks about a shape by number, with what it says
  * about it. Only what is said in the clause attached to the reference counts —
@@ -128,6 +243,7 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
   const known = new Set(regions.map(r => r.regionNumber))
   const matches = [...prompt.matchAll(REFERENCE)]
   const signals: IntentSignal[] = []
+  const taken: Array<[number, number]> = []
 
   matches.forEach((m, i) => {
     let numbers = expand(m[1], m[2] ?? '').filter(n => known.has(n))
@@ -147,39 +263,88 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
       numbers = [...numbers, ...inner.map(r => r.regionNumber)]
     }
 
-    const has = (k: keyof typeof WORDS) => WORDS[k].test(own) || (k === 'object' && WORDS.object.test(clause))
-    let kind: IntentKind | undefined
-    if (has('object')) kind = 'object'
-    else if (has('background')) kind = 'background'
-    else if (has('motion')) kind = 'motion'
-    else if (has('decoration')) kind = 'decoration'
-    else if (has('content')) kind = 'content'
-    else if (has('picture')) kind = 'picture'
-
-    let object: ObjectForm | undefined
-    if (kind === 'object') {
-      if (WORDS.cube.test(clause)) object = 'cube'
-      else if (WORDS.sphere.test(clause)) object = 'sphere'
-      else {
-        const main = regions.find(r => r.regionNumber === numbers[0])
-        object = main?.geometry.type === 'circle' ? 'sphere' : main?.geometry.type === 'rectangle' ? 'cube' : undefined
-      }
-    }
-
+    taken.push([start, end])
+    const read = readClause(own, clause, numbers, regions)
     signals.push({
-      regions: [...new Set(numbers)],
-      kind,
-      anchor: WORDS.anywhere.test(own) ? 'anywhere' : kind === 'background' ? 'behind' : 'exact',
-      object,
-      interactive: WORDS.interactive.test(own) || undefined,
-      animated: WORDS.animated.test(own) || undefined,
-      scope: kind === 'background' && WORDS.pageWide.test(own) ? 'page' : undefined,
+      ...read,
       source: 'prompt',
-      confidence: kind ? 0.9 : 0.6,
+      confidence: read.kind ? 0.9 : 0.6,
       why: `the prompt says: "${prompt.slice(start, end).trim().slice(0, 140)}"`,
     })
   })
-  return signals
+  return [...signals, ...describedSignals(prompt, regions, taken)]
+}
+
+/**
+ * What the user wrote ON a shape (the selection bar or the Layers panel),
+ * parsed like the prompt. Before this only the model ever read those notes, so
+ * "a 3d rotating cube" typed on R1 was a suggestion while the same words in the
+ * main prompt were enforced — and describing shapes one by one is the whole
+ * point of the per-shape field.
+ *
+ * A note that names other shapes ("R2 to R4 are my projects") speaks for those;
+ * otherwise it speaks for its own shape. "A picture/photo of me" asks for a
+ * photo in a layout box, not for drawn art, so it never becomes `picture`.
+ */
+export function noteSignals(regions: Region[], groups: RegionGroup[] = []): IntentSignal[] {
+  const out: IntentSignal[] = []
+  // A group's description speaks for all its shapes; a shape's own note, read
+  // after it, is more specific and wins.
+  for (const group of groups) {
+    const note = group.intent?.trim()
+    const members = regions.filter(r => r.groupId === group.id).map(r => r.regionNumber)
+    if (!note || members.length === 0) continue
+    const lower = note.toLowerCase()
+    const read = readClause(lower, lower, members, regions)
+    let kind = read.kind
+    if (asksForPhoto(kind, note)) kind = 'content'
+    if (!kind) continue
+    out.push({
+      ...read,
+      kind,
+      object: kind === 'object' ? read.object : undefined,
+      anchor: kind === read.kind ? read.anchor : 'exact',
+      source: 'note',
+      confidence: 0.9,
+      why: `the user's note on group "${group.name.slice(0, 40)}": "${note.slice(0, 120)}"`,
+    })
+  }
+  for (const region of regions) {
+    const note = region.intent?.trim()
+    if (!note) continue
+    const named = promptSignals(note, regions)
+    const reads = named.length > 0
+      ? named.map(s => ({ ...s, regions: s.regions }))
+      : [{ ...readClause(note.toLowerCase(), note.toLowerCase(), [region.regionNumber], regions), confidence: 0, source: 'prompt' as const, why: '' }]
+    for (const read of reads) {
+      let kind = read.kind
+      if (asksForPhoto(kind, note)) kind = 'content'
+      out.push({
+        ...read,
+        kind,
+        object: kind === 'object' ? read.object : undefined,
+        anchor: kind === read.kind ? read.anchor : 'exact',
+        source: 'note',
+        confidence: kind ? 0.9 : 0.6,
+        why: `the user's note on R${region.regionNumber}: "${note.slice(0, 120)}"`,
+      })
+    }
+  }
+  return out
+}
+
+const PHOTO = /\b(?:photo|photograph|image|portrait|headshot|picture of|pic of|of me|of us|selfie|logo)\b/i
+// Words that point at the user's own drawing: then a "background" or
+// "picture" really is the drawing, painted by the scene.
+const THE_DRAWING = /\b(?:drawing|drawn|sketch|scene|scenery|illustrat\w*|paint\w*|doodle)\b/i
+
+/**
+ * A note asking for a photo — "a picture of me", "background image of the
+ * city" — wants a real image in that box, built by the section, not the box
+ * painted as art by the scene (a flat coloured shape).
+ */
+function asksForPhoto(kind: IntentKind | undefined, note: string): boolean {
+  return (kind === 'picture' || kind === 'background') && PHOTO.test(note) && !THE_DRAWING.test(note)
 }
 
 // =============================================================================
@@ -249,8 +414,8 @@ export function geometrySignals(regions: Region[]): IntentSignal[] {
 // Putting it together
 // =============================================================================
 
-export function intentSignals(prompt: string, regions: Region[]): IntentSignal[] {
-  const firm = [...tagSignals(regions), ...promptSignals(prompt, regions)].filter(s => s.kind || s.anchor)
+export function intentSignals(prompt: string, regions: Region[], groups: RegionGroup[] = []): IntentSignal[] {
+  const firm = [...tagSignals(regions), ...promptSignals(prompt, regions), ...noteSignals(regions, groups)].filter(s => s.kind || s.anchor)
   const settled = new Set(firm.filter(s => s.kind).flatMap(s => s.regions))
   // A geometry guess about a shape the user already explained is just noise.
   const guesses = geometrySignals(regions).filter(s => !s.regions.every(n => settled.has(n)))
@@ -274,8 +439,8 @@ export function describeIntentSignals(signals: IntentSignal[]): string {
       s.interactive ? 'interactive' : null,
       s.animated ? 'animated' : null,
     ].filter(Boolean).join(', ')
-    const label = s.source === 'tag' ? 'USER' : s.source === 'prompt' ? 'PROMPT' : 'GEOMETRY'
+    const label = s.source === 'tag' ? 'USER' : s.source === 'note' ? 'NOTE' : s.source === 'prompt' ? 'PROMPT' : 'GEOMETRY'
     return `- ${ids(s.regions)} → ${what} [${label}: ${s.why}]`
   })
-  return `WHAT CODE ALREADY WORKED OUT (USER items are final; PROMPT items are what the user wrote — follow them; GEOMETRY items are likely but the image may show otherwise):\n${lines.join('\n')}`
+  return `WHAT CODE ALREADY WORKED OUT (USER items are final; PROMPT and NOTE items are what the user wrote, in the prompt or on the shape — follow them; GEOMETRY items are likely but the image may show otherwise):\n${lines.join('\n')}`
 }

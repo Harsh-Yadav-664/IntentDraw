@@ -23,6 +23,37 @@ export function cloudflareImageConfig(): CloudflareImageConfig | null {
   return accountId && token ? { accountId, token } : null
 }
 
+/**
+ * The free allocation resets at 00:00 UTC. Once a call says it is used up,
+ * every later picture that day would fail the same way — each one a wasted
+ * request inside the run's image budget — so the server stops asking until the
+ * reset and pages draw their pictures in code meanwhile.
+ */
+let spentUntil = 0
+
+/**
+ * Cloudflare's "you have used up your daily free allocation of 10,000 neurons"
+ * (error 4006). A bare 429 is NOT enough: it is also a short per-minute limit,
+ * and that must not switch images off for the rest of the day.
+ */
+export function isAllowanceSpent(status: number, message: string): boolean {
+  void status
+  return /\b4006\b|daily free allocation|\bneurons\b/i.test(message)
+}
+
+/** The next 00:00 UTC after `now`. */
+export function nextUtcMidnight(now: number): number {
+  const d = new Date(now)
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+}
+
+/** True while today's free allocation is known to be spent. */
+export function imageAllowanceSpent(now = Date.now()): boolean {
+  return now < spentUntil
+}
+
+export class AllowanceSpentError extends Error {}
+
 /** One image as JPEG bytes. Throws with the provider's message on failure. */
 export async function generateFluxImage(
   config: CloudflareImageConfig,
@@ -44,6 +75,10 @@ export async function generateFluxImage(
   const image = data?.result?.image
   if (!res.ok || !image) {
     const message = data?.errors?.map(e => e.message).filter(Boolean).join('; ') || `HTTP ${res.status}`
+    if (isAllowanceSpent(res.status, message)) {
+      spentUntil = nextUtcMidnight(Date.now())
+      throw new AllowanceSpentError(`cloudflare: daily allowance spent (${message})`)
+    }
     throw new Error(`cloudflare: ${message}`)
   }
   return Uint8Array.from(Buffer.from(image, 'base64'))

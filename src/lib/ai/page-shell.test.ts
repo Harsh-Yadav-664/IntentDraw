@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Region } from '@/types'
 import fixture from './__fixtures__/globe-portfolio.json'
+import cube from './__fixtures__/cube-portfolio.json'
 import misread from './__fixtures__/globe-portfolio.misread-brief.json'
 import { normalizeBrief, sectionForPage } from './brief'
 import { batchPlan, buildPageShell, describeDrawnSections, ownNavigation, planSections, siteHeaderSection } from './page-shell'
@@ -193,5 +194,39 @@ describe('one navigation per page', () => {
   it('finds the header section by its name, not a hero that happens to say header', () => {
     expect(siteHeaderSection(['Hero', 'SiteHeader', 'Footer'])).toBe('SiteHeader')
     expect(siteHeaderSection(['HeroHeader', 'Footer'])).toBeNull()
+  })
+})
+
+describe('deliberate differences in a drawn row (R11)', () => {
+  const card = (n: number, x: number, y: number, w: number, h: number) =>
+    ({ id: `r${n}`, regionNumber: n, geometry: { type: 'rectangle', x, y, width: w, height: h }, intent: '', lockState: 'unlocked', generatedCode: null, createdAt: '', updatedAt: '' }) as unknown as Region
+
+  it('names the one wide card, and the one set lower', async () => {
+    const { drawnIrregularities } = await import('./page-shell')
+    const row = [card(4, 80, 300, 300, 260), card(5, 420, 300, 480, 260), card(6, 940, 300, 300, 260)]
+    expect(drawnIrregularities(row)).toEqual(['R5 is 1.6× as wide compared with R4, R6'])
+    const stepped = [card(1, 80, 300, 300, 260), card(2, 420, 300, 300, 260), card(3, 760, 380, 300, 260)]
+    expect(drawnIrregularities(stepped)).toEqual(['R3 is set 31% of a box\'s height lower compared with R1, R2'])
+  })
+
+  it('says nothing about a regular row, a pair, or a row with no majority', async () => {
+    const { drawnIrregularities } = await import('./page-shell')
+    expect(drawnIrregularities([card(1, 0, 0, 300, 200), card(2, 340, 4, 310, 205), card(3, 690, 0, 296, 198)])).toEqual([])
+    expect(drawnIrregularities([card(1, 0, 0, 300, 200), card(2, 340, 0, 600, 200)])).toEqual([])
+    expect(drawnIrregularities([card(1, 0, 0, 100, 200), card(2, 140, 0, 300, 200), card(3, 480, 0, 600, 200)])).toEqual([])
+  })
+})
+
+describe('a placed 3D object on a phone', () => {
+  it('stays on the side it was drawn on, at a size following the drawing', async () => {
+    const { mobileObjectBox } = await import('./page-shell')
+    expect(mobileObjectBox({ left: 68, width: 25 })).toBe('ml-auto mr-6 h-64 w-64')
+    expect(mobileObjectBox({ left: 4, width: 14 })).toBe('ml-6 mr-auto h-48 w-48')
+    expect(mobileObjectBox({ left: 25, width: 50 })).toBe('mx-auto h-72 w-72')
+  })
+
+  it('puts the owner\'s cube (drawn top right) on the right on phones, exact on desktop', () => {
+    const shell = buildPageShell(normalizeBrief(cube.brief, cube.regions as unknown as Region[], cube.prompt), cube.regions as unknown as Region[], false, renderObjects(normalizeBrief(cube.brief, cube.regions as unknown as Region[], cube.prompt).drawing.elements, cube.regions as unknown as Region[], normalizeBrief(cube.brief, cube.regions as unknown as Region[], cube.prompt).palette).objects)
+    expect(shell.shellCode).toMatch(/className="pointer-events-auto relative my-10 ml-auto mr-6 h-\d+ w-\d+ lg:absolute lg:m-0 lg:left-\[/)
   })
 })

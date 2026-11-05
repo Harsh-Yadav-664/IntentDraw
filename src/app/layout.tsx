@@ -19,6 +19,15 @@ export const metadata: Metadata = {
   },
   description:
     'An AI website builder that reads your drawing as layout and as artwork. Draw it, or just say it — every site is one of a kind.',
+  // Absolute URLs for the share card (app/opengraph-image.tsx).
+  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000'),
+  openGraph: {
+    type: 'website',
+    siteName: 'IntentDraw',
+    title: 'IntentDraw — Sketch what you mean. Get the site you meant.',
+    description: 'An AI website builder that reads your drawing as layout and as artwork. Every site is one of a kind.',
+  },
+  twitter: { card: 'summary_large_image' },
 }
 
 // Applied before the first paint so a light-theme user never sees a dark flash.

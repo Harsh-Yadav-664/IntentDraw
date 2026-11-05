@@ -19,7 +19,7 @@ export async function GET() {
 
     const data = await res.json()
     // data.data is an array of model objects { id: 'meta/llama3-70b-instruct', ... }
-    const models = data.data.map((m: any) => m.id).sort()
+    const models = (data.data as Array<{ id: string }>).map((m) => m.id).sort()
 
     return NextResponse.json({ success: true, models })
   } catch (error) {

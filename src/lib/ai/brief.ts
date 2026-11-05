@@ -39,8 +39,8 @@ import { PRODUCT_PRINCIPLE } from './principle'
 
 export type ElementRole = 'layout' | 'illustration' | 'object' | 'decoration' | 'motion' | 'connector'
 /** A 3D object IntentDraw builds itself (objects.ts). Other objects are built by the section, in place. */
-export type ObjectForm = 'cube' | 'sphere'
-const OBJECT_FORMS: readonly ObjectForm[] = ['cube', 'sphere']
+export type ObjectForm = 'cube' | 'sphere' | 'pyramid'
+const OBJECT_FORMS: readonly ObjectForm[] = ['cube', 'sphere', 'pyramid']
 export type Placement = 'page-background' | 'hero-background' | 'section-background' | 'inline'
 
 const ROLES: readonly ElementRole[] = ['layout', 'illustration', 'object', 'decoration', 'motion', 'connector']
@@ -146,7 +146,7 @@ WHEN THE PROMPT SAYS LITTLE OR NOTHING ABOUT A SHAPE — decide from what was dr
 
 For each element:
 - role: "layout" (content goes here) | "object" (a thing that exists at that spot — usually 3D, animated or interactive: a rotating cube, a globe, a spinning badge, a product model) | "illustration" (a picture painted as art) | "decoration" | "motion" (a path something travels along) | "connector" (an arrow relating two things). Text is "layout".
-- form, object only: "cube" (a box shape or anything the user calls a cube/box) | "sphere" (a round shape, globe, planet, ball, orb) | null (some other object — the build makes it in place)
+- form, object only: "cube" (a box shape or anything the user calls a cube/box) | "sphere" (a round shape, globe, planet, ball, orb) | "pyramid" (a triangle or anything the user calls a pyramid/tetrahedron) | null (some other object — the build makes it in place)
 - form, illustration only: "sphere" (a round body carrying the marks drawn on it, shown as a slowly turning 3D globe that follows the pointer, touch and scroll — use it when the user asks for 3D or for a globe, planet, ball or orb, or when marks inside a circle should wrap around it), "silhouette" (the solid area below a ridge or skyline), "band" (the area between two strokes), "disc" (a flat round body), "rays", "shape" (a closed outline to fill), "line" (keep as a drawn line)
 - depth, illustration only: 0 = farthest back … higher = nearer the viewer
 - placement: "page-background" | "hero-background" | "section-background" | "inline"
@@ -276,7 +276,7 @@ export function buildUnderstandUserMessage(
     )
     const measured = perceiveDrawing(regions)
     parts.push(regions.map(r => shapeLine(r, budget, measured.get(r.regionNumber))).join('\n'))
-    const worked = describeIntentSignals(intentSignals(prompt, regions))
+    const worked = describeIntentSignals(intentSignals(prompt, regions, groups))
     if (worked) parts.push(worked)
 
     const populated = groups.filter(g => regions.some(r => r.groupId === g.id))
@@ -415,7 +415,7 @@ export function sectionForPage(page: number, names: string[]): string | null {
   return content[Math.max(0, Math.min(page, content.length - 1))]
 }
 
-function elements(v: unknown, regions: Region[], sectionNames: string[] = [], prompt = ''): BriefElement[] {
+function elements(v: unknown, regions: Region[], sectionNames: string[] = [], prompt = '', groups: RegionGroup[] = []): BriefElement[] {
   const known = new Set(regions.map(r => r.regionNumber))
   const claimed = new Set<number>()
   const out: BriefElement[] = []
@@ -491,7 +491,7 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       anchor: defaultAnchor(role),
     })
   }
-  const signals = intentSignals(prompt, regions)
+  const signals = intentSignals(prompt, regions, groups)
   const settled = pageWideArt(splitRoundBodies(reconcile(out, signals, regions), regions), signals, prompt)
   return keepPagesTogether(mergeIntoSpheres(settled, regions), regions, sectionNames)
 }
@@ -511,7 +511,9 @@ function defaultAnchor(role: ElementRole): Anchor {
 function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region[]): BriefElement[] {
   let out = els
   // Tags last: they are the user's final word, over anything the prompt implied.
-  const order = [...signals].sort((x, y) => (x.source === 'tag' ? 1 : 0) - (y.source === 'tag' ? 1 : 0))
+  // A shape's own note is more specific than the prompt, so it applies after it.
+  const rank = (s: IntentSignal) => (s.source === 'tag' ? 2 : s.source === 'note' ? 1 : 0)
+  const order = [...signals].sort((x, y) => rank(x) - rank(y))
   for (const sig of order) {
     if (sig.source === 'geometry' || sig.confidence < 0.85) continue
     const holders = out.filter(e => e.regions.some(n => sig.regions.includes(n)))
@@ -528,7 +530,7 @@ function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region
     switch (sig.kind) {
       case 'object':
         role = 'object'
-        form = sig.object ?? (base.form === 'sphere' || base.form === 'cube' ? base.form : null)
+        form = sig.object ?? (base.form === 'sphere' || base.form === 'cube' || base.form === 'pyramid' ? base.form : null)
         break
       case 'content':
       case 'text':
@@ -615,7 +617,7 @@ function splitRoundBodies(els: BriefElement[], regions: Region[]): BriefElement[
  * shapes, `reconcile` has already applied this to exactly those.
  */
 function pageWideArt(els: BriefElement[], signals: IntentSignal[], prompt: string): BriefElement[] {
-  if (signals.some(s => s.source === 'prompt' && s.kind === 'background')) return els
+  if (signals.some(s => (s.source === 'prompt' || s.source === 'note') && s.kind === 'background')) return els
   if (!/\b(?:background|backdrop|bg)\b/i.test(prompt) || !PAGE_WIDE.test(prompt.toLowerCase())) return els
   return els.map(e => (e.role === 'illustration' ? { ...e, placement: 'page-background' as const } : e))
 }
@@ -696,11 +698,11 @@ function drawingKind(els: BriefElement[]): DesignBrief['drawing']['kind'] {
  * well-formed brief. It runs on every brief that crosses a trust boundary, so
  * lengths are capped and every enum is checked rather than trusted.
  */
-export function normalizeBrief(raw: unknown, regions: Region[], prompt: string): DesignBrief {
+export function normalizeBrief(raw: unknown, regions: Region[], prompt: string, groups: RegionGroup[] = []): DesignBrief {
   const b = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const drawing = (b.drawing && typeof b.drawing === 'object' ? b.drawing : {}) as Record<string, unknown>
   const plan = sections(b.sections)
-  const els = elements(drawing.elements, regions, plan.map(s => s.name), prompt)
+  const els = elements(drawing.elements, regions, plan.map(s => s.name), prompt, groups)
 
   const styleId =
     typeof b.styleId === 'string' && PRESETS[b.styleId]
@@ -733,8 +735,8 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
 }
 
 /** What the build gets when no model could write a brief: the old heuristics. */
-export function fallbackBrief(prompt: string, regions: Region[]): DesignBrief {
-  const brief = normalizeBrief({ source: 'fallback' }, regions, prompt)
+export function fallbackBrief(prompt: string, regions: Region[], groups: RegionGroup[] = []): DesignBrief {
+  const brief = normalizeBrief({ source: 'fallback' }, regions, prompt, groups)
   return { ...brief, source: 'fallback' }
 }
 

@@ -11,9 +11,11 @@
  * finding as its note — the same path as ai-look.ts.
  *
  * Rules that keep it honest:
- *   - Animations are ignored, not waited for: opacity is not read and the
- *     check runs once things settle, because a ScrollTrigger reveal keeps
- *     content below the fold transparent until it is scrolled to.
+ *   - Animations are ignored, not waited for: opacity is not read for
+ *     contrast and the check runs once things settle, because a ScrollTrigger
+ *     reveal keeps content below the fold transparent until it is scrolled to.
+ *     For the same reason, text that is currently invisible never counts as
+ *     overlapping: an unrevealed item is still offset by its entrance.
  *   - Text over a background image, a gradient or the user's drawing is
  *     skipped for contrast (unknowable from CSS; the drawing has its own halo).
  *
@@ -58,12 +60,36 @@ export function auditPage(ratio: (a: number[], b: number[]) => number): AuditFin
   }
   const vw = document.documentElement.clientWidth
   const vh = window.innerHeight || 800
+  // Any CSS colour as [r, g, b, a]. Browsers report oklch()/lab()/color()
+  // as written, which the rgb pattern can't read — those are painted onto a
+  // 1px canvas and read back. Null means unknown, never "transparent".
+  let probe: CanvasRenderingContext2D | null = null
   const parse = (c: string) => {
-    const m = /rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)/.exec(c)
-    if (!m) return null
-    let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
-    if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
-    return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    if (!c) return null
+    if (c === 'transparent') return [0, 0, 0, 0]
+    const m = /^rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(c)
+    if (m) {
+      let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
+      if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
+      return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    }
+    try {
+      if (!probe) {
+        const canvas = document.createElement('canvas')
+        canvas.width = 1
+        canvas.height = 1
+        probe = canvas.getContext('2d', { willReadFrequently: true })
+      }
+      if (!probe) return null
+      probe.clearRect(0, 0, 1, 1)
+      probe.fillStyle = '#000'
+      probe.fillStyle = c
+      probe.fillRect(0, 0, 1, 1)
+      const d = probe.getImageData(0, 0, 1, 1).data
+      return [d[0], d[1], d[2], d[3] / 255]
+    } catch {
+      return null
+    }
   }
   const shown = (el: Element) => {
     const s = getComputedStyle(el)
@@ -101,7 +127,11 @@ export function auditPage(ratio: (a: number[], b: number[]) => number): AuditFin
         break
       }
       const c = parse(ns.backgroundColor)
-      if (c && c[3] > 0) {
+      if (!c) {
+        unknown = true
+        break
+      }
+      if (c[3] > 0) {
         // Composite what has been seen so far over this layer.
         const a = bg[3] + c[3] * (1 - bg[3])
         bg = [0, 1, 2].map(i => (bg[i] * bg[3] + c[i] * c[3] * (1 - bg[3])) / (a || 1)).concat([a])
@@ -127,11 +157,23 @@ export function auditPage(ratio: (a: number[], b: number[]) => number): AuditFin
     add('overflow', wide || null, `the page is ${document.documentElement.scrollWidth - vw}px wider than the window — something overflows sideways`)
   }
 
-  // 3. Text drawn over other text.
-  for (let i = 0; i < texts.length; i++) {
-    for (let j = i + 1; j < texts.length; j++) {
-      const a = texts[i]
-      const b = texts[j]
+  // 3. Text drawn over other text. Only text a reader can see: a scroll reveal
+  // that hasn't fired yet keeps its items invisible AND still offset (a card
+  // waiting to slide in sits 100px over its neighbour), which is not a broken
+  // layout — and "broken" findings can trigger an automatic rebuild.
+  const faded = (el: Element) => {
+    let alpha = 1
+    for (let node: Element | null = el; node && node !== document.body; node = node.parentElement) {
+      alpha *= parseFloat(getComputedStyle(node).opacity) || 0
+      if (alpha < 0.05) return true
+    }
+    return false
+  }
+  const visible = texts.filter(t => !faded(t.el))
+  for (let i = 0; i < visible.length; i++) {
+    for (let j = i + 1; j < visible.length; j++) {
+      const a = visible[i]
+      const b = visible[j]
       if (a.el.contains(b.el) || b.el.contains(a.el)) continue
       const w = Math.min(a.rect.right, b.rect.right) - Math.max(a.rect.left, b.rect.left)
       const h = Math.min(a.rect.bottom, b.rect.bottom) - Math.max(a.rect.top, b.rect.top)
@@ -228,4 +270,104 @@ export function auditNote(findings: AuditFinding[], max = 300): string {
     note += `${f.detail}; `
   }
   return note.replace(/; $/, '.')
+}
+
+/**
+ * Text that fails contrast against the solid colour behind it, fixed in place.
+ *
+ * The audit above only reports; a dark-grey name on a near-black section still
+ * shipped. Here the text's own colour is moved toward white or black — in small
+ * steps, only as far as WCAG needs (4.5:1, or 3:1 for large text) — so its hue
+ * and the design survive and only the unreadable ink changes. Runs in the
+ * preview and in exported sites, before the audit, so what is fixed is not
+ * also reported.
+ *
+ * Never touched: gradient or clipped text, text over images, gradients or the
+ * user's drawing (unknowable from CSS — the drawing has its own halo), and
+ * nearly transparent text (a reveal still running).
+ *
+ * Embedded as source text like `auditPage`: self-contained, no destructuring.
+ */
+export function fixPageContrast(ratio: (a: number[], b: number[]) => number): number {
+  // Any CSS colour as [r, g, b, a]. Browsers report oklch()/lab()/color()
+  // as written, which the rgb pattern can't read — those are painted onto a
+  // 1px canvas and read back. Null means unknown, never "transparent".
+  let probe: CanvasRenderingContext2D | null = null
+  const parse = (c: string) => {
+    if (!c) return null
+    if (c === 'transparent') return [0, 0, 0, 0]
+    const m = /^rgba?\(\s*([\d.]+)[ ,]+([\d.]+)[ ,]+([\d.]+)(?:\s*[,/]\s*([\d.]+%?))?\s*\)$/.exec(c)
+    if (m) {
+      let alpha = m[4] === undefined ? 1 : parseFloat(m[4])
+      if (m[4] && m[4].indexOf('%') > 0) alpha = alpha / 100
+      return [parseFloat(m[1]), parseFloat(m[2]), parseFloat(m[3]), alpha]
+    }
+    try {
+      if (!probe) {
+        const canvas = document.createElement('canvas')
+        canvas.width = 1
+        canvas.height = 1
+        probe = canvas.getContext('2d', { willReadFrequently: true })
+      }
+      if (!probe) return null
+      probe.clearRect(0, 0, 1, 1)
+      probe.fillStyle = '#000'
+      probe.fillStyle = c
+      probe.fillRect(0, 0, 1, 1)
+      const d = probe.getImageData(0, 0, 1, 1).data
+      return [d[0], d[1], d[2], d[3] / 255]
+    } catch {
+      return null
+    }
+  }
+  let fixed = 0
+  document.querySelectorAll('body *').forEach(el => {
+    if (/^(SCRIPT|STYLE|NOSCRIPT|SVG|TITLE|OPTION)$/i.test(el.tagName) || el.closest('svg, .intent-scene, [data-intentdraw-editing]')) return
+    let own = false
+    for (let i = 0; i < el.childNodes.length; i++) {
+      const node = el.childNodes[i]
+      if (node.nodeType === 3 && (node.textContent || '').trim().length > 1) own = true
+    }
+    if (!own) return
+    const s = getComputedStyle(el)
+    if (s.display === 'none' || s.visibility === 'hidden') return
+    if (s.textShadow && s.textShadow !== 'none') return
+    const clip = s.getPropertyValue('-webkit-background-clip') || s.getPropertyValue('background-clip')
+    const fill = parse(s.getPropertyValue('-webkit-text-fill-color') || '')
+    if (clip === 'text' || (fill && fill[3] < 0.5)) return
+    const fg = parse(s.color)
+    if (!fg || fg[3] < 0.5) return
+    let bg = [0, 0, 0, 0]
+    for (let node: Element | null = el; node; node = node.parentElement) {
+      const ns = getComputedStyle(node)
+      if ((ns.backgroundImage && ns.backgroundImage !== 'none') || node.classList.contains('intent-scene') || node.querySelector(':scope > .intent-scene')) return
+      const c = parse(ns.backgroundColor)
+      // A colour that can't be read is unknown: leave the text alone.
+      if (!c) return
+      if (c[3] > 0) {
+        const a = bg[3] + c[3] * (1 - bg[3])
+        bg = [0, 1, 2].map(i => (bg[i] * bg[3] + c[i] * c[3] * (1 - bg[3])) / (a || 1)).concat([a])
+        if (a > 0.99) break
+      }
+    }
+    if (bg[3] < 0.99) bg = [0, 1, 2].map(i => bg[i] * bg[3] + 255 * (1 - bg[3])).concat([1])
+    const text = [0, 1, 2].map(i => fg[i] * fg[3] + bg[i] * (1 - fg[3]))
+    const size = parseFloat(s.fontSize) || 16
+    const large = size >= 24 || (size >= 18.6 && (parseInt(s.fontWeight, 10) || 400) >= 700)
+    const need = large ? 3 : 4.5
+    if (ratio(text, bg) >= need - 0.05) return
+    // Toward whichever end can be read on this background.
+    const end = ratio([255, 255, 255], bg) >= ratio([0, 0, 0], bg) ? 255 : 0
+    for (let k = 1; k <= 25; k++) {
+      const t = k / 25
+      const next = text.map(v => Math.round(v + (end - v) * t))
+      if (ratio(next, bg) >= need || k === 25) {
+        ;(el as HTMLElement).style.setProperty('color', 'rgb(' + next.join(',') + ')', 'important')
+        el.setAttribute('data-ink-fixed', '')
+        fixed++
+        return
+      }
+    }
+  })
+  return fixed
 }

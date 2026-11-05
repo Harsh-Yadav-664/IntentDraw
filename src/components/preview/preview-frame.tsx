@@ -7,6 +7,12 @@ interface PreviewFrameProps {
   code: string | null
   deviceSize?: 'desktop' | 'tablet' | 'mobile'
   className?: string
+  /** Edit mode (lib/edit/frame-edit.ts): click words to change them, pictures to replace them. */
+  editing?: boolean
+  /** Every EDIT_* message from THIS frame (never another one). Untrusted: validate it. */
+  onEditMessage?: (data: Record<string, unknown>) => void
+  /** Changing this reloads the page in place (keeping the edit-mode scroll position). */
+  reloadKey?: number
 }
 
 export const DEVICE_WIDTHS = {
@@ -22,7 +28,7 @@ const DEVICE_HEIGHTS = {
   mobile: 812,
 }
 
-export default function PreviewFrame({ code, deviceSize = 'desktop', className = '' }: PreviewFrameProps) {
+export default function PreviewFrame({ code, deviceSize = 'desktop', className = '', editing = false, onEditMessage, reloadKey = 0 }: PreviewFrameProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const [scale, setScale] = useState(1)
@@ -55,10 +61,49 @@ export default function PreviewFrame({ code, deviceSize = 'desktop', className =
     return () => observer.disconnect()
   }, [targetWidth, minHeight])
 
+  // Edit mode lives in the frame; it is told on every load (an edit reloads the
+  // page) and on every toggle. The scroll position is carried across reloads so
+  // the user stays where they were editing.
+  const editingRef = useRef(editing)
+  const scrollRef = useRef(0)
+  const onEditRef = useRef(onEditMessage)
+  useEffect(() => {
+    onEditRef.current = onEditMessage
+  }, [onEditMessage])
+  useEffect(() => {
+    editingRef.current = editing
+    frameRef.current?.contentWindow?.postMessage({ type: 'EDIT_MODE', on: editing }, '*')
+  }, [editing])
+  useEffect(() => {
+    const onMessage = (e: MessageEvent) => {
+      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return
+      const data = e.data as Record<string, unknown> | null
+      if (!data || typeof data.type !== 'string') return
+      if (data.type === 'IFRAME_HEIGHT') {
+        // Loaded. Only an edit session restores the scroll position.
+        if (editingRef.current) frameRef.current.contentWindow?.postMessage({ type: 'EDIT_MODE', on: true, scrollY: scrollRef.current }, '*')
+        return
+      }
+      if (data.type === 'EDIT_SCROLL') {
+        if (typeof data.y === 'number' && Number.isFinite(data.y)) scrollRef.current = Math.max(0, Math.min(data.y, 200000))
+        return
+      }
+      if (data.type.startsWith('EDIT_')) onEditRef.current?.(data)
+    }
+    window.addEventListener('message', onMessage)
+    return () => window.removeEventListener('message', onMessage)
+  }, [])
+
   const srcDoc = useMemo(() => {
     if (!code) return null
     return wrapReactForPreview(code)
   }, [code])
+
+  // Setting srcdoc again — even to the same page — runs it afresh.
+  useEffect(() => {
+    if (reloadKey > 0 && srcDoc) frameRef.current?.setAttribute('srcdoc', srcDoc)
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only a new key reloads
+  }, [reloadKey])
 
   if (!srcDoc) {
     return (

@@ -35,6 +35,7 @@ export const PLANS: Plan[] = [
       { text: `${FREE_DAILY_GENERATIONS} generations a day` },
       { text: 'Drawing canvas, up to 8 pages' },
       { text: 'Rebuild any section on its own' },
+      { text: 'Edit words and pictures on the built site' },
       { text: 'Public share link' },
       { text: 'Website (.html) and React (.tsx) export' },
     ],

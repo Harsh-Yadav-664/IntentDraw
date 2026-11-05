@@ -1,8 +1,8 @@
 'use client'
 
-import { useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Check, Code, Copy, Eye, Maximize2, Monitor, PenLine, RefreshCw, Smartphone, Tablet } from 'lucide-react'
+import { Check, Code, Copy, Eye, Maximize2, Monitor, Pencil, PenLine, RefreshCw, Smartphone, Tablet } from 'lucide-react'
 import { Button, Segmented } from '@/components/kit/kit'
 import { SketchEmptyState } from '@/components/kit/sketch'
 import PreviewFrame, { DEVICE_WIDTHS } from '@/components/preview/preview-frame'
@@ -10,6 +10,7 @@ import { useWorkflowStore } from '@/store/workflow-store'
 import { exportSource, openInNewTab } from '@/lib/export'
 import { ExportMenu } from './export-menu'
 import { IssueEmptyState } from './issue'
+import { EditBar, ImageDialog, SectionChangeDialog, TextDialog, useEditMode } from './edit-mode'
 
 type Device = 'desktop' | 'tablet' | 'mobile'
 
@@ -25,6 +26,28 @@ export function OutputView({ projectId, isPublic, onBackToDesign, onIssueDetails
   const [mode, setMode] = useState<'preview' | 'code'>('preview')
   const [frameKey, setFrameKey] = useState(0)
   const [copied, setCopied] = useState(false)
+  const [editRequested, setEditing] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const reloadFrame = useCallback(() => setReloadKey((k) => k + 1), [])
+  const edit = useEditMode({ reloadFrame })
+  const { onEditMessage } = edit
+  const canEdit = !!previewCode && !building && !broken && mode === 'preview'
+  // A build, a broken page or the code view pauses an edit session.
+  const editing = editRequested && canEdit
+  // The page in the frame is model-written and can post anything: edit
+  // messages count only while the user has edit mode on.
+  const editingRef = useRef(editing)
+  useEffect(() => {
+    editingRef.current = editing
+  }, [editing])
+  const handleEditMessage = useCallback(
+    (data: Record<string, unknown>) => {
+      if (!editingRef.current) return
+      if (data.type === 'EDIT_EXIT') setEditing(false)
+      else onEditMessage(data)
+    },
+    [onEditMessage]
+  )
 
   const copyCode = async () => {
     try {
@@ -65,6 +88,17 @@ export function OutputView({ projectId, isPublic, onBackToDesign, onIssueDetails
               { value: 'code', label: 'Code', icon: <Code size={12} /> },
             ]}
           />
+          <Button
+            size="sm"
+            variant={editing ? 'primary' : 'outline'}
+            icon={<Pencil size={12} />}
+            disabled={!canEdit}
+            aria-pressed={editing}
+            onClick={() => setEditing((on) => !on)}
+            title="Click words or pictures on the page to change them — no model call"
+          >
+            Edit
+          </Button>
           <Button size="sm" variant="quiet" icon={<RefreshCw size={12} />} disabled={!previewCode} onClick={() => setFrameKey((k) => k + 1)} title="Run the page again from the top">
             Replay
           </Button>
@@ -86,8 +120,9 @@ export function OutputView({ projectId, isPublic, onBackToDesign, onIssueDetails
             <div className="mx-auto flex h-[22px] w-[320px] max-w-[50%] items-center justify-center rounded-full border border-line bg-surface2 px-3">
               <span className="tab-num truncate text-[10.5px] text-faint">{address}</span>
             </div>
-            <div className="mono-label text-faint">{building ? 'building' : !previewCode ? 'empty' : broken ? 'error' : 'ready'}</div>
+            <div className="mono-label text-faint">{building ? 'building' : !previewCode ? 'empty' : broken ? 'error' : editing ? 'editing' : 'ready'}</div>
           </div>
+          {editing && <EditBar undoCount={edit.undoCount} onUndo={edit.undoLast} onDone={() => setEditing(false)} />}
 
           <div className="relative min-h-0 flex-1 bg-bg2">
             {!previewCode ? (
@@ -104,7 +139,15 @@ export function OutputView({ projectId, isPublic, onBackToDesign, onIssueDetails
             ) : mode === 'preview' ? (
               <>
                 {/* The frame stays mounted — it is what reports a crash — with the explanation over it. */}
-                <PreviewFrame key={frameKey} code={previewCode} deviceSize={device} className="h-full w-full" />
+                <PreviewFrame
+                  key={frameKey}
+                  code={previewCode}
+                  deviceSize={device}
+                  className="h-full w-full"
+                  editing={editing}
+                  onEditMessage={handleEditMessage}
+                  reloadKey={reloadKey}
+                />
                 {broken && <IssueEmptyState onDetails={onIssueDetails} />}
               </>
             ) : (
@@ -120,6 +163,9 @@ export function OutputView({ projectId, isPublic, onBackToDesign, onIssueDetails
           </div>
         </div>
       </div>
+      <ImageDialog pending={edit.pendingImage} onClose={() => edit.setPendingImage(null)} apply={edit.apply} />
+      <TextDialog request={edit.textRequest} onClose={() => edit.setTextRequest(null)} apply={edit.apply} />
+      <SectionChangeDialog request={edit.sectionRequest} onClose={() => edit.setSectionRequest(null)} />
     </div>
   )
 }

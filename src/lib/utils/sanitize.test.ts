@@ -32,3 +32,43 @@ describe('embedding generated code in the runtime', () => {
     expect(embedInTemplate(code)).not.toMatch(/<\/script/i)
   })
 })
+
+describe('edit mode and legibility in the runtime', () => {
+  const page = 'export default function App() { return <h1>Hi</h1> }'
+
+  it('carries edit mode in the editor preview only — never a frozen backdrop or an exported site', () => {
+    expect(wrapReactForPreview(page)).toContain('EDIT_TEXT')
+    expect(wrapReactForPreview(page, { freeze: true })).not.toContain('EDIT_TEXT')
+    expect(wrapReactForPreview(page, { export: { title: 'x' } })).not.toContain('EDIT_TEXT')
+  })
+
+  it('looks up the user’s own pictures before generated ones, in exports too', () => {
+    const html = wrapReactForPreview(page, { export: { title: 'x' } })
+    expect(html.indexOf('__intentdrawUserImages')).toBeGreaterThan(-1)
+    expect(html.indexOf('__intentdrawUserImages')).toBeLessThan(html.indexOf('var made = window.__intentdrawImages'))
+  })
+
+  it('holds text over the drawing to 4.5:1, or 3:1 when it is large', () => {
+    expect(wrapReactForPreview(page)).toContain('worst >= (large ? 3 : 4.5)')
+  })
+})
+
+describe('readable ink on solid backgrounds', () => {
+  it('runs the contrast fixer in the preview and in exported sites', () => {
+    const page = 'export default function App() { return <h1>Hi</h1> }'
+    expect(wrapReactForPreview(page)).toContain('__fixPageContrast(__inkRatio)')
+    expect(wrapReactForPreview(page, { export: { title: 'x' } })).toContain('__fixPageContrast(__inkRatio)')
+  })
+})
+
+describe('the frozen backdrop', () => {
+  it('plays every scroll reveal out before pausing, so sections below the first screen are not blank', () => {
+    const html = wrapReactForPreview('export default function App() { return <h1>Hi</h1> }', { freeze: true })
+    const freeze = html.slice(html.indexOf('function __freeze'))
+    const reveal = freeze.indexOf('t.animation.progress(1)')
+    expect(reveal).toBeGreaterThan(-1)
+    // Revealed before the timeline is paused and before the triggers are killed.
+    expect(reveal).toBeLessThan(freeze.indexOf('globalTimeline.pause()'))
+    expect(reveal).toBeLessThan(freeze.indexOf('t.kill()'))
+  })
+})

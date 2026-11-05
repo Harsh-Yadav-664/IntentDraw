@@ -40,7 +40,8 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
 
   const { data: project } = await createAdminClient()
     .from('projects')
-    .select('name, generated_code, is_public')
+    // The site's own name and one-line summary, for the title and link previews.
+    .select('name, generated_code, is_public, brand:canvas_data->pageParts->brief->>brand, summary:canvas_data->pageParts->brief->>summary')
     .eq('id', id)
     .single()
 
@@ -48,7 +49,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   if (!project || !project.is_public || !project.generated_code) return notFound()
 
   const origin = new URL(request.url).origin
-  const html = exportHtml(project.generated_code, project.name, origin)
+  const html = exportHtml(project.generated_code, project.name, origin, { brand: project.brand, summary: project.summary, image: `${origin}/p/${id}/card` })
 
   return new Response(html, {
     headers: {

@@ -65,12 +65,32 @@ export async function imageExists(config: StoreConfig, path: string): Promise<bo
   return !!res?.ok
 }
 
-export async function uploadImage(config: StoreConfig, path: string, bytes: Uint8Array): Promise<void> {
+export async function uploadImage(config: StoreConfig, path: string, bytes: Uint8Array, contentType: 'image/jpeg' | 'image/png' | 'image/webp' = 'image/jpeg'): Promise<void> {
   const res = await fetch(`${config.url}/storage/v1/object/${IMAGE_BUCKET}/${path}`, {
     method: 'POST',
-    headers: { ...headers(config), 'Content-Type': 'image/jpeg', 'x-upsert': 'true', 'Cache-Control': 'max-age=31536000' },
+    headers: { ...headers(config), 'Content-Type': contentType, 'x-upsert': 'true', 'Cache-Control': 'max-age=31536000' },
     body: Buffer.from(bytes),
     signal: AbortSignal.timeout(15000),
   })
   if (!res.ok) throw new Error(`storage upload: HTTP ${res.status} ${(await res.text().catch(() => '')).slice(0, 160)}`)
+}
+
+/**
+ * How many files are stored under a folder (e.g. one user's uploads), or null
+ * when Storage can't say — callers fail open on null. Counts up to `limit`.
+ */
+export async function countImages(config: StoreConfig, prefix: string, limit = 1000): Promise<number | null> {
+  try {
+    const res = await fetch(`${config.url}/storage/v1/object/list/${IMAGE_BUCKET}`, {
+      method: 'POST',
+      headers: { ...headers(config), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prefix, limit, offset: 0 }),
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return null
+    const items = (await res.json()) as unknown
+    return Array.isArray(items) ? items.length : null
+  } catch {
+    return null
+  }
 }

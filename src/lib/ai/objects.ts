@@ -33,14 +33,27 @@ const rgba = (hex: string, a: number) => {
 
 /** Objects IntentDraw can build itself; others are built in place by the section. */
 export function buildableObjects(elements: BriefElement[]): Array<BriefElement & { form: ObjectForm }> {
-  return elements.filter((e): e is BriefElement & { form: ObjectForm } => e.role === 'object' && (e.form === 'cube' || e.form === 'sphere'))
+  return elements.filter((e): e is BriefElement & { form: ObjectForm } => e.role === 'object' && (e.form === 'cube' || e.form === 'sphere' || e.form === 'pyramid'))
 }
 
 export function objectName(index: number): string {
   return `IntentObject${index + 1}`
 }
 
-function cubeComponent(name: string, p: BriefPalette): string {
+interface Solid {
+  /** What a screen reader hears. */
+  label: string
+  /** Faces as JSX, inside a box of side var(--s). */
+  faces: string[]
+  /** Extra CSS for the faces. */
+  css: string
+  /** The point the solid turns around (CSS transform-origin). */
+  origin: string
+  /** Starting tilt, degrees. */
+  tilt: number
+}
+
+function cubeSolid(name: string, p: BriefPalette): Solid {
   const face = [
     `position: absolute; inset: 0;`,
     `background: linear-gradient(135deg, ${rgba(p.accent, 0.22)} 0%, ${rgba(p.surface, 0.42)} 55%, ${rgba(p.background, 0.55)} 100%),`,
@@ -50,23 +63,59 @@ function cubeComponent(name: string, p: BriefPalette): string {
     `box-shadow: inset 0 0 38px ${rgba(p.accent, 0.28)}, 0 0 26px ${rgba(p.accent, 0.22)};`,
     `backface-visibility: visible;`,
   ].join(' ')
-  const faces = [
-    'rotateY(0deg)', 'rotateY(180deg)', 'rotateY(90deg)', 'rotateY(-90deg)', 'rotateX(90deg)', 'rotateX(-90deg)',
-  ].map(t => `<div className="${name}-face" style={{ transform: '${t} translateZ(calc(var(--s) / 2))' }} />`)
+  return {
+    label: 'Interactive 3D cube',
+    faces: ['rotateY(0deg)', 'rotateY(180deg)', 'rotateY(90deg)', 'rotateY(-90deg)', 'rotateX(90deg)', 'rotateX(-90deg)'].map(
+      t => `<div className="${name}-face" style={{ transform: '${t} translateZ(calc(var(--s) / 2))' }} />`
+    ),
+    css: `.${name}-face { ${face} }`,
+    origin: '50% 50%',
+    tilt: -22,
+  }
+}
 
-  return `/* ${name}: the user's 3D cube, built and placed by IntentDraw — drag, click, scroll. */
+/**
+ * A square pyramid: four triangular glass faces leaning in from the edges of a
+ * square base to one apex, 0.8 of the base tall. Each face is an SVG polygon so
+ * its edges get a real stroke (a clip-path would cut a CSS border away).
+ */
+function pyramidSolid(name: string, p: BriefPalette): Solid {
+  // Slant height L and lean θ for a height of 0.8 × the base side s.
+  const slant = Math.sqrt(0.8 * 0.8 + 0.25) // L / s
+  const lean = (Math.asin(0.5 / slant) * 180) / Math.PI
+  const triangle = (i: number) =>
+    `<div className="${name}-tri" style={{ transform: 'rotateY(${i * 90}deg) translateZ(calc(var(--s) / 2)) rotateX(${lean.toFixed(2)}deg)' }}>` +
+    `<svg viewBox="0 0 100 100" preserveAspectRatio="none" width="100%" height="100%"><defs><linearGradient id="${name}-g${i}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="${p.accent}" stopOpacity="${(0.42 - i * 0.06).toFixed(2)}" /><stop offset="100%" stopColor="${p.surface}" stopOpacity="0.5" /></linearGradient></defs>` +
+    `<polygon points="50,1 99,99 1,99" fill="url(#${name}-g${i})" stroke="${rgba(p.accent, 0.8)}" strokeWidth="1.5" vectorEffect="non-scaling-stroke" /></svg></div>`
+  return {
+    label: 'Interactive 3D pyramid',
+    faces: [
+      ...[0, 1, 2, 3].map(triangle),
+      `<div className="${name}-base" />`,
+    ],
+    css:
+      `.${name}-tri { position: absolute; left: 0; bottom: 0; width: var(--s); height: calc(var(--s) * ${slant.toFixed(4)}); transform-origin: 50% 100%; backface-visibility: visible; filter: drop-shadow(0 0 14px ${rgba(p.accent, 0.25)}); }` +
+      ` .${name}-base { position: absolute; left: 0; top: 0; width: var(--s); height: var(--s); transform: translateY(calc(var(--s) / 2)) rotateX(90deg); background: ${rgba(p.surface, 0.55)}; border: 1.5px solid ${rgba(p.accent, 0.6)}; }`,
+    origin: '50% 70%',
+    tilt: -14,
+  }
+}
+
+/** A solid that turns on its own, tilts to the pointer, rotates when dragged, spins on a click and turns with scroll. */
+function solidComponent(name: string, p: BriefPalette, solid: Solid): string {
+  return `/* ${name}: the user's ${solid.label.replace(/^Interactive /, '')}, built and placed by IntentDraw — drag, click, scroll. */
 const ${name} = () => {
   const wrap = React.useRef<HTMLDivElement | null>(null);
-  const cube = React.useRef<HTMLDivElement | null>(null);
+  const body = React.useRef<HTMLDivElement | null>(null);
   React.useEffect(() => {
-    const el = wrap.current, c = cube.current;
+    const el = wrap.current, c = body.current;
     if (!el || !c) return;
     const fit = () => c.style.setProperty('--s', Math.max(48, Math.min(el.clientWidth, el.clientHeight) * 0.62) + 'px');
     fit();
     const ro = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(fit) : null;
     ro?.observe(el);
     const still = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
-    let rx = -22, ry = 32, vx = 0, vy = still ? 0 : 0.35, boost = 0, tx = 0, ty = 0, mx = 0, my = 0, last = performance.now(), raf = 0;
+    let rx = ${solid.tilt}, ry = 32, vx = 0, vy = still ? 0 : 0.35, boost = 0, tx = 0, ty = 0, mx = 0, my = 0, last = performance.now(), raf = 0;
     let drag: { x: number; y: number } | null = null;
     const aim = (e: PointerEvent) => {
       mx = e.clientX / Math.max(1, window.innerWidth) - 0.5;
@@ -104,11 +153,11 @@ const ${name} = () => {
     };
   }, []);
   return (
-    <div ref={wrap} className="relative flex h-full w-full select-none items-center justify-center" style={{ perspective: '900px', cursor: 'grab', touchAction: 'pan-y' }} aria-label="Interactive 3D cube" role="img">
-      <style>{\`.${name}-face { ${face} }\`}</style>
+    <div ref={wrap} className="relative flex h-full w-full select-none items-center justify-center" style={{ perspective: '900px', cursor: 'grab', touchAction: 'pan-y' }} aria-label="${solid.label}" role="img">
+      <style>{\`${solid.css}\`}</style>
       <div className="pointer-events-none absolute bottom-[6%] left-1/2 h-[10%] w-[55%] -translate-x-1/2 rounded-[50%]" style={{ background: 'radial-gradient(closest-side, ${rgba(p.accent, 0.35)}, transparent)' }} />
-      <div ref={cube} style={{ position: 'relative', width: 'var(--s, 200px)', height: 'var(--s, 200px)', transformStyle: 'preserve-3d' }}>
-        ${faces.join('\n        ')}
+      <div ref={body} style={{ position: 'relative', width: 'var(--s, 200px)', height: 'var(--s, 200px)', transformStyle: 'preserve-3d', transformOrigin: '${solid.origin}' }}>
+        ${solid.faces.join('\n        ')}
       </div>
     </div>
   );
@@ -145,7 +194,10 @@ export function renderObjects(
   const blocks: string[] = []
   buildableObjects(elements).forEach(element => {
     const name = objectName(objects.length)
-    const code = element.form === 'cube' ? cubeComponent(name, p) : sphereObject(name, element, regions, p)
+    const code =
+      element.form === 'sphere'
+        ? sphereObject(name, element, regions, p)
+        : solidComponent(name, p, element.form === 'pyramid' ? pyramidSolid(name, p) : cubeSolid(name, p))
     if (!code) return
     blocks.push(code)
     objects.push({ name, element, form: element.form })

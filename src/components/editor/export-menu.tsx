@@ -10,10 +10,11 @@ import { downloadFile, exportHtml, exportSource, slugify } from '@/lib/export'
 export function ExportMenu({ variant = 'outline' }: { variant?: 'outline' | 'primary' }) {
   const previewCode = useWorkflowStore((s) => s.previewCode)
   const projectName = useWorkflowStore((s) => s.projectName)
+  const brief = useWorkflowStore((s) => s.brief)
   const has = previewCode.length > 0
 
   const html = () => {
-    downloadFile(`${slugify(projectName)}.html`, exportHtml(previewCode, projectName), 'text/html')
+    downloadFile(`${slugify(projectName)}.html`, exportHtml(previewCode, projectName, undefined, { brand: brief?.brand, summary: brief?.summary }), 'text/html')
     toast.success('Website downloaded — open it in any browser, or upload it to any static host.')
   }
   const source = () => {
