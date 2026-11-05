@@ -288,7 +288,7 @@ export function BuildPanel({ onShowOutput, onEditReading, onUpgrade }: { onShowO
         <div className="flex flex-wrap gap-1.5 opacity-70">
           <Chip>Several screens per project</Chip>
           <Chip>Version history</Chip>
-          <Chip>Point at the site and say what to change</Chip>
+          <Chip>Draw over the site to change it</Chip>
         </div>
       </div>
     </div>

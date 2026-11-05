@@ -15,6 +15,7 @@
  *   out: { type: 'EDIT_TEXT', section, changes: [{ before, after, occurrence }] }
  *        { type: 'EDIT_TEXT_REQUEST', section, before }          words animated letter by letter
  *        { type: 'EDIT_PICK_IMAGE', section, src, alt, width, height }
+ *        { type: 'EDIT_PICK_SECTION', section, snippet }             "Change this section" pill
  *        { type: 'EDIT_SCROLL', y }
  *        { type: 'EDIT_EXIT' }                                    Escape with nothing being edited
  */
@@ -27,6 +28,9 @@ export function editModeRuntime(): void {
   let original: Array<{ node: Text; value: string; occurrence: number }> = []
   let single = false
   let lastScroll = 0
+  // "Change this section": a pill that follows the section under the pointer.
+  let pill: HTMLButtonElement | null = null
+  let pillSection: string | null = null
 
   const post = (message: Record<string, unknown>) => {
     try {
@@ -154,14 +158,60 @@ export function editModeRuntime(): void {
     }
   }
 
+  /** The box a section occupies (its marker is display: contents, so measure its children). */
+  const sectionBox = (marker: Element) => {
+    let top = Infinity, left = Infinity, right = -Infinity, bottom = -Infinity
+    for (let i = 0; i < marker.children.length; i++) {
+      const r = marker.children[i].getBoundingClientRect()
+      if (r.width === 0 && r.height === 0) continue
+      top = Math.min(top, r.top); left = Math.min(left, r.left); right = Math.max(right, r.right); bottom = Math.max(bottom, r.bottom)
+    }
+    return bottom > top ? { top: top, left: left, right: right, bottom: bottom } : null
+  }
+  const showPill = (marker: Element | null) => {
+    const name = marker ? marker.getAttribute('data-section') : null
+    if (!marker || !name) {
+      if (pill) pill.style.display = 'none'
+      pillSection = null
+      return
+    }
+    const box = sectionBox(marker)
+    if (!box) return
+    if (!pill) {
+      pill = document.createElement('button')
+      pill.setAttribute('data-intentdraw-pill', '')
+      // An editor control, not part of the page: the layout audit and contrast fixer skip it.
+      pill.setAttribute('aria-hidden', 'true')
+      pill.type = 'button'
+      pill.style.cssText = 'position:absolute;z-index:2147483647;padding:7px 12px;border-radius:999px;border:0;background:#E8A33D;color:#14110A;font:600 12px/1 system-ui,sans-serif;box-shadow:0 6px 20px rgba(0,0,0,.25);cursor:pointer;'
+      document.body.appendChild(pill)
+    }
+    pillSection = name
+    pill.textContent = 'Change ' + name
+    pill.style.display = 'block'
+    // Top-right of the section, kept inside the window.
+    const top = Math.max(box.top, 8) + window.scrollY + 10
+    pill.style.top = top + 'px'
+    pill.style.left = Math.max(8, Math.min(box.right, window.innerWidth) - 10 - pill.offsetWidth) + window.scrollX + 'px'
+  }
   const onOver = (e: MouseEvent) => {
+    if (e.target instanceof Element && e.target.closest('[data-intentdraw-pill]')) return
     if (!editing) setHover(target(e))
+    const marker = e.target instanceof Element ? e.target.closest('[data-section]') : null
+    if (marker && marker.getAttribute('data-section') !== pillSection) showPill(marker)
   }
   const onClick = (e: MouseEvent) => {
     // Clicks inside the words being edited place the caret.
     if (editing && e.target instanceof Node && editing.contains(e.target)) return
     e.preventDefault()
     e.stopPropagation()
+    if (e.target instanceof Element && e.target.closest('[data-intentdraw-pill]')) {
+      if (editing) finish(true)
+      const marker = pillSection ? document.querySelector('[data-section="' + pillSection.replace(/"/g, '') + '"]') : null
+      const snippet = marker ? norm(marker.textContent).slice(0, 120) : ''
+      if (pillSection) post({ type: 'EDIT_PICK_SECTION', section: pillSection, snippet: snippet })
+      return
+    }
     if (editing) finish(true)
     const el = target(e)
     if (!el) return
@@ -213,6 +263,7 @@ export function editModeRuntime(): void {
     } else {
       finish(true)
       setHover(null)
+      showPill(null)
       if (styleEl) styleEl.remove()
       styleEl = null
     }

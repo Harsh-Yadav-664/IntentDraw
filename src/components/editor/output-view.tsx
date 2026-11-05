@@ -10,7 +10,7 @@ import { useWorkflowStore } from '@/store/workflow-store'
 import { exportSource, openInNewTab } from '@/lib/export'
 import { ExportMenu } from './export-menu'
 import { IssueEmptyState } from './issue'
-import { EditBar, ImageDialog, TextDialog, useEditMode } from './edit-mode'
+import { EditBar, ImageDialog, SectionChangeDialog, TextDialog, useEditMode } from './edit-mode'
 
 type Device = 'desktop' | 'tablet' | 'mobile'
 
@@ -165,6 +165,7 @@ export function OutputView({ projectId, isPublic, onBackToDesign, onIssueDetails
       </div>
       <ImageDialog pending={edit.pendingImage} onClose={() => edit.setPendingImage(null)} apply={edit.apply} />
       <TextDialog request={edit.textRequest} onClose={() => edit.setTextRequest(null)} apply={edit.apply} />
+      <SectionChangeDialog request={edit.sectionRequest} onClose={() => edit.setSectionRequest(null)} />
     </div>
   )
 }

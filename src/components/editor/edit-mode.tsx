@@ -72,6 +72,7 @@ export function useEditMode({ reloadFrame }: { reloadFrame: () => void }) {
   const [undoCount, setUndoCount] = useState(0)
   const [pendingImage, setPendingImage] = useState<PendingImage | null>(null)
   const [textRequest, setTextRequest] = useState<{ section: string | null; before: string } | null>(null)
+  const [sectionRequest, setSectionRequest] = useState<{ section: string; snippet: string } | null>(null)
 
   /** Applies one change to the page; returns false (with the reason shown) when it can't. */
   const apply = useCallback(
@@ -147,6 +148,14 @@ export function useEditMode({ reloadFrame }: { reloadFrame: () => void }) {
           return beforeText.trim() ? [{ kind: 'text' as const, section, before: beforeText, after: str(change.after), occurrence }] : []
         })
         if (edits.length > 0) void apply(edits)
+      } else if (data.type === 'EDIT_PICK_SECTION') {
+        // Only one of this page's own sections can be rebuilt.
+        const parts = useWorkflowStore.getState().pageParts
+        if (!section || !parts?.sections.includes(section)) {
+          toast.error('This page was built before sections could be rebuilt one by one. Build the site again to change it part by part.')
+          return
+        }
+        setSectionRequest({ section, snippet: str(data.snippet, 120) })
       } else if (data.type === 'EDIT_TEXT_REQUEST') {
         const beforeText = str(data.before, 600)
         if (beforeText.trim()) setTextRequest({ section, before: beforeText })
@@ -166,7 +175,7 @@ export function useEditMode({ reloadFrame }: { reloadFrame: () => void }) {
     [apply]
   )
 
-  return { apply, undoLast, undoCount, onEditMessage, pendingImage, setPendingImage, textRequest, setTextRequest }
+  return { apply, undoLast, undoCount, onEditMessage, pendingImage, setPendingImage, textRequest, setTextRequest, sectionRequest, setSectionRequest }
 }
 
 /** The strip over the preview while editing. */
@@ -175,7 +184,7 @@ export function EditBar({ undoCount, onUndo, onDone }: { undoCount: number; onUn
     <div className="flex h-[38px] shrink-0 items-center gap-3 border-b border-line bg-surface2 px-4">
       <span className="h-1.5 w-1.5 rounded-full bg-accent" aria-hidden />
       <p className="truncate text-[12px] text-muted">
-        <span className="text-ink">Editing.</span> Click any words to change them, or a picture to put your own in. Enter saves, Esc cancels.
+        <span className="text-ink">Editing.</span> Click words to change them, a picture to put your own in, or “Change …” to rebuild a section from a note. Enter saves, Esc cancels.
       </p>
       <div className="ml-auto flex items-center gap-2">
         <Button size="sm" variant="quiet" icon={<Undo2 size={12} />} disabled={undoCount === 0} onClick={onUndo}>
@@ -298,6 +307,71 @@ export function TextDialog({ request, onClose, apply }: { request: { section: st
         }}
       >
         <Field label="Text" value={value} maxLength={600} autoFocus onChange={e => setValue(e.target.value)} />
+      </form>
+    </Dialog>
+  )
+}
+
+/**
+ * "Point and say": change one section by saying what should be different. One
+ * model call — the same rebuild as the Sections list, with the user's words as
+ * its note. Pictures the user put in are kept (replaceSection carries them).
+ */
+export function SectionChangeDialog({ request, onClose }: { request: { section: string; snippet: string } | null; onClose: () => void }) {
+  const { rebuildSection } = useAI()
+  const rebuilding = useWorkflowStore((s) => s.rebuildingSection)
+  const generating = useWorkflowStore((s) => s.status === 'generating')
+  const [note, setNote] = useState('')
+  const [shown, setShown] = useState<typeof request>(null)
+  if (request !== shown) {
+    setShown(request)
+    setNote('')
+  }
+  const busy = rebuilding !== null || generating
+  const submit = async () => {
+    if (!request || !note.trim() || busy) return
+    const section = request.section
+    onClose()
+    toast(`Rebuilding ${section}`, { description: 'Just this section — everything else stays as it is.' })
+    const ok = await rebuildSection(section, note.trim())
+    if (ok) toast.success(`${section} rebuilt`)
+    else toast.error(`Could not rebuild ${section}. The old version is kept.`)
+  }
+  return (
+    <Dialog
+      open={request !== null}
+      onClose={onClose}
+      eyebrow="Edit"
+      title={request ? `Change ${request.section}` : 'Change this section'}
+      footer={
+        <Button variant="primary" disabled={!note.trim() || busy} onClick={submit}>
+          {busy ? 'Busy…' : 'Rebuild this section'}
+        </Button>
+      }
+    >
+      <form
+        onSubmit={e => {
+          e.preventDefault()
+          void submit()
+        }}
+      >
+        {request?.snippet ? <p className="mb-3 truncate text-[12px] text-faint">“{request.snippet}”</p> : null}
+        <label className="block">
+          <span className="mono-label mb-2 block text-faint">What should be different?</span>
+          <textarea
+            value={note}
+            autoFocus
+            maxLength={300}
+            rows={3}
+            onChange={e => setNote(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) void submit()
+            }}
+            placeholder="e.g. make it a comparison table, warmer copy, put the photo on the left"
+            className="w-full resize-y rounded-[10px] border border-line bg-surface2 p-3 text-[12.5px] leading-[1.6] text-ink placeholder:text-faint focus:border-accent"
+          />
+        </label>
+        <p className="mt-2 text-[11px] text-faint">One model call. Only this section changes; your own pictures in it are kept.</p>
       </form>
     </Dialog>
   )

@@ -481,7 +481,7 @@ function Dashboard() {
           {[
             ['Several screens per project', 'Home, sign-in and dashboard as tabs inside one project, each with its own canvas.'],
             ['Version history', 'Every build kept on a timeline, with a one-click restore.'],
-            ['Point and say, or draw over it', 'Point at any part of the built site and say what to change, or draw over it, and just that part is rebuilt. (Changing words and pictures by clicking them works today — Output → Edit.)'],
+            ['Draw over it to change it', 'Sketch on top of the built site and just that part is rebuilt around your drawing. (Clicking words and pictures, and pointing at a section to say what to change, work today — Output → Edit.)'],
           ].map(([t, d]) => (
             <div key={t}>
               <div className="flex items-center gap-2">
