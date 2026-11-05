@@ -173,3 +173,25 @@ describe('a group described once', () => {
     expect(brief.drawing.elements.find(e => e.regions.includes(1))?.role).toBe('layout')
   })
 })
+
+describe('a pyramid, built in code like the cube', () => {
+  it('reads "pyramid" in the prompt or on the shape, and builds one that compiles', async () => {
+    const { findSyntaxProblem } = await import('./validate')
+    const shapes = [box(1, 100, 100, 300, 300), box(2, 600, 100, 300, 300)]
+    expect(promptSignals('make region 1 a 3d pyramid that spins', shapes)[0]).toMatchObject({ regions: [1], kind: 'object', object: 'pyramid' })
+    shapes[1].intent = 'a glass pyramid'
+    const brief = normalizeBrief({}, shapes, '')
+    expect(brief.drawing.elements.find(e => e.regions.includes(2))).toMatchObject({ role: 'object', form: 'pyramid' })
+    const { code, objects } = renderObjects(brief.drawing.elements, shapes, brief.palette)
+    expect(objects.map(o => o.form)).toEqual(['pyramid'])
+    expect(code.match(/-tri" style/g)).toHaveLength(4)
+    expect(code).toContain('aria-label="Interactive 3D pyramid"')
+    expect(findSyntaxProblem(`${code}\nexport default function App() { return <${objects[0].name} /> }`)).toBeNull()
+  })
+
+  it('still builds the cube the same way', () => {
+    const { code } = renderObjects(normalizeBrief({}, [{ ...box(1, 0, 0, 300, 300), intent: 'a 3d cube' }], '').drawing.elements, [box(1, 0, 0, 300, 300)], null)
+    expect(code.match(/-face" style/g)).toHaveLength(6)
+    expect(code).toContain('aria-label="Interactive 3D cube"')
+  })
+})

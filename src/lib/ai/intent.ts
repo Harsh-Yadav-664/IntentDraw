@@ -23,7 +23,7 @@ import { insideShare, looksHandwritten } from './perception'
 
 export type { IntentKind, RegionTag }
 export type Anchor = IntentAnchor
-export type ObjectForm = 'cube' | 'sphere'
+export type ObjectForm = 'cube' | 'sphere' | 'pyramid'
 
 export const INTENT_KINDS: readonly IntentKind[] = ['content', 'text', 'picture', 'object', 'background', 'decoration', 'motion', 'connector']
 export const ANCHORS: readonly Anchor[] = ['exact', 'anywhere', 'behind']
@@ -86,9 +86,10 @@ export function tagSignals(regions: Region[]): IntentSignal[] {
 const REFERENCE = /\b(?:r|region|regions|shape|shapes)\s*#?\s*(\d{1,2})((?:\s*(?:,|and|&|to|-|–|through)\s*(?:r|region)?\s*#?\s*\d{1,2}\b)*)/gi
 
 const WORDS = {
-  object: /\b3d\b|three[- ]?d(?:imensional)?|\bcube\b|\bsphere\b|\bglobe\b|\bball\b|\bplanet\b|\borb\b|\bobject\b|\bmodel\b|\brotating\b|\bspinning\b/,
+  object: /\b3d\b|three[- ]?d(?:imensional)?|\bcube\b|\bsphere\b|\bglobe\b|\bball\b|\bplanet\b|\borb\b|\bpyramids?\b|\btetrahedron\b|\bobject\b|\bmodel\b|\brotating\b|\bspinning\b/,
   cube: /\bcube\b|\bdice\b|\bblock\b/,
   sphere: /\bsphere\b|\bglobe\b|\bball\b|\bplanet\b|\borb\b/,
+  pyramid: /\bpyramids?\b|\btetrahedron\b|\btriangular\b|\btriangle\b/,
   background: /\bbackground\b|\bbehind\b|\bbackdrop\b|\bwallpaper\b|\bbg\b/,
   motion: /\bpath\b|\btravel|\bmoves? along\b|\bfollow(?:s|ing)? the line\b/,
   decoration: /\bdecorat|\bornament|\bswoosh|\bflourish/,
@@ -132,7 +133,8 @@ function readClause(own: string, clause: string, numbers: number[], regions: Reg
 
     let object: ObjectForm | undefined
     if (kind === 'object') {
-      if (WORDS.cube.test(clause)) object = 'cube'
+      if (WORDS.pyramid.test(clause)) object = 'pyramid'
+      else if (WORDS.cube.test(clause)) object = 'cube'
       else if (WORDS.sphere.test(clause)) object = 'sphere'
       else {
         const main = regions.find(r => r.regionNumber === numbers[0])

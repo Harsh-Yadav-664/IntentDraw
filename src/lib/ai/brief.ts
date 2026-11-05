@@ -39,8 +39,8 @@ import { PRODUCT_PRINCIPLE } from './principle'
 
 export type ElementRole = 'layout' | 'illustration' | 'object' | 'decoration' | 'motion' | 'connector'
 /** A 3D object IntentDraw builds itself (objects.ts). Other objects are built by the section, in place. */
-export type ObjectForm = 'cube' | 'sphere'
-const OBJECT_FORMS: readonly ObjectForm[] = ['cube', 'sphere']
+export type ObjectForm = 'cube' | 'sphere' | 'pyramid'
+const OBJECT_FORMS: readonly ObjectForm[] = ['cube', 'sphere', 'pyramid']
 export type Placement = 'page-background' | 'hero-background' | 'section-background' | 'inline'
 
 const ROLES: readonly ElementRole[] = ['layout', 'illustration', 'object', 'decoration', 'motion', 'connector']
@@ -146,7 +146,7 @@ WHEN THE PROMPT SAYS LITTLE OR NOTHING ABOUT A SHAPE — decide from what was dr
 
 For each element:
 - role: "layout" (content goes here) | "object" (a thing that exists at that spot — usually 3D, animated or interactive: a rotating cube, a globe, a spinning badge, a product model) | "illustration" (a picture painted as art) | "decoration" | "motion" (a path something travels along) | "connector" (an arrow relating two things). Text is "layout".
-- form, object only: "cube" (a box shape or anything the user calls a cube/box) | "sphere" (a round shape, globe, planet, ball, orb) | null (some other object — the build makes it in place)
+- form, object only: "cube" (a box shape or anything the user calls a cube/box) | "sphere" (a round shape, globe, planet, ball, orb) | "pyramid" (a triangle or anything the user calls a pyramid/tetrahedron) | null (some other object — the build makes it in place)
 - form, illustration only: "sphere" (a round body carrying the marks drawn on it, shown as a slowly turning 3D globe that follows the pointer, touch and scroll — use it when the user asks for 3D or for a globe, planet, ball or orb, or when marks inside a circle should wrap around it), "silhouette" (the solid area below a ridge or skyline), "band" (the area between two strokes), "disc" (a flat round body), "rays", "shape" (a closed outline to fill), "line" (keep as a drawn line)
 - depth, illustration only: 0 = farthest back … higher = nearer the viewer
 - placement: "page-background" | "hero-background" | "section-background" | "inline"
@@ -530,7 +530,7 @@ function reconcile(els: BriefElement[], signals: IntentSignal[], regions: Region
     switch (sig.kind) {
       case 'object':
         role = 'object'
-        form = sig.object ?? (base.form === 'sphere' || base.form === 'cube' ? base.form : null)
+        form = sig.object ?? (base.form === 'sphere' || base.form === 'cube' || base.form === 'pyramid' ? base.form : null)
         break
       case 'content':
       case 'text':
