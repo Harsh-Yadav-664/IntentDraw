@@ -124,3 +124,29 @@ describe('what the user wrote on a shape, parsed like the prompt', () => {
     expect(intentSignals(cube.prompt, cubeRegions).some(s => s.source === 'note')).toBe(false)
   })
 })
+
+describe('shapes named by description, not number', () => {
+  const left = box(1, 80, 200, 300, 300)
+  const right = box(2, 860, 200, 300, 300)
+  const ring = box(3, 500, 150, 220, 220, 'circle')
+  const shapes = [left, right, ring]
+
+  it('resolves "the circle" when there is one, and position words among several boxes', () => {
+    expect(promptSignals('make the circle a 3d globe that spins', shapes)[0]).toMatchObject({ regions: [3], kind: 'object', object: 'sphere' })
+    expect(promptSignals('the box on the right shows my projects', shapes)[0]).toMatchObject({ regions: [2], kind: 'content' })
+    expect(promptSignals('put the menu in the left box', shapes)).toEqual([])
+    expect(promptSignals('the left box is the navigation menu', shapes)[0]).toMatchObject({ regions: [1], kind: 'content' })
+  })
+
+  it('refuses to guess: two boxes and no qualifier, a near tie, a plural', () => {
+    expect(promptSignals('the box is a 3d cube', shapes)).toEqual([])
+    expect(promptSignals('the big box is a 3d cube', shapes)).toEqual([])
+    expect(promptSignals('the boxes are cards', shapes)).toEqual([])
+  })
+
+  it('never doubles a numbered reference, and works in a shape note too', () => {
+    expect(promptSignals('make R3 the circle a 3d globe', shapes)).toHaveLength(1)
+    const noted = shapes.map(r => (r.regionNumber === 1 ? { ...r, intent: 'the circle is a background behind everything' } : r))
+    expect(intentSignals('', noted).filter(s => s.source === 'note')[0]).toMatchObject({ regions: [3], kind: 'background' })
+  })
+})

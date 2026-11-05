@@ -151,6 +151,74 @@ function readClause(own: string, clause: string, numbers: number[], regions: Reg
     }
 }
 
+// "the circle", "the big box", "the box on the right", "the line at the top"
+const DESCRIBED = /\b(?:the|that|this|my)\s+(?:(biggest|bigger|big|largest|larger|large|huge|smallest|smaller|small|little|tiny|left|leftmost|right|rightmost|top|upper|topmost|bottom|lower|bottommost|middle|centre|center)\s+)?(circles?|rounds?|boxe?s?|rectangles?|rects?|squares?|lines?|strokes?|curves?|squiggles?|scribbles?|waves?|arrows?|shapes?)\b(?:\s+(?:on|at|in)\s+the\s+(left|right|top|bottom|middle|centre|center))?/gi
+
+const NOUN_TYPE: Array<[RegExp, Region['geometry']['type'] | null]> = [
+  [/^(?:circle|round)/, 'circle'],
+  [/^(?:box|rect|square)/, 'rectangle'],
+  [/^(?:line|stroke|curve|squiggle|scribble|wave)/, 'freeform'],
+  [/^arrow/, 'arrow'],
+  [/^shape/, null],
+]
+
+/** The one shape a described reference points at, or null when it's ambiguous. */
+function resolveDescribed(noun: string, quality: string | undefined, where: string | undefined, regions: Region[]): Region | null {
+  const type = NOUN_TYPE.find(([re]) => re.test(noun.toLowerCase()))
+  if (!type) return null
+  const pool = regions.filter(r => !type[1] || r.geometry.type === type[1])
+  if (pool.length === 0) return null
+  const q = (where ?? quality ?? '').toLowerCase()
+  if (!q) return pool.length === 1 ? pool[0] : null
+  const area = (r: Region) => r.geometry.width * r.geometry.height
+  const cx = (r: Region) => r.geometry.x + r.geometry.width / 2
+  const cy = (r: Region) => r.geometry.y + r.geometry.height / 2
+  const by = (score: (r: Region) => number) => {
+    const sorted = [...pool].sort((a, b) => score(b) - score(a))
+    // Only a clear winner: a near tie means the words don't pick one shape.
+    if (sorted.length > 1 && Math.abs(score(sorted[0]) - score(sorted[1])) < Math.abs(score(sorted[0])) * 0.15 + 1) return null
+    return sorted[0]
+  }
+  if (pool.length === 1) return pool[0]
+  if (/big|larg|huge/.test(q)) return by(area)
+  if (/small|little|tiny/.test(q)) return by(r => -area(r))
+  if (/left/.test(q)) return by(r => -cx(r))
+  if (/right/.test(q)) return by(cx)
+  if (/top|upper/.test(q)) return by(r => -cy(r))
+  if (/bottom|lower/.test(q)) return by(cy)
+  if (/middle|centre|center/.test(q)) {
+    const mid = (Math.min(...pool.map(r => r.geometry.x)) + Math.max(...pool.map(r => r.geometry.x + r.geometry.width))) / 2
+    return by(r => -Math.abs(cx(r) - mid))
+  }
+  return null
+}
+
+/**
+ * Shapes the prompt points at without a number — "make the circle a globe",
+ * "the box on the right is my photo". Resolved only when the words pick out
+ * exactly one shape; otherwise nothing is enforced and the model decides.
+ */
+function describedSignals(prompt: string, regions: Region[], taken: Array<[number, number]>): IntentSignal[] {
+  const out: IntentSignal[] = []
+  const matches = [...prompt.matchAll(DESCRIBED)]
+  matches.forEach((m, i) => {
+    const start = m.index ?? 0
+    if (taken.some(([a, b]) => start >= a && start < b)) return
+    // Plural nouns ("the boxes") name several shapes: not resolved here.
+    if (/s$/i.test(m[2])) return
+    const shape = resolveDescribed(m[2], m[1], m[3], regions)
+    if (!shape) return
+    const nextRef = matches[i + 1]?.index ?? prompt.length
+    const stop = prompt.slice(start).search(/[.!?\n]/)
+    const end = Math.min(nextRef, stop === -1 ? prompt.length : start + stop, start + 220)
+    const own = prompt.slice(start, end).toLowerCase()
+    const read = readClause(own, own, [shape.regionNumber], regions)
+    if (!read.kind) return
+    out.push({ ...read, source: 'prompt', confidence: 0.9, why: `the prompt says: "${prompt.slice(start, end).trim().slice(0, 140)}" (R${shape.regionNumber})` })
+  })
+  return out
+}
+
 /**
  * Every place the prompt talks about a shape by number, with what it says
  * about it. Only what is said in the clause attached to the reference counts —
@@ -160,6 +228,7 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
   const known = new Set(regions.map(r => r.regionNumber))
   const matches = [...prompt.matchAll(REFERENCE)]
   const signals: IntentSignal[] = []
+  const taken: Array<[number, number]> = []
 
   matches.forEach((m, i) => {
     let numbers = expand(m[1], m[2] ?? '').filter(n => known.has(n))
@@ -179,6 +248,7 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
       numbers = [...numbers, ...inner.map(r => r.regionNumber)]
     }
 
+    taken.push([start, end])
     const read = readClause(own, clause, numbers, regions)
     signals.push({
       ...read,
@@ -187,7 +257,7 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
       why: `the prompt says: "${prompt.slice(start, end).trim().slice(0, 140)}"`,
     })
   })
-  return signals
+  return [...signals, ...describedSignals(prompt, regions, taken)]
 }
 
 /**
