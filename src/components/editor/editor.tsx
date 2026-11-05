@@ -305,7 +305,15 @@ export function Editor({ projectId, isPublic, onPublicChange }: { projectId: str
       <ShareDialog open={shareOpen} onClose={() => setShareOpen(false)} projectId={projectId} hasOutput={hasOutput} onChange={onPublicChange} />
       <UpgradeDialog open={upgradeOpen} onClose={() => setUpgradeOpen(false)} usage={stats} />
       <IssueDialog open={issueOpen} onClose={() => setIssueOpen(false)} />
-      <ReadingDialog open={readingOpen} onClose={() => setReadingOpen(false)} onGenerate={generate} generating={isGenerating} />
+      <ReadingDialog
+        open={readingOpen}
+        onClose={() => setReadingOpen(false)}
+        // Only tags change in the dialog, so the reading itself is reused (no understanding call).
+        onGenerate={() => {
+          if (!isGenerating) void generateCode({ reuseReading: true })
+        }}
+        generating={isGenerating}
+      />
     </div>
   )
 }

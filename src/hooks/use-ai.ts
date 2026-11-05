@@ -4,6 +4,7 @@ import { useWorkflowStore, type PlannedSection } from '@/store/workflow-store'
 import { assembleProgressive } from '@/lib/ai/assemble'
 import { assembleParts, cleanMeta, replaceSection, SCENE_NAME, type PageParts, type SectionBlock } from '@/lib/ai/page-parts'
 import type { DesignBrief } from '@/lib/ai/brief'
+import type { Region, RegionGroup } from '@/types'
 import { withImageMap } from '@/lib/images/slots'
 import { promptForRun } from '@/lib/ai/run-prompt'
 import { laneWidth, resolveProvider, type ProviderName } from '@/lib/ai/provider-choice'
@@ -20,6 +21,23 @@ import { laneWidth, resolveProvider, type ProviderName } from '@/lib/ai/provider
 // One run at a time across every component that calls useAI(). Stopping it
 // aborts the request in flight; sections already built are kept.
 let activeRun: AbortController | null = null
+
+/**
+ * The last reading the understanding stage wrote, and what it was read from.
+ * "Build again with these answers" (the reading dialog) changes only tags on
+ * the shapes; the shell re-applies tags to a sent brief, so that rebuild can
+ * skip the understanding call — one model call saved per correction. Anything
+ * else changed (the prompt, a shape, a note, a group) and it is read afresh.
+ */
+let lastReading: { key: string; brief: DesignBrief } | null = null
+
+export function readingKey(prompt: string, regions: Region[], groups: RegionGroup[]): string {
+  return JSON.stringify([
+    prompt,
+    regions.map((r) => [r.regionNumber, r.geometry, r.intent ?? '', r.groupId ?? null]),
+    groups.map((g) => [g.id, g.name, g.intent]),
+  ])
+}
 
 const isAbort = (error: unknown) => error instanceof DOMException && error.name === 'AbortError'
 
@@ -101,7 +119,7 @@ export function useAI() {
   /**
    * Generates React TSX from regions and user prompt.
    */
-  const generateCode = useCallback(async (): Promise<boolean> => {
+  const generateCode = useCallback(async (options?: { reuseReading?: boolean }): Promise<boolean> => {
     // Read at call time, not from this render's closure: the prompt composer
     // flushes its debounced draft into the store and calls this in the same
     // tick, so the closure's `prompt` would still be the previous text.
@@ -119,9 +137,12 @@ export function useAI() {
     // Put back if the run is stopped before it builds anything of its own.
     const previous = { parts: useWorkflowStore.getState().pageParts, brief: useWorkflowStore.getState().brief }
 
+    const key = readingKey(prompt, regions, groups)
+    const kept = options?.reuseReading && lastReading?.key === key ? lastReading.brief : null
+
     setError(null)
     setStatus('generating')
-    setBrief(null)
+    setBrief(kept)
     // The previous page's parts no longer describe what will be on screen.
     setPageParts(null)
     setRebuild(null)
@@ -206,19 +227,25 @@ export function useAI() {
       // Stage 0 — understanding. What the user wants, what the drawing depicts,
       // and what will make this site unlike a template. Shown to the user as
       // soon as it lands, so the rest of the wait has a visible purpose.
-      const understandRes = await fetch('/api/generate/understand', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...shared, imageData, projectId: useWorkflowStore.getState().projectId }),
-        signal,
-      })
-      const understood = await understandRes.json()
-      if (!understood.success) {
-        setError(understood.error || 'Could not read the request. Please try again.', understandRes.status === 429 ? 'quota' : 'failed')
-        return false
+      if (kept) {
+        // Only tags changed since this reading: the shell applies them to it.
+        brief = kept
+      } else {
+        const understandRes = await fetch('/api/generate/understand', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...shared, imageData, projectId: useWorkflowStore.getState().projectId }),
+          signal,
+        })
+        const understood = await understandRes.json()
+        if (!understood.success) {
+          setError(understood.error || 'Could not read the request. Please try again.', understandRes.status === 429 ? 'quota' : 'failed')
+          return false
+        }
+        brief = understood.data.brief as DesignBrief
+        lastReading = { key, brief }
+        setBrief(brief)
       }
-      brief = understood.data.brief as DesignBrief
-      setBrief(brief)
       setGenerationProgress({ label: 'Designing the page structure', done: 1, total: 2 })
 
       // Stage 1 — the shell. Short enough to survive a serverless timeout, and
@@ -245,6 +272,12 @@ export function useAI() {
         tokenId: string
         regions: typeof regions
         prompt: string
+        /** The brief with the shapes' current tags applied (re-validated by the shell). */
+        brief?: DesignBrief
+      }
+      if (data.brief && typeof data.brief === 'object' && Array.isArray(data.brief.drawing?.elements)) {
+        brief = data.brief
+        setBrief(brief)
       }
       shellCode = data.shellCode
       sceneCode = data.sceneCode ?? null
