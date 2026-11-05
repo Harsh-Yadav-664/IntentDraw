@@ -33,7 +33,7 @@ function perpendicularDistance(p: Point, a: Point, b: Point): number {
 }
 
 /** Ramer-Douglas-Peucker: drop points that don't change the stroke's shape. */
-function simplify(points: Point[], tolerance: number): Point[] {
+export function simplify(points: Point[], tolerance: number): Point[] {
   if (points.length < 3) return points
 
   let maxDist = 0

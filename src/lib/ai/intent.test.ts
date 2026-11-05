@@ -195,3 +195,38 @@ describe('a pyramid, built in code like the cube', () => {
     expect(code).toContain('aria-label="Interactive 3D cube"')
   })
 })
+
+describe('a drawn triangle asked to be 3D', () => {
+  // A hand-drawn closed stroke through the given corners, with a little wobble.
+  const stroke = (n: number, corners: Array<[number, number]>, closed = true): Region => {
+    const pts: Array<[number, number]> = []
+    const loop = closed ? [...corners, corners[0]] : corners
+    for (let i = 0; i < loop.length - 1; i++) {
+      for (let t = 0; t < 1; t += 0.1) {
+        const wob = Math.sin((i * 10 + t * 10) * 1.7) * 2
+        pts.push([loop[i][0] + (loop[i + 1][0] - loop[i][0]) * t + wob, loop[i][1] + (loop[i + 1][1] - loop[i][1]) * t - wob])
+      }
+    }
+    pts.push(loop[loop.length - 1])
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1])
+    const x = Math.min(...xs), y = Math.min(...ys)
+    return { id: `r${n}`, regionNumber: n, geometry: { type: 'freeform', x, y, width: Math.max(...xs) - x, height: Math.max(...ys) - y, path: pts.map(([px, py]) => ({ x: px - x, y: py - y })) }, intent: '', lockState: 'unlocked', generatedCode: null, createdAt: '', updatedAt: '' } as unknown as Region
+  }
+
+  it('tells a triangle from a square, a circle and an open zig-zag', async () => {
+    const { looksTriangular } = await import('./scene')
+    expect(looksTriangular(stroke(1, [[200, 100], [320, 300], [80, 300]]))).toBe(true)
+    expect(looksTriangular(stroke(2, [[100, 100], [300, 100], [300, 300], [100, 300]]))).toBe(false)
+    const circle = Array.from({ length: 24 }, (_, i): [number, number] => [200 + 100 * Math.cos((i / 24) * Math.PI * 2), 200 + 100 * Math.sin((i / 24) * Math.PI * 2)])
+    expect(looksTriangular(stroke(3, circle))).toBe(false)
+    expect(looksTriangular(stroke(4, [[0, 300], [100, 100], [200, 300], [300, 100]], false))).toBe(false)
+  })
+
+  it('becomes a pyramid from a one-click tag or a bare "3d", and a box stays a cube', () => {
+    const tri = { ...stroke(1, [[200, 100], [320, 300], [80, 300]]), tag: { kind: 'object' as const } }
+    expect(intentSignals('', [tri]).find(s => s.source === 'tag')).toMatchObject({ object: 'pyramid' })
+    const plain = stroke(2, [[700, 100], [820, 300], [580, 300]])
+    expect(promptSignals('make region 2 3d and interactive', [plain])[0]).toMatchObject({ kind: 'object', object: 'pyramid' })
+    expect(promptSignals('make region 1 3d', [box(1, 0, 0, 200, 200)])[0]).toMatchObject({ object: 'cube' })
+  })
+})

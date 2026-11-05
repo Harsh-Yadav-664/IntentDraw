@@ -1,6 +1,7 @@
 import type { IntentAnchor, IntentKind, Region, RegionGroup, RegionTag } from '@/types'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { insideShare, looksHandwritten } from './perception'
+import { looksTriangular } from './scene'
 
 /**
  * The drawing intent engine's evidence layer: what each shape IS, WHERE it
@@ -64,6 +65,18 @@ export const ANCHOR_LABEL: Record<Anchor, string> = {
 // Layer 1 — the user's tags
 // =============================================================================
 
+/**
+ * The object a shape most likely is when the user asked for a 3D object
+ * without naming one: a circle is a sphere, a drawn triangle a pyramid, a box
+ * a cube. `strict` (words only said "3d") makes no guess for other strokes.
+ */
+export function defaultObjectForm(r: Region, strict = false): ObjectForm | undefined {
+  if (r.geometry.type === 'circle') return 'sphere'
+  if (looksTriangular(r)) return 'pyramid'
+  if (r.geometry.type === 'rectangle') return 'cube'
+  return strict ? undefined : 'cube'
+}
+
 export function tagSignals(regions: Region[]): IntentSignal[] {
   return regions
     .filter(r => r.tag && (r.tag.kind || r.tag.anchor))
@@ -71,7 +84,7 @@ export function tagSignals(regions: Region[]): IntentSignal[] {
       regions: [r.regionNumber],
       kind: r.tag!.kind,
       anchor: r.tag!.anchor ?? (r.tag!.kind === 'background' ? 'behind' : undefined),
-      object: r.tag!.kind === 'object' ? (r.geometry.type === 'circle' ? 'sphere' : 'cube') : undefined,
+      object: r.tag!.kind === 'object' ? defaultObjectForm(r) : undefined,
       source: 'tag' as const,
       confidence: 1,
       why: `the user tagged it${r.tag!.kind ? ` "${KIND_LABEL[r.tag!.kind]}"` : ''}${r.tag!.anchor ? `, "${ANCHOR_LABEL[r.tag!.anchor]}"` : ''}`,
@@ -138,7 +151,7 @@ function readClause(own: string, clause: string, numbers: number[], regions: Reg
       else if (WORDS.sphere.test(clause)) object = 'sphere'
       else {
         const main = regions.find(r => r.regionNumber === numbers[0])
-        object = main?.geometry.type === 'circle' ? 'sphere' : main?.geometry.type === 'rectangle' ? 'cube' : undefined
+        object = main ? defaultObjectForm(main, true) : undefined
       }
     }
 

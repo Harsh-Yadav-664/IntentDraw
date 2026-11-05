@@ -1,5 +1,5 @@
 import type { Region } from '@/types'
-import { simplifyToBudget } from './shape-path'
+import { simplify, simplifyToBudget } from './shape-path'
 
 /**
  * Turns strokes the user drew as a *picture* into exact SVG geometry.
@@ -215,6 +215,29 @@ export function countPeaks(points: Point[], minProminence: number): number {
  * pass a residual test on its own, and became a second, blank disc; so a round
  * stroke must also be free of spikes.
  */
+/**
+ * A hand-drawn triangle: a closed freehand stroke that simplifies to three
+ * corners, none of its sides tiny, and not round. Read as a pyramid when the
+ * user asks for a 3D object without naming one.
+ */
+export function looksTriangular(region: Region): boolean {
+  const g = region.geometry
+  if (g.type !== 'freeform' || !g.path || g.path.length < 6) return false
+  const points = absolutePoints(region)
+  const size = Math.max(g.width, g.height)
+  if (size < 24) return false
+  const first = points[0]
+  const last = points[points.length - 1]
+  if (Math.hypot(first.x - last.x, first.y - last.y) > size * 0.2) return false
+  // Close the loop, simplify, and count the corners left.
+  let corners = simplify([...points, first], size * 0.08)
+  if (corners.length > 1 && Math.hypot(corners[0].x - corners[corners.length - 1].x, corners[0].y - corners[corners.length - 1].y) < size * 0.05) corners = corners.slice(0, -1)
+  if (corners.length !== 3) return false
+  const sides = corners.map((p, i) => Math.hypot(p.x - corners[(i + 1) % 3].x, p.y - corners[(i + 1) % 3].y))
+  const perimeter = sides.reduce((a, b) => a + b, 0)
+  return sides.every(side => side > perimeter * 0.15) && !isRound(region)
+}
+
 export function isRound(region: Region): boolean {
   const points = absolutePoints(region)
   const fit = fitCircle(points)
