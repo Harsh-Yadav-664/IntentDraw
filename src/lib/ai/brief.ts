@@ -276,7 +276,7 @@ export function buildUnderstandUserMessage(
     )
     const measured = perceiveDrawing(regions)
     parts.push(regions.map(r => shapeLine(r, budget, measured.get(r.regionNumber))).join('\n'))
-    const worked = describeIntentSignals(intentSignals(prompt, regions))
+    const worked = describeIntentSignals(intentSignals(prompt, regions, groups))
     if (worked) parts.push(worked)
 
     const populated = groups.filter(g => regions.some(r => r.groupId === g.id))
@@ -415,7 +415,7 @@ export function sectionForPage(page: number, names: string[]): string | null {
   return content[Math.max(0, Math.min(page, content.length - 1))]
 }
 
-function elements(v: unknown, regions: Region[], sectionNames: string[] = [], prompt = ''): BriefElement[] {
+function elements(v: unknown, regions: Region[], sectionNames: string[] = [], prompt = '', groups: RegionGroup[] = []): BriefElement[] {
   const known = new Set(regions.map(r => r.regionNumber))
   const claimed = new Set<number>()
   const out: BriefElement[] = []
@@ -491,7 +491,7 @@ function elements(v: unknown, regions: Region[], sectionNames: string[] = [], pr
       anchor: defaultAnchor(role),
     })
   }
-  const signals = intentSignals(prompt, regions)
+  const signals = intentSignals(prompt, regions, groups)
   const settled = pageWideArt(splitRoundBodies(reconcile(out, signals, regions), regions), signals, prompt)
   return keepPagesTogether(mergeIntoSpheres(settled, regions), regions, sectionNames)
 }
@@ -698,11 +698,11 @@ function drawingKind(els: BriefElement[]): DesignBrief['drawing']['kind'] {
  * well-formed brief. It runs on every brief that crosses a trust boundary, so
  * lengths are capped and every enum is checked rather than trusted.
  */
-export function normalizeBrief(raw: unknown, regions: Region[], prompt: string): DesignBrief {
+export function normalizeBrief(raw: unknown, regions: Region[], prompt: string, groups: RegionGroup[] = []): DesignBrief {
   const b = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
   const drawing = (b.drawing && typeof b.drawing === 'object' ? b.drawing : {}) as Record<string, unknown>
   const plan = sections(b.sections)
-  const els = elements(drawing.elements, regions, plan.map(s => s.name), prompt)
+  const els = elements(drawing.elements, regions, plan.map(s => s.name), prompt, groups)
 
   const styleId =
     typeof b.styleId === 'string' && PRESETS[b.styleId]
@@ -735,8 +735,8 @@ export function normalizeBrief(raw: unknown, regions: Region[], prompt: string):
 }
 
 /** What the build gets when no model could write a brief: the old heuristics. */
-export function fallbackBrief(prompt: string, regions: Region[]): DesignBrief {
-  const brief = normalizeBrief({ source: 'fallback' }, regions, prompt)
+export function fallbackBrief(prompt: string, regions: Region[], groups: RegionGroup[] = []): DesignBrief {
+  const brief = normalizeBrief({ source: 'fallback' }, regions, prompt, groups)
   return { ...brief, source: 'fallback' }
 }
 

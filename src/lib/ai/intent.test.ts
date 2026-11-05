@@ -150,3 +150,26 @@ describe('shapes named by description, not number', () => {
     expect(intentSignals('', noted).filter(s => s.source === 'note')[0]).toMatchObject({ regions: [3], kind: 'background' })
   })
 })
+
+describe('a group described once', () => {
+  it('builds the owner\'s globe from a group note alone — circle and every mark inside it', () => {
+    const group = { id: 'g1', name: 'Globe', intent: 'a 3d globe that spins with the mouse', createdAt: '', updatedAt: '' }
+    const grouped = globeRegions.map(r => (r.regionNumber <= 9 ? { ...r, groupId: 'g1' } : r))
+    const prompt = 'my portfolio, dark and calm'
+    const brief = normalizeBrief(globe.brief ?? {}, grouped, prompt, [group])
+    const sphere = brief.drawing.elements.find(e => e.form === 'sphere')!
+    expect([...sphere.regions].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
+    expect(sphere.role).toBe('object')
+    // Without the group's words nothing forces it.
+    expect(intentSignals(prompt, grouped).some(s => s.source === 'note')).toBe(false)
+  })
+
+  it('lets a shape\'s own note override its group', () => {
+    const group = { id: 'g', name: 'Cards', intent: 'project cards', createdAt: '', updatedAt: '' }
+    const shapes = [box(1, 0, 0, 200, 200), box(2, 240, 0, 200, 200)].map(r => ({ ...r, groupId: 'g' }))
+    shapes[1].intent = 'a 3d cube'
+    const brief = normalizeBrief({}, shapes, '', [group])
+    expect(brief.drawing.elements.find(e => e.regions.includes(2))?.role).toBe('object')
+    expect(brief.drawing.elements.find(e => e.regions.includes(1))?.role).toBe('layout')
+  })
+})

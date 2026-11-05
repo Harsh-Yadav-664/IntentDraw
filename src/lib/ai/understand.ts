@@ -54,7 +54,7 @@ export async function understandRequest(context: UnderstandContext): Promise<Des
         // before a provider that answers in seconds takes over.
         geminiDeadlineMs: 90000,
       })
-      const brief = normalizeBrief(parseJsonObject(text), regions, prompt)
+      const brief = normalizeBrief(parseJsonObject(text), regions, prompt, groups)
       // A brief with no concept and no plan is the model failing quietly —
       // worth one more provider before settling for it.
       if (!brief.concept && brief.sections.length === 0) throw new Error('empty brief')
@@ -64,6 +64,6 @@ export async function understandRequest(context: UnderstandContext): Promise<Des
     }
   }
 
-  return fresh(fallbackBrief(prompt, regions))
+  return fresh(fallbackBrief(prompt, regions, groups))
 }
 

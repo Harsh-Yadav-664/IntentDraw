@@ -61,7 +61,7 @@ export async function POST(request: Request) {
     // Re-validated: it came back through the client. normalizeBrief checks the
     // design's fonts and enums against fixed lists, so nothing arbitrary can
     // reach the prompt's style constraints.
-    const validBrief = brief ? normalizeBrief(brief, validRegions, prompt) : undefined
+    const validBrief = brief ? normalizeBrief(brief, validRegions, prompt, Array.isArray(groups) ? groups : []) : undefined
 
     // The site's own design when there is a brief; a preset id only for
     // callers that predate it.

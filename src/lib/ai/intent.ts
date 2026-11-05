@@ -1,4 +1,4 @@
-import type { IntentAnchor, IntentKind, Region, RegionTag } from '@/types'
+import type { IntentAnchor, IntentKind, Region, RegionGroup, RegionTag } from '@/types'
 import { PAGE_CONFIG, pageIndexForRegion } from '@/lib/canvas/pages'
 import { insideShare, looksHandwritten } from './perception'
 
@@ -271,8 +271,29 @@ export function promptSignals(prompt: string, regions: Region[]): IntentSignal[]
  * otherwise it speaks for its own shape. "A picture/photo of me" asks for a
  * photo in a layout box, not for drawn art, so it never becomes `picture`.
  */
-export function noteSignals(regions: Region[]): IntentSignal[] {
+export function noteSignals(regions: Region[], groups: RegionGroup[] = []): IntentSignal[] {
   const out: IntentSignal[] = []
+  // A group's description speaks for all its shapes; a shape's own note, read
+  // after it, is more specific and wins.
+  for (const group of groups) {
+    const note = group.intent?.trim()
+    const members = regions.filter(r => r.groupId === group.id).map(r => r.regionNumber)
+    if (!note || members.length === 0) continue
+    const lower = note.toLowerCase()
+    const read = readClause(lower, lower, members, regions)
+    let kind = read.kind
+    if (kind === 'picture' && PHOTO.test(note)) kind = 'content'
+    if (!kind) continue
+    out.push({
+      ...read,
+      kind,
+      object: kind === 'object' ? read.object : undefined,
+      anchor: kind === read.kind ? read.anchor : 'exact',
+      source: 'note',
+      confidence: 0.9,
+      why: `the user's note on group "${group.name.slice(0, 40)}": "${note.slice(0, 120)}"`,
+    })
+  }
   for (const region of regions) {
     const note = region.intent?.trim()
     if (!note) continue
@@ -366,8 +387,8 @@ export function geometrySignals(regions: Region[]): IntentSignal[] {
 // Putting it together
 // =============================================================================
 
-export function intentSignals(prompt: string, regions: Region[]): IntentSignal[] {
-  const firm = [...tagSignals(regions), ...promptSignals(prompt, regions), ...noteSignals(regions)].filter(s => s.kind || s.anchor)
+export function intentSignals(prompt: string, regions: Region[], groups: RegionGroup[] = []): IntentSignal[] {
+  const firm = [...tagSignals(regions), ...promptSignals(prompt, regions), ...noteSignals(regions, groups)].filter(s => s.kind || s.anchor)
   const settled = new Set(firm.filter(s => s.kind).flatMap(s => s.regions))
   // A geometry guess about a shape the user already explained is just noise.
   const guesses = geometrySignals(regions).filter(s => !s.regions.every(n => settled.has(n)))
