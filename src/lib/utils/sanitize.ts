@@ -5,6 +5,7 @@ import { fontHead } from '@/lib/design/fonts'
 import { artImage, keywordImage, NEUTRAL_ART_PALETTE, readPaletteMarker } from './image-art'
 import { auditPage, contrastRatio } from './page-audit'
 import { imageKey } from '@/lib/images/slots'
+import { editModeRuntime } from '@/lib/edit/frame-edit'
 // NOTE: <form> and <input> are intentionally NOT stripped — generated UIs
 // legitimately contain them, and the preview iframe is sandboxed
 // (allow-scripts only, no allow-same-origin), so submissions cannot reach
@@ -198,6 +199,13 @@ export function wrapReactForPreview(
     // keyword URLs to the images made for them (lib/images/slots.ts).
     var __imageKey = (${imageKey.toString()});
     function __fixImageUrl(u) {
+      // The user's own pictures (edit mode, lib/edit/user-images.ts) win over everything.
+      var mine = window.__intentdrawUserImages;
+      if (mine) {
+        var own = __imageKey(u);
+        if (own && typeof mine[own] === 'string') return mine[own];
+        if (typeof mine[u] === 'string') return mine[u];
+      }
       var made = window.__intentdrawImages;
       if (made) {
         var key = __imageKey(u);
@@ -213,9 +221,11 @@ export function wrapReactForPreview(
     (function() {
       // Both routes: React assigns the src *property* for images; other code
       // uses setAttribute.
+      // What each picture originally asked for — edit mode replaces by that.
+      var origins = window.__intentdrawOrigSrc = new WeakMap();
       var setAttribute = Element.prototype.setAttribute;
       Element.prototype.setAttribute = function(name, value) {
-        if (name === 'src' && this.tagName === 'IMG' && typeof value === 'string') value = __fixImageUrl(value);
+        if (name === 'src' && this.tagName === 'IMG' && typeof value === 'string') { origins.set(this, value); value = __fixImageUrl(value); }
         return setAttribute.call(this, name, value);
       };
       var srcProp = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, 'src');
@@ -224,7 +234,10 @@ export function wrapReactForPreview(
           configurable: true,
           enumerable: srcProp.enumerable,
           get: srcProp.get,
-          set: function(value) { srcProp.set.call(this, typeof value === 'string' ? __fixImageUrl(value) : value); },
+          set: function(value) {
+            if (typeof value === 'string') { origins.set(this, value); value = __fixImageUrl(value); }
+            srcProp.set.call(this, value);
+          },
         });
       }
     })();
@@ -298,12 +311,20 @@ export function wrapReactForPreview(
         var ink = rgb(cs.color);
         if (!ink) continue;
         var worst = Math.min.apply(null, tones.map(function(c) { return ratio(ink, c); }));
-        if (worst >= 3) continue;
+        // WCAG: 4.5:1 for body text, 3:1 for large text (24px, or 18.66px bold).
+        var size = parseFloat(cs.fontSize) || 16;
+        var large = size >= 24 || (size >= 18.66 && (parseInt(cs.fontWeight, 10) || 400) >= 700);
+        if (worst >= (large ? 3 : 4.5)) continue;
         var halo = lum(ink) > 0.4 ? '0,0,0' : '255,255,255';
-        el.style.textShadow = '0 0 1px rgba(' + halo + ',.55), 0 0 10px rgba(' + halo + ',.45), 0 0 26px rgba(' + halo + ',.35)';
+        // The further below the bar, the denser the halo.
+        var k = worst < 2 ? 1.5 : worst < 3 ? 1.2 : 1;
+        el.style.textShadow = '0 0 1px rgba(' + halo + ',' + (.55 * k).toFixed(2) + '), 0 0 10px rgba(' + halo + ',' + (.45 * k).toFixed(2) + '), 0 0 26px rgba(' + halo + ',' + (.35 * k).toFixed(2) + ')';
       }
     }
     window.addEventListener('load', function(){ setTimeout(__legibleOverArt, 300); setTimeout(__legibleOverArt, 2500); });
+    ${options?.export || options?.freeze ? '' : `
+    // Edit mode (lib/edit/frame-edit.ts): off until the editor turns it on.
+    (${editModeRuntime.toString()})();`}
     ${options?.export ? '' : `
     // What a reader would see wrong — unreadable text, sideways scroll, text on
     // text, empty screens — measured on the rendered page (page-audit.ts) and
