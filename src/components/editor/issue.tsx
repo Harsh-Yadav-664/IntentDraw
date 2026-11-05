@@ -30,6 +30,15 @@ function sectionFromStack(stack: string, parts: PageParts | null): string | null
   return null
 }
 
+/** The rebuild note for a section that failed: the error, and what to do about it. */
+export function crashNote(message: string): string {
+  return `The last version of this section failed with: ${message}. Write it again so it compiles and runs.`.slice(0, MAX_SECTION_NOTE_CHARS)
+}
+
+// Sections already rebuilt automatically after the run that set this window.
+let crashFixRun: number | null = null
+const crashFixed = new Set<string>()
+
 /**
  * Watches the page on screen for the two ways it can be broken:
  *  - it doesn't compile — checked here with the same parser the preview uses,
@@ -101,13 +110,29 @@ export function useIssueWatcher() {
       // A section's own boundary names it; the frame is untrusted, so the name
       // only counts if it is one of this page's sections.
       const named = typeof data.section === 'string' && parts?.sections.includes(data.section) ? data.section : null
+      const message = String(data.message ?? 'Unknown error').slice(0, 4000)
       setIssue({
         kind: data.kind,
-        message: String(data.message ?? 'Unknown error').slice(0, 4000),
+        message,
         section: named ?? sectionFromStack(String(data.stack ?? ''), parts),
         line: null,
         partial: data.kind === 'runtime' && data.partial === true,
       })
+      // Right after a run, a section that crashed is rebuilt once on its own
+      // with the error as its note (R6) — the same window as the layout fixes.
+      // Once per section per run, so one that crashes again can't loop.
+      const { autoFixUntil } = useWorkflowStore.getState()
+      if (named && data.kind === 'runtime' && data.partial === true && autoFixUntil && Date.now() < autoFixUntil) {
+        if (crashFixRun !== autoFixUntil) {
+          crashFixRun = autoFixUntil
+          crashFixed.clear()
+        }
+        if (!crashFixed.has(named)) {
+          crashFixed.add(named)
+          toast(`Fixing ${named}`, { description: 'It crashed while loading. Rebuilding just that section — the rest of the page is untouched.' })
+          void rebuild.current(named, crashNote(message))
+        }
+      }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
@@ -143,7 +168,7 @@ function useIssueFix() {
       void generateCode()
       return
     }
-    const note = `The last version of this section failed with: ${issue.message}. Write it again so it compiles and runs.`.slice(0, MAX_SECTION_NOTE_CHARS)
+    const note = crashNote(issue.message)
     const ok = await rebuildSection(section, note)
     if (!ok) toast.error(`Could not rebuild ${section}. Try again, or build the site again.`)
   }
