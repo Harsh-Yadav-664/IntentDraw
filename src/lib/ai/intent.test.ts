@@ -156,7 +156,7 @@ describe('a group described once', () => {
     const group = { id: 'g1', name: 'Globe', intent: 'a 3d globe that spins with the mouse', createdAt: '', updatedAt: '' }
     const grouped = globeRegions.map(r => (r.regionNumber <= 9 ? { ...r, groupId: 'g1' } : r))
     const prompt = 'my portfolio, dark and calm'
-    const brief = normalizeBrief(globe.brief ?? {}, grouped, prompt, [group])
+    const brief = normalizeBrief({}, grouped, prompt, [group])
     const sphere = brief.drawing.elements.find(e => e.form === 'sphere')!
     expect([...sphere.regions].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9])
     expect(sphere.role).toBe('object')
